@@ -21,7 +21,7 @@ Tracks: W = C++ worker, R = Rust core, F = frontend. Gates in **bold**.
 - [x] R-WP7 regen executor+engine trait+FakeEngine: golden fixtures a–j, 200/200 tests, SHA-256 historyPrefixHash (normative — W-WP4 notified to match), fencing via RevisionGate — provisional PASS, independent review in flight
 - [x] R-WP8 scheduler: driver-seam (policy only, no session ownership), preview>regen priority, latest-wins, 120ms debounce, cancel-timeout guard, 10/10 virtual-time tests — GATE PASSED
 - [x] R-WP9 file IO: atomic v2 container, attack-surface caps (fuzz: no panics), migration registry + read-only policy, autosave/marker layout, 262/262 — GATE PASSED (verified). Decisions accepted: ops.jsonl derived (document.json authoritative), sketches inline (no sketches/ dir — plan divergence, sound).
-- [ ] R-WP10 app shell DTOs (Wave A, in flight)
+- [x] R-WP10 app shell: DocumentRuntime single-writer (Tauri-free, tested), thin commands (new/open/save/close/apply_edit_command/undo/redo/get_projection/get_mesh ipc::Response/dialogs), DTOs mirror frontend stores, RegenScheduler wired via driver seam, mesh LRU (BodyId,Lod,generation), D1 AdoptingEngine decorator + validate_created (reject at prepare→accept, core untouched), SCHEMA §2/§7.2/§14 D1 amendment SIGNED OFF (no fixture bump needed), capabilities core:default unchanged. 282/282 + clippy clean (orchestrator-verified) — GATE PASSED. Flags→R-WP11: parse body_<opId>→BodyId(uuid) at wire layer; release runtime lock across real-worker IO (fencing currently inert); sketch dof/status placeholders; regen-body visibility V1 gap.
 - [ ] **R-WP11 WorkerManager+chaos (RISKY)** (Wave B, after R-WP10)
 - [x] **W-WP5-R independent review**: APPROVE-WITH-FIXES, D1 UPHELD (body_<opId> deterministic+collision-safe). Verified: atomicity/fencing, opaque tokens (no op hashing), descriptor reuse by construction (no fork), MESH1 424B byte-identical probe, determinism 2× fresh runs, stderr-only. Findings: (1) MINOR Standard_Failure not caught at Dispatcher boundary → W-WP5-F fix in flight; (2) NOTE split binds Modified().First() unscored → W-WP6 MUST close; (3) NOTE fast-mode parallel TopoKey ordering unverified → W-WP6 must diff determinism-vs-fast TopoKey tables on corpus; (4) NOTE volumes 4064/3936 bounded not pinned → W-WP5-F; (5) NOTE scratch planStep frames stamped base snapshotId not preparedSnapshotId — optional SCHEMA §3.4 tightening, deferred.
 - [x] W-WP5-F fixes: Standard_Failure catch at Dispatcher boundary (GetMessageString fallback DynamicType name) + injected-throw recoverability test + Fuse/Cut volumes pinned 4064/3936 — 46/46 verified by orchestrator. **W-WP5 gate CLOSED.**
@@ -59,8 +59,9 @@ Tracks: W = C++ worker, R = Rust core, F = frontend. Gates in **bold**.
 - [ ] Playwright e2e, perf baselines (1–5M tri bridge, solver tails), attack-surface tests, WebGPU spike, tauri-specta
 - [ ] Backlog: Shell/Loft/Sweep/Patterns/Mirror, checkpoint heuristics/scrubbing, expressions, v1 importer, Channel tessellation
 
-## Wave plan (user-approved 2026-07-17, pause resolved)
-- Cadence: run Wave A→C uninterrupted to M2 gate; consolidated user review at M2.
+## Wave plan (user-approved 2026-07-17)
+- PAUSE POINT (user, 2026-07-17): after in-flight R-WP10 + W-WP6 land and are gate-reviewed → STOP. No new launches (R-WP11, W-WP6-R, Wave C) until user reviews.
+- Cadence after pause: Wave A→C to M2 gate; consolidated user review at M2.
 - Wave A (parallel): W-WP5-R independent review + R-WP10 app shell.
 - Wave B: W-WP6 (after W-WP5-R clean) ∥ R-WP11 (after R-WP10).
 - Wave C: F-WP8 → M2 gate → /codex-implementation-review (approved for M2 AND M4) → M3 packaging.

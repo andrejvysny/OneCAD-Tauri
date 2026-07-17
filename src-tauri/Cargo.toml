@@ -60,3 +60,10 @@ tracing = { workspace = true }
 # Not in the plan's explicit dep list, but required by task 3 (stderr tracing init).
 tracing-subscriber = "0.3"
 uuid = { workspace = true }
+# R-WP10: the geometry-backend seam (MeshProvider / AdoptingEngine) implements the
+# core `#[async_trait]` GeometryEngine, so the app crate needs async-trait too.
+async-trait = { workspace = true }
+
+[dev-dependencies]
+# Save/reopen round-trip tests for the open/save command path.
+tempfile = "3"

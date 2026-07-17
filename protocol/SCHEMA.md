@@ -107,7 +107,7 @@ A frame with no binary payload sets `binLen = 0` and omits `bin` (or sets `bin:
 | `sketchRevision` | JSON integer (`u64`) | Rust-owned sketch revision. |
 | `gestureId` | JSON integer (`u64`) | Rust-assigned drag-gesture id. |
 | `streamId` | JSON integer (`u64`) | Worker-assigned bulk-stream id, unique per connection. |
-| `BodyId` | JSON string | Opaque, Rust-minted, globally unique (e.g. `"body_7"`). |
+| `BodyId` | JSON string | Opaque, globally unique (e.g. `"body_7"`). **Minting is split (D1):** a **NewBody** body is **worker-minted deterministic** `body_<opId>` (the `opId` is the Rust-minted op record id, so replay is stable); a future split mints `body_<opId>:<k>` with deterministic `k`-ordering. Rust **adopts** these ids from `planStep` `bodyEvents` at `AcceptPrepared` time, validating format (`body_` prefix + a known `opId` in the plan) and uniqueness, and **rejects** the prepared plan (`PROTOCOL_ERROR`, discard — never publish) on malformation/collision. All *other* body ids (loaded/imported bodies) stay Rust-minted. See [§7.2](#72-regen--executeplan). |
 | `ElementId` | JSON string | Opaque, Rust-minted, **globally unique and DOES NOT embed BodyId** (e.g. `"el_00000000000004a1"`). Partition membership (which body an element belongs to) is a *mapping*, never encoded in the id. |
 | `TopoKey` | JSON string | **Snapshot-scoped** topology address: `"<kind>:<index>"`, kind ∈ `f` (face) / `e` (edge) / `v` (vertex) / `b` (body). Example `"f:22"`. Valid only within the `snapshotId` that produced it. NEW scheme (OneCAD-CPP used path-style ids; this protocol uses compact snapshot-scoped TopoKeys promoted on demand to `ElementId`). |
 | hash | JSON string, lowercase hex, no `0x` | 64-bit hash → 16 hex chars (e.g. `"cbf29ce484222325"`). SHA-256 → 64 hex chars. Applies to `expectedBaseHash`, `historyPrefixHash`, all signatures, `brepContentHash`, `contentHash`, `tolerancePolicyHash`, `solverPolicyHash`, `occtFingerprint`, chunk `sha256`. |
@@ -529,6 +529,21 @@ Per-step `event`s (`event:"planStep"`), one per executed step:
   partition the element currently maps to; an element's *identity* (`elementId`)
   never changes because geometry changed (Invariant 1) — only its `bodyId`/`topoKey`
   moves across split/merge.
+- **`bodyEvents` NewBody id minting + adoption (D1).** A `{ "kind": "created" }`
+  event's `bodyId` is **worker-minted deterministic** `body_<opId>` — `<opId>` is
+  the Rust-minted op record id of the step that produced the body, so the id is a
+  pure function of the (Rust-owned) plan and replay is stable across worker
+  processes. Rust **adopts** each `created` id: at `AcceptPrepared` it validates the
+  `body_` prefix, that `<opId>` is a **known op in the plan**, and **uniqueness**
+  (no collision with a session body or a duplicate earlier in the same plan); a
+  malformed or colliding id **rejects** the prepared plan (the worker's terminal is
+  treated as `PROTOCOL_ERROR`, the scratch is **discarded, never published**).
+  `modified`/`deleted`/`split`/`merged` events reference bodies that already exist
+  (a split's surviving child keeps the parent id; new split children `body_<opId>:<k>`
+  are deferred). This is a normative refinement of the §2 `BodyId` "Rust-minted"
+  note: for NewBody the worker mints and Rust adopts+fences, rather than Rust
+  pre-minting (split/merge body counts are unknowable before OCCT executes, so
+  pre-minting could never cover them anyway).
 
 Terminal resp — `PlanPrepared`:
 
@@ -1243,6 +1258,21 @@ contract refinements (no worker has shipped against the prior text), so they are
 edits to version 1 rather than a version bump. They still fall under the
 [§13](#13-versioningchange-policy) change policy (fixture bump + cross-track
 sign-off) once fixtures exist.
+
+- **2026-07-17 — NewBody `BodyId`s are worker-minted deterministic `body_<opId>`,
+  adopted+fenced by Rust** (D1, orchestrator-approved; R-WP10). [§2](#2-identifier--scalar-types)
+  and [§7.2](#72-regen--executeplan). A `bodyEvents` `created` id is now
+  worker-minted `body_<opId>` (`<opId>` = the Rust-minted op record id, so the id is
+  a pure function of the plan and replay is stable); Rust **adopts** it at
+  `AcceptPrepared`, validating the `body_` prefix + a **known opId** + **uniqueness**,
+  and **rejects** the prepared plan (`PROTOCOL_ERROR`, discard) on malformation or
+  collision. A future split mints `body_<opId>:<k>` (deferred to W-WP6). *Reason:*
+  split/merge body counts are unknowable before OCCT executes, so Rust could never
+  pre-mint them; `opId` is Rust-owned, so determinism and replay stability hold with
+  worker minting + Rust adoption. This refines the §2 `BodyId` "Rust-minted" note
+  (loaded/imported bodies stay Rust-minted; only NewBody flips to worker-mint +
+  adopt). No fixture embeds a contrary minting assumption (the current fixtures use
+  `body_1` only as a loaded-body example), so no fixture bump is required.
 
 - **2026-07-17 — Rust is the sole hash authority; `ExecutePlan` gains
   `prefixHashes`** (X-WP1, orchestrator-signed). [§7.2](#72-regen--executeplan)
