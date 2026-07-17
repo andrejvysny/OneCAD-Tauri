@@ -1,0 +1,12 @@
+# Conflicting-constraint sketch (SCHEMA §7.4). Ports corpus (g)
+# testConflictingConstraintsDetected: two Fixed points at x=0 and x=10 plus a
+# HorizontalDistance(25) between them is unsatisfiable => SketchUpsert state
+# "Conflicting"; a SolveDrag in that gesture reports status "conflicting" with a
+# non-empty conflicting[] list. Consume the unsolicited hello (SCHEMA §6) first.
+{"expect":{"v":1,"t":"hello","seq":0}}
+{"send":{"v":1,"t":"req","id":1,"verb":"SketchUpsert","args":{"sketchId":"cf","plane":{"kind":"XY"},"entities":[{"id":"p1","type":"Point","at":[0,0]},{"id":"p2","type":"Point","at":[10,0]}],"constraints":[{"id":"f1","type":"Fixed","entities":["p1"]},{"id":"f2","type":"Fixed","entities":["p2"]},{"id":"hd","type":"HorizontalDistance","entities":["p1","p2"],"value":25.0}]}}}
+{"expect":{"v":1,"t":"resp","id":1,"ok":true,"result":{"upserted":true,"state":"Conflicting"}}}
+{"send":{"v":1,"t":"req","id":2,"verb":"BeginGesture","args":{"sketchId":"cf","sketchRevision":1,"gestureId":9,"drag":{"pointId":"p1"}}}}
+{"expect":{"v":1,"t":"resp","id":2,"ok":true,"result":{"gestureId":9,"ready":true}}}
+{"send":{"v":1,"t":"req","id":3,"verb":"SolveDrag","args":{"gestureId":9,"seq":1,"pointId":"p1","target":[2,0]}}}
+{"expect":{"v":1,"t":"resp","id":3,"ok":true,"result":{"gestureId":9,"seq":1,"status":"conflicting","conflicting":"$any"}}}

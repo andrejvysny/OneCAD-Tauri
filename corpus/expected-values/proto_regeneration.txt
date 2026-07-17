@@ -1,0 +1,1701 @@
+=== OneCAD-CPP prototype: proto_regeneration ===
+date_utc: 2026-07-16T18:48:36Z
+git_rev: b4ddcccc48134531f3ff80f11ddf9f42ad5a967e
+binary: ./build/tests/proto_regeneration
+=== stdout+stderr (exit code appended) ===
+
+=== RegenerationEngine Prototype Tests ===
+
+Test 2: DependencyGraph topological sort...onecad.app.history.dependency: addOperation opId= "op1" type= 0 outputs= 1
+onecad.app.history.dependency: addOperation opId= "op2" type= 2 outputs= 1
+ PASS
+Test 3: Suppression and failure tracking...onecad.app.history.dependency: addOperation opId= "op1" type= 0 outputs= 1
+onecad.app.history.dependency: addOperation opId= "op2" type= 2 outputs= 1
+ PASS
+Test 6: Cycle detection in dependency graph...onecad.app.history.dependency: addOperation opId= "op1" type= 0 outputs= 1
+ PASS
+Test 1: Single extrude regeneration...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "7f5fbd1a-7c2d-4a32-aa2c-ea6d03dfef6d" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "ebd6d939-664b-453f-b891-905177247475" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "a7b8674c-26f5-4ca3-b321-a918de099cc9" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "fdd59b0d-d21d-4802-9672-0d3907210b95" totalEntities= 4
+onecad.core.sketch: addLine startId= "7f5fbd1a-7c2d-4a32-aa2c-ea6d03dfef6d" endId= "ebd6d939-664b-453f-b891-905177247475" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "ebd6d939-664b-453f-b891-905177247475" endId= "a7b8674c-26f5-4ca3-b321-a918de099cc9" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "a7b8674c-26f5-4ca3-b321-a918de099cc9" endId= "fdd59b0d-d21d-4802-9672-0d3907210b95" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "fdd59b0d-d21d-4802-9672-0d3907210b95" endId= "7f5fbd1a-7c2d-4a32-aa2c-ea6d03dfef6d" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "fb00ee67-855e-43e9-b02a-c666528782bf" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "8216e1e7-5d42-4789-a6e8-405f5ca9b787" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "8216e1e7-5d42-4789-a6e8-405f5ca9b787"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "8216e1e7-5d42-4789-a6e8-405f5ca9b787"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+ PASS
+Test 4: Chain regeneration (extrude + downstream)...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "d26e14a9-9867-483b-be79-b396ce2291a4" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "0bd77556-8d88-42c3-af6c-e3e47f5e7044" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "61ceb47d-598d-4b80-b8e7-bb5d4c0f20e8" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "734ce5d2-f915-4d59-b132-ce2c15ece639" totalEntities= 4
+onecad.core.sketch: addLine startId= "d26e14a9-9867-483b-be79-b396ce2291a4" endId= "0bd77556-8d88-42c3-af6c-e3e47f5e7044" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "0bd77556-8d88-42c3-af6c-e3e47f5e7044" endId= "61ceb47d-598d-4b80-b8e7-bb5d4c0f20e8" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "61ceb47d-598d-4b80-b8e7-bb5d4c0f20e8" endId= "734ce5d2-f915-4d59-b132-ce2c15ece639" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "734ce5d2-f915-4d59-b132-ce2c15ece639" endId= "d26e14a9-9867-483b-be79-b396ce2291a4" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "9e3b58b5-8edb-4391-9a37-e13279a04d44" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "c2dda8be-4125-453f-8aad-368986ca1381" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "c2dda8be-4125-453f-8aad-368986ca1381"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "c2dda8be-4125-453f-8aad-368986ca1381"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+ PASS
+Test 5: Regeneration failure on missing sketch...onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "ff4406fd-287b-49cc-9db6-6af5b067bd3d" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "061d7d66-34d9-44b3-a078-fffbcd5b4407" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:null-shape opId= "061d7d66-34d9-44b3-a078-fffbcd5b4407" error= "Sketch not found: nonexistent-sketch"
+onecad.app.history.regeneration: regenerateAll:operation-failed opId= "061d7d66-34d9-44b3-a078-fffbcd5b4407" error= "Sketch not found: nonexistent-sketch" source= "SketchRegionRef(nonexistent-sketch,region1)" resultBodies= "ff4406fd-287b-49cc-9db6-6af5b067bd3d"
+onecad.app.history.regeneration: regenerateAll:done status= 2 succeeded= 0 failed= 1 skipped= 0
+ PASS
+Test 7: Sketch host attachment JSON round-trip...onecad.core.sketch: invalidateSolver entityCount= 0 constraintCount= 0
+ PASS
+Test 8: History targetBodyId JSON round-trip... PASS
+Test 9: Attached sketch extrude Add targets host body...onecad.core.sketch: addPoint 8 8 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "4741a939-201e-4dd9-bdef-f92b8218e219" totalEntities= 1
+onecad.core.sketch: addPoint 12 8 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "1106a074-fc52-4878-8c9c-55210f1b4032" totalEntities= 2
+onecad.core.sketch: addPoint 12 12 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "84fca4e6-266d-4f16-a429-dcb3ea805849" totalEntities= 3
+onecad.core.sketch: addPoint 8 12 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "92fc0ba4-c5ec-4929-8730-bf1e46e20f10" totalEntities= 4
+onecad.core.sketch: addLine startId= "4741a939-201e-4dd9-bdef-f92b8218e219" endId= "1106a074-fc52-4878-8c9c-55210f1b4032" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "1106a074-fc52-4878-8c9c-55210f1b4032" endId= "84fca4e6-266d-4f16-a429-dcb3ea805849" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "84fca4e6-266d-4f16-a429-dcb3ea805849" endId= "92fc0ba4-c5ec-4929-8730-bf1e46e20f10" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "92fc0ba4-c5ec-4929-8730-bf1e46e20f10" endId= "4741a939-201e-4dd9-bdef-f92b8218e219" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 0
+onecad.app.history.regeneration: executeOperation:start opId= "f6c1ff48-2b22-47e2-abb1-45733ddab319" type= 0 outputs= 1
+onecad.app.history.regeneration: resolveLegacySketchHostBodyId:resolved sketchId= "9cfabdbb-1688-402d-8558-5d9353f53bb7" bodyId= "c30b6f24-3a7c-4ca8-9ca2-a9995a314d9d"
+onecad.app.history.regeneration: resolveBooleanTargetBodyId:from-legacy-host-face opId= "f6c1ff48-2b22-47e2-abb1-45733ddab319" targetBodyId= "c30b6f24-3a7c-4ca8-9ca2-a9995a314d9d"
+onecad.app.history.regeneration: executeOperation:done opId= "f6c1ff48-2b22-47e2-abb1-45733ddab319"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "f6c1ff48-2b22-47e2-abb1-45733ddab319"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+ PASS
+Test 10: Attached sketch extrude Cut targets host body...onecad.core.sketch: addPoint 8 8 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "def225aa-8cdd-467d-a52b-a750643baddc" totalEntities= 1
+onecad.core.sketch: addPoint 12 8 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "c94876a5-eb40-43c8-8228-c43f33c7960d" totalEntities= 2
+onecad.core.sketch: addPoint 12 12 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "88554760-6abe-414c-82d8-f0d8d1aedbb4" totalEntities= 3
+onecad.core.sketch: addPoint 8 12 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "c9f480c0-768f-48dd-8caa-3f4ff002ef72" totalEntities= 4
+onecad.core.sketch: addLine startId= "def225aa-8cdd-467d-a52b-a750643baddc" endId= "c94876a5-eb40-43c8-8228-c43f33c7960d" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "c94876a5-eb40-43c8-8228-c43f33c7960d" endId= "88554760-6abe-414c-82d8-f0d8d1aedbb4" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "88554760-6abe-414c-82d8-f0d8d1aedbb4" endId= "c9f480c0-768f-48dd-8caa-3f4ff002ef72" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "c9f480c0-768f-48dd-8caa-3f4ff002ef72" endId= "def225aa-8cdd-467d-a52b-a750643baddc" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: extractDependencies:extrude-target-body opId= "1b7e76bb-10bf-43cc-864d-ebf1543839dc" targetBodyId= "545ca73a-b6e5-4e99-b97e-d97dba891a83" mode= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: extractDependencies:extrude-target-body opId= "1b7e76bb-10bf-43cc-864d-ebf1543839dc" targetBodyId= "545ca73a-b6e5-4e99-b97e-d97dba891a83" mode= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 0
+onecad.app.history.regeneration: executeOperation:start opId= "1b7e76bb-10bf-43cc-864d-ebf1543839dc" type= 0 outputs= 1
+onecad.app.history.regeneration: resolveBooleanTargetBodyId:explicit opId= "1b7e76bb-10bf-43cc-864d-ebf1543839dc" targetBodyId= "545ca73a-b6e5-4e99-b97e-d97dba891a83"
+onecad.app.history.regeneration: executeOperation:done opId= "1b7e76bb-10bf-43cc-864d-ebf1543839dc"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "1b7e76bb-10bf-43cc-864d-ebf1543839dc"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+ PASS
+Test 11: Attached sketch revolve targets host body...onecad.core.sketch: addPoint 9 12 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "51449b6a-1afd-4d1c-85b4-2ef2d682ab2b" totalEntities= 1
+onecad.core.sketch: addPoint 11 12 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "5fa5bda4-9e58-40c8-ba27-9cd6b90843cf" totalEntities= 2
+onecad.core.sketch: addPoint 11 14 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "72c46a2e-23d5-4c7e-9f6e-3cccab137196" totalEntities= 3
+onecad.core.sketch: addPoint 9 14 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "a27eacb2-7425-4b64-8b9e-9ee5bb4301f1" totalEntities= 4
+onecad.core.sketch: addLine startId= "51449b6a-1afd-4d1c-85b4-2ef2d682ab2b" endId= "5fa5bda4-9e58-40c8-ba27-9cd6b90843cf" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "5fa5bda4-9e58-40c8-ba27-9cd6b90843cf" endId= "72c46a2e-23d5-4c7e-9f6e-3cccab137196" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "72c46a2e-23d5-4c7e-9f6e-3cccab137196" endId= "a27eacb2-7425-4b64-8b9e-9ee5bb4301f1" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "a27eacb2-7425-4b64-8b9e-9ee5bb4301f1" endId= "51449b6a-1afd-4d1c-85b4-2ef2d682ab2b" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.core.sketch: addPoint 0 10 construction= true
+onecad.core.sketch: invalidateSolver entityCount= 9 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "1bcaae99-bc57-4fe0-8e70-f838c90ab159" totalEntities= 9
+onecad.core.sketch: addPoint 20 10 construction= true
+onecad.core.sketch: invalidateSolver entityCount= 10 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "7b8064e8-f762-4a36-8237-0bb45d6aeeb1" totalEntities= 10
+onecad.core.sketch: addLine startId= "1bcaae99-bc57-4fe0-8e70-f838c90ab159" endId= "7b8064e8-f762-4a36-8237-0bb45d6aeeb1" construction= true
+onecad.core.sketch: invalidateSolver entityCount= 11 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: extractDependencies:revolve-target-body opId= "6b9e35b4-b5ab-48a7-8d41-170ce5f00b55" targetBodyId= "43753460-8075-4096-8a9a-48dd155ba0b9" mode= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: extractDependencies:revolve-target-body opId= "6b9e35b4-b5ab-48a7-8d41-170ce5f00b55" targetBodyId= "43753460-8075-4096-8a9a-48dd155ba0b9" mode= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 0
+onecad.app.history.regeneration: executeOperation:start opId= "6b9e35b4-b5ab-48a7-8d41-170ce5f00b55" type= 1 outputs= 1
+onecad.app.history.regeneration: resolveBooleanTargetBodyId:explicit opId= "6b9e35b4-b5ab-48a7-8d41-170ce5f00b55" targetBodyId= "43753460-8075-4096-8a9a-48dd155ba0b9"
+onecad.app.history.regeneration: executeOperation:done opId= "6b9e35b4-b5ab-48a7-8d41-170ce5f00b55"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "6b9e35b4-b5ab-48a7-8d41-170ce5f00b55"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+ PASS
+Test 12: Boolean op fails explicitly when target body is unresolved...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "d913ee87-6555-4b20-902a-d08c4bbf86da" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "afb2541a-91f0-4961-82c3-0130c9f7c2a2" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "0b7555ed-b180-4b4f-920f-14ba9bac5bfd" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "8e5be033-e1be-473a-b11c-e8eedee406a9" totalEntities= 4
+onecad.core.sketch: addLine startId= "d913ee87-6555-4b20-902a-d08c4bbf86da" endId= "afb2541a-91f0-4961-82c3-0130c9f7c2a2" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "afb2541a-91f0-4961-82c3-0130c9f7c2a2" endId= "0b7555ed-b180-4b4f-920f-14ba9bac5bfd" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "0b7555ed-b180-4b4f-920f-14ba9bac5bfd" endId= "8e5be033-e1be-473a-b11c-e8eedee406a9" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "8e5be033-e1be-473a-b11c-e8eedee406a9" endId= "d913ee87-6555-4b20-902a-d08c4bbf86da" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: extractDependencies:extrude-target-body opId= "b534b19e-ff65-4df3-945c-ed5554fa262c" targetBodyId= "missing-body" mode= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: extractDependencies:extrude-target-body opId= "b534b19e-ff65-4df3-945c-ed5554fa262c" targetBodyId= "missing-body" mode= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 0
+onecad.app.history.regeneration: executeOperation:start opId= "b534b19e-ff65-4df3-945c-ed5554fa262c" type= 0 outputs= 1
+onecad.app.history.regeneration: resolveBooleanTargetBodyId:explicit opId= "b534b19e-ff65-4df3-945c-ed5554fa262c" targetBodyId= "missing-body"
+onecad.app.history.regeneration: buildExtrude:boolean-target-not-found opId= "b534b19e-ff65-4df3-945c-ed5554fa262c" targetBodyId= "missing-body"
+onecad.app.history.regeneration: executeOperation:null-shape opId= "b534b19e-ff65-4df3-945c-ed5554fa262c" error= "Target body not found: missing-body"
+onecad.app.history.regeneration: regenerateAll:operation-failed opId= "b534b19e-ff65-4df3-945c-ed5554fa262c" error= "Target body not found: missing-body" source= "SketchRegionRef(1d91bf24-57aa-481a-8b9a-17cf6bbe5f14,52c9d169-fbcb-48cb-b56b-66ebb7ddef8a#seg0_p0|94c08a6f-d2d6-4e6b-bece-4e613aeb6302#seg0_p0|ed0a918b-7ce0-47fc-be67-1d7db8b93e88#seg0_p0|f624fb03-f3e4-485e-b3ef-f256a8cce3fc#seg0_p0|)" resultBodies= "missing-body"
+onecad.app.history.regeneration: regenerateAll:done status= 2 succeeded= 0 failed= 1 skipped= 0
+ PASS
+Test 13: Host face projection partitions regions (square + circle)...onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "5106a0fb-38ae-404d-bdd3-b50af182ebc3" totalEntities= 1
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.faceboundary: projectFaceBoundaries:start existingEntityCount= 2 preferExactPrimitives= true lockInsertedBoundaryPoints= true fallbackSegmentsPerCurve= 32
+onecad.core.faceboundary: projectFaceBoundaries:wire-start wireIndex= 1 wireClosed= true
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "a8b23740-cba1-4139-bac2-cf7083975031" totalEntities= 3
+onecad.core.sketch: addPoint 0 20 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "6da6e50f-33d1-421c-95e3-3d79efef7734" totalEntities= 4
+onecad.core.sketch: addLine startId= "a8b23740-cba1-4139-bac2-cf7083975031" endId= "6da6e50f-33d1-421c-95e3-3d79efef7734" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addPoint 20 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "f3a5d2b0-7333-4058-8824-249b01bd29a5" totalEntities= 6
+onecad.core.sketch: addLine startId= "a8b23740-cba1-4139-bac2-cf7083975031" endId= "f3a5d2b0-7333-4058-8824-249b01bd29a5" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addPoint 20 20 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "57dd9f39-eab8-4bd7-b08a-57610e4f6df9" totalEntities= 8
+onecad.core.sketch: addLine startId= "f3a5d2b0-7333-4058-8824-249b01bd29a5" endId= "57dd9f39-eab8-4bd7-b08a-57610e4f6df9" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 9 constraintCount= 0
+onecad.core.sketch: addLine startId= "6da6e50f-33d1-421c-95e3-3d79efef7734" endId= "57dd9f39-eab8-4bd7-b08a-57610e4f6df9" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 10 constraintCount= 0
+onecad.core.faceboundary: projectFaceBoundaries:wire-done wireIndex= 1 wireCurveCount= 4 wireClosedByCircle= false firstPointId= "a8b23740-cba1-4139-bac2-cf7083975031" lastPointId= "57dd9f39-eab8-4bd7-b08a-57610e4f6df9"
+onecad.core.sketch: addConstraint:start type= 3 id= "9050548b-ba18-4976-b9b9-9227e4eed272"
+onecad.core.sketch: invalidateSolver entityCount= 10 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "9050548b-ba18-4976-b9b9-9227e4eed272" totalConstraints= 1
+onecad.core.sketch: addConstraint:start type= 3 id= "7acbff42-5abc-4110-b668-ec7fb8c9b1a0"
+onecad.core.sketch: invalidateSolver entityCount= 10 constraintCount= 2
+onecad.core.sketch: addConstraint:done id= "7acbff42-5abc-4110-b668-ec7fb8c9b1a0" totalConstraints= 2
+onecad.core.sketch: addConstraint:start type= 3 id= "770f88b8-3adf-4117-a953-7c0f2ebcd371"
+onecad.core.sketch: invalidateSolver entityCount= 10 constraintCount= 3
+onecad.core.sketch: addConstraint:done id= "770f88b8-3adf-4117-a953-7c0f2ebcd371" totalConstraints= 3
+onecad.core.sketch: addConstraint:start type= 3 id= "82e1af7c-e856-4d65-bc31-1465f3c3a126"
+onecad.core.sketch: invalidateSolver entityCount= 10 constraintCount= 4
+onecad.core.sketch: addConstraint:done id= "82e1af7c-e856-4d65-bc31-1465f3c3a126" totalConstraints= 4
+onecad.core.faceboundary: projectFaceBoundaries:done entityCount= 10 wireCount= 1 success= true hasClosedBoundary= true insertedPoints= 4 insertedCurves= 4 insertedFixedConstraints= 4
+ PASS
+Test 14: Legacy host-boundary backfill is idempotent...onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "ba906067-cb46-430b-9fac-85be5612db76" totalEntities= 1
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.faceboundary: projectFaceBoundaries:start existingEntityCount= 2 preferExactPrimitives= true lockInsertedBoundaryPoints= true fallbackSegmentsPerCurve= 32
+onecad.core.faceboundary: projectFaceBoundaries:wire-start wireIndex= 1 wireClosed= true
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "22d2bd7e-f1d2-498c-937d-99b901593962" totalEntities= 3
+onecad.core.sketch: addPoint 0 20 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "95ad34b3-c867-4854-9a1b-4d2d8455f51c" totalEntities= 4
+onecad.core.sketch: addLine startId= "22d2bd7e-f1d2-498c-937d-99b901593962" endId= "95ad34b3-c867-4854-9a1b-4d2d8455f51c" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addPoint 20 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "7f6817b9-1686-480b-b5d8-84ab0cfe83cf" totalEntities= 6
+onecad.core.sketch: addLine startId= "22d2bd7e-f1d2-498c-937d-99b901593962" endId= "7f6817b9-1686-480b-b5d8-84ab0cfe83cf" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addPoint 20 20 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "8339e906-97de-4107-bd77-1b9ae723715e" totalEntities= 8
+onecad.core.sketch: addLine startId= "7f6817b9-1686-480b-b5d8-84ab0cfe83cf" endId= "8339e906-97de-4107-bd77-1b9ae723715e" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 9 constraintCount= 0
+onecad.core.sketch: addLine startId= "95ad34b3-c867-4854-9a1b-4d2d8455f51c" endId= "8339e906-97de-4107-bd77-1b9ae723715e" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 10 constraintCount= 0
+onecad.core.faceboundary: projectFaceBoundaries:wire-done wireIndex= 1 wireCurveCount= 4 wireClosedByCircle= false firstPointId= "22d2bd7e-f1d2-498c-937d-99b901593962" lastPointId= "8339e906-97de-4107-bd77-1b9ae723715e"
+onecad.core.sketch: addConstraint:start type= 3 id= "bb25d2a5-486a-4f97-b6cb-d622157b6045"
+onecad.core.sketch: invalidateSolver entityCount= 10 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "bb25d2a5-486a-4f97-b6cb-d622157b6045" totalConstraints= 1
+onecad.core.sketch: addConstraint:start type= 3 id= "cc4f8d40-e657-4cf6-ade1-567f41dda6b6"
+onecad.core.sketch: invalidateSolver entityCount= 10 constraintCount= 2
+onecad.core.sketch: addConstraint:done id= "cc4f8d40-e657-4cf6-ade1-567f41dda6b6" totalConstraints= 2
+onecad.core.sketch: addConstraint:start type= 3 id= "933727d1-e906-4722-a41f-c72f58f1d3f8"
+onecad.core.sketch: invalidateSolver entityCount= 10 constraintCount= 3
+onecad.core.sketch: addConstraint:done id= "933727d1-e906-4722-a41f-c72f58f1d3f8" totalConstraints= 3
+onecad.core.sketch: addConstraint:start type= 3 id= "4b89c1d1-1872-4eac-b28d-05116fac66cd"
+onecad.core.sketch: invalidateSolver entityCount= 10 constraintCount= 4
+onecad.core.sketch: addConstraint:done id= "4b89c1d1-1872-4eac-b28d-05116fac66cd" totalConstraints= 4
+onecad.core.faceboundary: projectFaceBoundaries:done entityCount= 10 wireCount= 1 success= true hasClosedBoundary= true insertedPoints= 4 insertedCurves= 4 insertedFixedConstraints= 4
+ PASS
+Test 15: Sketch host projection JSON requires projection version... PASS
+Test 16: Selection priority prefers SketchRegion over Face... PASS
+Test 17: Projected host reference geometry is non-editable...onecad.core.faceboundary: projectFaceBoundaries:start existingEntityCount= 0 preferExactPrimitives= true lockInsertedBoundaryPoints= true fallbackSegmentsPerCurve= 32
+onecad.core.faceboundary: projectFaceBoundaries:wire-start wireIndex= 1 wireClosed= true
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "9ab4afcc-76b2-4989-9d10-0a2dcf95d010" totalEntities= 1
+onecad.core.sketch: addPoint 0 20 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "a383e273-5928-4ada-9081-d0f8ac8bb354" totalEntities= 2
+onecad.core.sketch: addLine startId= "9ab4afcc-76b2-4989-9d10-0a2dcf95d010" endId= "a383e273-5928-4ada-9081-d0f8ac8bb354" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint 20 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "2dbab775-f7dc-420c-9ef2-6ec428789582" totalEntities= 4
+onecad.core.sketch: addLine startId= "9ab4afcc-76b2-4989-9d10-0a2dcf95d010" endId= "2dbab775-f7dc-420c-9ef2-6ec428789582" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addPoint 20 20 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "336451aa-870e-4b25-b8b7-aaf6b4f61c2e" totalEntities= 6
+onecad.core.sketch: addLine startId= "2dbab775-f7dc-420c-9ef2-6ec428789582" endId= "336451aa-870e-4b25-b8b7-aaf6b4f61c2e" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "a383e273-5928-4ada-9081-d0f8ac8bb354" endId= "336451aa-870e-4b25-b8b7-aaf6b4f61c2e" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.core.faceboundary: projectFaceBoundaries:wire-done wireIndex= 1 wireCurveCount= 4 wireClosedByCircle= false firstPointId= "9ab4afcc-76b2-4989-9d10-0a2dcf95d010" lastPointId= "336451aa-870e-4b25-b8b7-aaf6b4f61c2e"
+onecad.core.sketch: addConstraint:start type= 3 id= "66e886e3-b927-4e17-90de-2f89915d53a1"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "66e886e3-b927-4e17-90de-2f89915d53a1" totalConstraints= 1
+onecad.core.sketch: addConstraint:start type= 3 id= "2306617e-e954-4f59-9ff2-ecfa1c4bd7d4"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 2
+onecad.core.sketch: addConstraint:done id= "2306617e-e954-4f59-9ff2-ecfa1c4bd7d4" totalConstraints= 2
+onecad.core.sketch: addConstraint:start type= 3 id= "96b0d247-f84c-46fd-81ba-975717ed3c6b"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 3
+onecad.core.sketch: addConstraint:done id= "96b0d247-f84c-46fd-81ba-975717ed3c6b" totalConstraints= 3
+onecad.core.sketch: addConstraint:start type= 3 id= "ec7608a0-2a2a-45f0-8964-5d275ce95279"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 4
+onecad.core.sketch: addConstraint:done id= "ec7608a0-2a2a-45f0-8964-5d275ce95279" totalConstraints= 4
+onecad.core.faceboundary: projectFaceBoundaries:done entityCount= 8 wireCount= 1 success= true hasClosedBoundary= true insertedPoints= 4 insertedCurves= 4 insertedFixedConstraints= 4
+onecad.core.sketch: addPoint 100 100 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 9 constraintCount= 4
+onecad.core.sketch: addPoint:done id= "9ef69f94-acdc-4f2f-ac1a-786403918c10" totalEntities= 9
+onecad.core.sketch: addConstraint:start type= 0 id= "1e4507fb-e17b-4389-9fc1-5805f9933cca"
+onecad.core.sketch: addConstraint:reference-locked "9ab4afcc-76b2-4989-9d10-0a2dcf95d010" constraintType= 0
+onecad.core.sketch: removeConstraint "ec7608a0-2a2a-45f0-8964-5d275ce95279"
+ PASS
+Test 20: AddOperationCommand rolls back on replay failure...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "d26bc9f0-2db8-4cee-8a51-bc2c9c3fbb0f" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "e9dbf635-7e58-45b2-be87-197b4ac79aae" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "7ca0f36f-89a6-4133-a337-1836415e22fb" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "db31fe59-91e9-4980-89f2-201acfdab976" totalEntities= 4
+onecad.core.sketch: addLine startId= "d26bc9f0-2db8-4cee-8a51-bc2c9c3fbb0f" endId= "e9dbf635-7e58-45b2-be87-197b4ac79aae" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "e9dbf635-7e58-45b2-be87-197b4ac79aae" endId= "7ca0f36f-89a6-4133-a337-1836415e22fb" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "7ca0f36f-89a6-4133-a337-1836415e22fb" endId= "db31fe59-91e9-4980-89f2-201acfdab976" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "db31fe59-91e9-4980-89f2-201acfdab976" endId= "d26bc9f0-2db8-4cee-8a51-bc2c9c3fbb0f" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "12b1a81f-d9f5-43a3-893c-7d90d56bceab" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "b4e181f7-b849-4cb6-a9a6-779e1a32ceb4" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "b4e181f7-b849-4cb6-a9a6-779e1a32ceb4"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "b4e181f7-b849-4cb6-a9a6-779e1a32ceb4"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 2
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "2693f567-ea14-4c3f-b6de-4f6603c1dc54" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "12b1a81f-d9f5-43a3-893c-7d90d56bceab" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "b4e181f7-b849-4cb6-a9a6-779e1a32ceb4" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "b4e181f7-b849-4cb6-a9a6-779e1a32ceb4"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "b4e181f7-b849-4cb6-a9a6-779e1a32ceb4"
+onecad.app.history.regeneration: executeOperation:start opId= "2076659b-ccfb-40cd-9ebd-5be7b61bde90" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:null-shape opId= "2076659b-ccfb-40cd-9ebd-5be7b61bde90" error= "Region not found: nonexistent-region-id"
+onecad.app.history.regeneration: regenerateAll:operation-failed opId= "2076659b-ccfb-40cd-9ebd-5be7b61bde90" error= "Region not found: nonexistent-region-id" source= "SketchRegionRef(c2b621b9-29dd-4b0d-8e40-c2492cce71d7,nonexistent-region-id)" resultBodies= "2693f567-ea14-4c3f-b6de-4f6603c1dc54"
+onecad.app.history.regeneration: regenerateAll:done status= 1 succeeded= 1 failed= 1 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "12b1a81f-d9f5-43a3-893c-7d90d56bceab" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "b4e181f7-b849-4cb6-a9a6-779e1a32ceb4" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "b4e181f7-b849-4cb6-a9a6-779e1a32ceb4"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "b4e181f7-b849-4cb6-a9a6-779e1a32ceb4"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "12b1a81f-d9f5-43a3-893c-7d90d56bceab" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "b4e181f7-b849-4cb6-a9a6-779e1a32ceb4" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "b4e181f7-b849-4cb6-a9a6-779e1a32ceb4"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "b4e181f7-b849-4cb6-a9a6-779e1a32ceb4"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+ PASS
+Test: Extrude rejects FaceRef input at AddOperationCommand...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "2c8879fd-2aaf-4bfd-8fb1-6a77543e0b8a" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "5ce908fc-0262-46cf-ab14-00ba73bddbc4" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "dc2b9b23-8444-495c-9c47-1be60413dd80" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "dea9ea18-9a0f-4175-a041-587c1264628f" totalEntities= 4
+onecad.core.sketch: addLine startId= "2c8879fd-2aaf-4bfd-8fb1-6a77543e0b8a" endId= "5ce908fc-0262-46cf-ab14-00ba73bddbc4" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "5ce908fc-0262-46cf-ab14-00ba73bddbc4" endId= "dc2b9b23-8444-495c-9c47-1be60413dd80" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "dc2b9b23-8444-495c-9c47-1be60413dd80" endId= "dea9ea18-9a0f-4175-a041-587c1264628f" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "dea9ea18-9a0f-4175-a041-587c1264628f" endId= "2c8879fd-2aaf-4bfd-8fb1-6a77543e0b8a" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "6d13ff6d-3f4e-45f8-a185-53ba79f6808d" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "aaad6c87-10c0-4fec-98dc-252f371cd084" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "aaad6c87-10c0-4fec-98dc-252f371cd084"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "aaad6c87-10c0-4fec-98dc-252f371cd084"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+ PASS
+Test: Auto-sketch-on-face yields an extrudable region...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "2e70207a-810e-420e-b9ac-b77cff0a9449" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "9ee03dd8-0ecd-452c-926a-706d70cf5d63" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "888b3698-4d4f-46c7-afd3-0a04a8874af3" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "b213e019-56bd-4a63-b0e5-d09c7982b532" totalEntities= 4
+onecad.core.sketch: addLine startId= "2e70207a-810e-420e-b9ac-b77cff0a9449" endId= "9ee03dd8-0ecd-452c-926a-706d70cf5d63" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "9ee03dd8-0ecd-452c-926a-706d70cf5d63" endId= "888b3698-4d4f-46c7-afd3-0a04a8874af3" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "888b3698-4d4f-46c7-afd3-0a04a8874af3" endId= "b213e019-56bd-4a63-b0e5-d09c7982b532" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "b213e019-56bd-4a63-b0e5-d09c7982b532" endId= "2e70207a-810e-420e-b9ac-b77cff0a9449" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "ef5e966a-9084-4bf5-97dc-3984a3088fba" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "95830586-e219-4e8e-93c7-e8310b1946f3" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "95830586-e219-4e8e-93c7-e8310b1946f3"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "95830586-e219-4e8e-93c7-e8310b1946f3"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+onecad.core.faceboundary: projectFaceBoundaries:start existingEntityCount= 0 preferExactPrimitives= true lockInsertedBoundaryPoints= true fallbackSegmentsPerCurve= 32
+onecad.core.faceboundary: projectFaceBoundaries:wire-start wireIndex= 1 wireClosed= true
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "673f7409-fce0-4ea4-ac4e-b0a3cbd2b5b8" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "a53be58d-0113-43f1-a1c4-e1b056cff9ea" totalEntities= 2
+onecad.core.sketch: addLine startId= "673f7409-fce0-4ea4-ac4e-b0a3cbd2b5b8" endId= "a53be58d-0113-43f1-a1c4-e1b056cff9ea" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "3caf55dd-e5ff-4324-9e2d-587677fa4b2b" totalEntities= 4
+onecad.core.sketch: addLine startId= "a53be58d-0113-43f1-a1c4-e1b056cff9ea" endId= "3caf55dd-e5ff-4324-9e2d-587677fa4b2b" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "c05214f4-5914-43a9-aa0c-c54e67ef21ab" totalEntities= 6
+onecad.core.sketch: addLine startId= "3caf55dd-e5ff-4324-9e2d-587677fa4b2b" endId= "c05214f4-5914-43a9-aa0c-c54e67ef21ab" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "c05214f4-5914-43a9-aa0c-c54e67ef21ab" endId= "673f7409-fce0-4ea4-ac4e-b0a3cbd2b5b8" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.core.faceboundary: projectFaceBoundaries:wire-done wireIndex= 1 wireCurveCount= 4 wireClosedByCircle= false firstPointId= "673f7409-fce0-4ea4-ac4e-b0a3cbd2b5b8" lastPointId= "673f7409-fce0-4ea4-ac4e-b0a3cbd2b5b8"
+onecad.core.sketch: addConstraint:start type= 3 id= "fdb4d884-532e-4df8-b30f-b5dbac9e2377"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "fdb4d884-532e-4df8-b30f-b5dbac9e2377" totalConstraints= 1
+onecad.core.sketch: addConstraint:start type= 3 id= "484cb942-9e9e-4053-bd26-8b0b60971455"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 2
+onecad.core.sketch: addConstraint:done id= "484cb942-9e9e-4053-bd26-8b0b60971455" totalConstraints= 2
+onecad.core.sketch: addConstraint:start type= 3 id= "384788ee-fb7a-4e65-b26d-2b5f54c67537"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 3
+onecad.core.sketch: addConstraint:done id= "384788ee-fb7a-4e65-b26d-2b5f54c67537" totalConstraints= 3
+onecad.core.sketch: addConstraint:start type= 3 id= "f82266b5-4129-4ce2-a7b4-4d06a02eb536"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 4
+onecad.core.sketch: addConstraint:done id= "f82266b5-4129-4ce2-a7b4-4d06a02eb536" totalConstraints= 4
+onecad.core.faceboundary: projectFaceBoundaries:done entityCount= 8 wireCount= 1 success= true hasClosedBoundary= true insertedPoints= 4 insertedCurves= 4 insertedFixedConstraints= 4
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: extractDependencies:extrude-target-body opId= "135baa45-28a5-497c-98cf-5837c7932538" targetBodyId= "ef5e966a-9084-4bf5-97dc-3984a3088fba" mode= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: extractDependencies:extrude-target-body opId= "135baa45-28a5-497c-98cf-5837c7932538" targetBodyId= "ef5e966a-9084-4bf5-97dc-3984a3088fba" mode= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "ef5e966a-9084-4bf5-97dc-3984a3088fba" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "95830586-e219-4e8e-93c7-e8310b1946f3" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "95830586-e219-4e8e-93c7-e8310b1946f3"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "95830586-e219-4e8e-93c7-e8310b1946f3"
+onecad.app.history.regeneration: executeOperation:start opId= "135baa45-28a5-497c-98cf-5837c7932538" type= 0 outputs= 1
+onecad.app.history.regeneration: resolveBooleanTargetBodyId:explicit opId= "135baa45-28a5-497c-98cf-5837c7932538" targetBodyId= "ef5e966a-9084-4bf5-97dc-3984a3088fba"
+onecad.app.history.regeneration: executeOperation:done opId= "135baa45-28a5-497c-98cf-5837c7932538"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "135baa45-28a5-497c-98cf-5837c7932538"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 2 failed= 0 skipped= 0
+ PASS
+Test: Datum plane offset resolves + hosts a sketch...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "3e2dad7b-8529-4572-887b-d1ad8850b215" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "a8b4d859-618d-4d2e-b54f-cf74f687e75b" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "1ca76234-9673-432d-ae8c-6f9ade2757e7" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "f1f0e0f4-feca-4163-a761-19ee72d2f99b" totalEntities= 4
+onecad.core.sketch: addLine startId= "3e2dad7b-8529-4572-887b-d1ad8850b215" endId= "a8b4d859-618d-4d2e-b54f-cf74f687e75b" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "a8b4d859-618d-4d2e-b54f-cf74f687e75b" endId= "1ca76234-9673-432d-ae8c-6f9ade2757e7" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "1ca76234-9673-432d-ae8c-6f9ade2757e7" endId= "f1f0e0f4-feca-4163-a761-19ee72d2f99b" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "f1f0e0f4-feca-4163-a761-19ee72d2f99b" endId= "3e2dad7b-8529-4572-887b-d1ad8850b215" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "99c6e3fa-0216-4af6-8d86-c09f9e4b092c" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "afd78571-ae38-4322-8fb9-5a263e49da55" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "afd78571-ae38-4322-8fb9-5a263e49da55"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "afd78571-ae38-4322-8fb9-5a263e49da55"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+ PASS
+Test: OffsetFromFace datum follows an upstream edit...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "51164b43-99f3-4a0c-aba3-4d3475023fda" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "6773539d-930d-48cf-aafc-45274de166bc" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "4ac5752d-d6c8-4746-b48b-b72f2d6b9a80" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "af25352e-0290-42a1-a4e1-14e250698a4a" totalEntities= 4
+onecad.core.sketch: addLine startId= "51164b43-99f3-4a0c-aba3-4d3475023fda" endId= "6773539d-930d-48cf-aafc-45274de166bc" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "6773539d-930d-48cf-aafc-45274de166bc" endId= "4ac5752d-d6c8-4746-b48b-b72f2d6b9a80" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "4ac5752d-d6c8-4746-b48b-b72f2d6b9a80" endId= "af25352e-0290-42a1-a4e1-14e250698a4a" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "af25352e-0290-42a1-a4e1-14e250698a4a" endId= "51164b43-99f3-4a0c-aba3-4d3475023fda" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "5680c253-533f-46ca-84e4-5fb10f15f860" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "503d2cc5-f06a-4082-8561-802b786ce1d4" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "503d2cc5-f06a-4082-8561-802b786ce1d4"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "503d2cc5-f06a-4082-8561-802b786ce1d4"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "5680c253-533f-46ca-84e4-5fb10f15f860" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "503d2cc5-f06a-4082-8561-802b786ce1d4" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "503d2cc5-f06a-4082-8561-802b786ce1d4"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "503d2cc5-f06a-4082-8561-802b786ce1d4"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+ PASS
+Test: Update Attachment re-syncs a frozen sketch plane...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "581c98a7-d692-480d-a59b-05f2f79384fd" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "9157d123-7876-4820-8153-c424473c70f9" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "ceb0dd83-6454-472c-a146-b17fdb12d39c" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "1ae98829-9b9f-4cd7-87bb-4b6a82f3fa49" totalEntities= 4
+onecad.core.sketch: addLine startId= "581c98a7-d692-480d-a59b-05f2f79384fd" endId= "9157d123-7876-4820-8153-c424473c70f9" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "9157d123-7876-4820-8153-c424473c70f9" endId= "ceb0dd83-6454-472c-a146-b17fdb12d39c" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "ceb0dd83-6454-472c-a146-b17fdb12d39c" endId= "1ae98829-9b9f-4cd7-87bb-4b6a82f3fa49" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "1ae98829-9b9f-4cd7-87bb-4b6a82f3fa49" endId= "581c98a7-d692-480d-a59b-05f2f79384fd" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "33003e12-7c71-4977-924d-db873df82037" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "988bfec9-5498-43c2-97b5-0a151d066ea4" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "988bfec9-5498-43c2-97b5-0a151d066ea4"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "988bfec9-5498-43c2-97b5-0a151d066ea4"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+onecad.core.faceboundary: projectFaceBoundaries:start existingEntityCount= 0 preferExactPrimitives= true lockInsertedBoundaryPoints= true fallbackSegmentsPerCurve= 32
+onecad.core.faceboundary: projectFaceBoundaries:wire-start wireIndex= 1 wireClosed= true
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "0def30d6-9091-4b4c-bea6-cff2b73df83e" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "9ee14f38-245e-4cca-8cb9-f17e65203467" totalEntities= 2
+onecad.core.sketch: addLine startId= "0def30d6-9091-4b4c-bea6-cff2b73df83e" endId= "9ee14f38-245e-4cca-8cb9-f17e65203467" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "a00cb6d5-1cf9-43a6-b336-e82c122010c7" totalEntities= 4
+onecad.core.sketch: addLine startId= "9ee14f38-245e-4cca-8cb9-f17e65203467" endId= "a00cb6d5-1cf9-43a6-b336-e82c122010c7" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "c0cd0df0-28ac-4267-9697-cb98b9e5fe27" totalEntities= 6
+onecad.core.sketch: addLine startId= "a00cb6d5-1cf9-43a6-b336-e82c122010c7" endId= "c0cd0df0-28ac-4267-9697-cb98b9e5fe27" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "c0cd0df0-28ac-4267-9697-cb98b9e5fe27" endId= "0def30d6-9091-4b4c-bea6-cff2b73df83e" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.core.faceboundary: projectFaceBoundaries:wire-done wireIndex= 1 wireCurveCount= 4 wireClosedByCircle= false firstPointId= "0def30d6-9091-4b4c-bea6-cff2b73df83e" lastPointId= "0def30d6-9091-4b4c-bea6-cff2b73df83e"
+onecad.core.sketch: addConstraint:start type= 3 id= "71acfaba-c222-497e-afca-ea44796ee2f5"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "71acfaba-c222-497e-afca-ea44796ee2f5" totalConstraints= 1
+onecad.core.sketch: addConstraint:start type= 3 id= "2d3019f5-3302-42b2-9bb9-bda549c57b38"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 2
+onecad.core.sketch: addConstraint:done id= "2d3019f5-3302-42b2-9bb9-bda549c57b38" totalConstraints= 2
+onecad.core.sketch: addConstraint:start type= 3 id= "e39efc2e-93a5-4636-8313-b97400e8b0e9"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 3
+onecad.core.sketch: addConstraint:done id= "e39efc2e-93a5-4636-8313-b97400e8b0e9" totalConstraints= 3
+onecad.core.sketch: addConstraint:start type= 3 id= "e4e27056-8780-4011-b9d9-f559c805e3b3"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 4
+onecad.core.sketch: addConstraint:done id= "e4e27056-8780-4011-b9d9-f559c805e3b3" totalConstraints= 4
+onecad.core.faceboundary: projectFaceBoundaries:done entityCount= 8 wireCount= 1 success= true hasClosedBoundary= true insertedPoints= 4 insertedCurves= 4 insertedFixedConstraints= 4
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 2
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "12ac5bda-0dd6-421c-a6c8-9c508049ac00" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "33003e12-7c71-4977-924d-db873df82037" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "988bfec9-5498-43c2-97b5-0a151d066ea4" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "988bfec9-5498-43c2-97b5-0a151d066ea4"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "988bfec9-5498-43c2-97b5-0a151d066ea4"
+onecad.app.history.regeneration: executeOperation:start opId= "f63eaaba-3d3b-4980-b454-fe0d9a9fcf2e" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "f63eaaba-3d3b-4980-b454-fe0d9a9fcf2e"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "f63eaaba-3d3b-4980-b454-fe0d9a9fcf2e"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 2 failed= 0 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 2
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "12ac5bda-0dd6-421c-a6c8-9c508049ac00" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "33003e12-7c71-4977-924d-db873df82037" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "988bfec9-5498-43c2-97b5-0a151d066ea4" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "988bfec9-5498-43c2-97b5-0a151d066ea4"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "988bfec9-5498-43c2-97b5-0a151d066ea4"
+onecad.app.history.regeneration: executeOperation:start opId= "f63eaaba-3d3b-4980-b454-fe0d9a9fcf2e" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "f63eaaba-3d3b-4980-b454-fe0d9a9fcf2e"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "f63eaaba-3d3b-4980-b454-fe0d9a9fcf2e"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 2 failed= 0 skipped= 0
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 4
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 2
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "12ac5bda-0dd6-421c-a6c8-9c508049ac00" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "33003e12-7c71-4977-924d-db873df82037" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "988bfec9-5498-43c2-97b5-0a151d066ea4" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "988bfec9-5498-43c2-97b5-0a151d066ea4"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "988bfec9-5498-43c2-97b5-0a151d066ea4"
+onecad.app.history.regeneration: executeOperation:start opId= "f63eaaba-3d3b-4980-b454-fe0d9a9fcf2e" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "f63eaaba-3d3b-4980-b454-fe0d9a9fcf2e"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "f63eaaba-3d3b-4980-b454-fe0d9a9fcf2e"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 2 failed= 0 skipped= 0
+ PASS
+Test: Update Attachment restores state on regen failure...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "317623e7-4e5a-4fc8-9778-575fe63c34e0" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "14800e19-354c-465e-8c13-62e5a9a5fe63" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "c0a06cfc-0d13-4c8a-b405-9091bb6fc50e" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "462eceb7-3950-4703-91e7-94fb20337b5b" totalEntities= 4
+onecad.core.sketch: addLine startId= "317623e7-4e5a-4fc8-9778-575fe63c34e0" endId= "14800e19-354c-465e-8c13-62e5a9a5fe63" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "14800e19-354c-465e-8c13-62e5a9a5fe63" endId= "c0a06cfc-0d13-4c8a-b405-9091bb6fc50e" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "c0a06cfc-0d13-4c8a-b405-9091bb6fc50e" endId= "462eceb7-3950-4703-91e7-94fb20337b5b" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "462eceb7-3950-4703-91e7-94fb20337b5b" endId= "317623e7-4e5a-4fc8-9778-575fe63c34e0" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "b3020b95-0144-40e4-ad15-5e9b03e53614" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "887738f6-abff-4ea8-8044-83091c88e78c" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "887738f6-abff-4ea8-8044-83091c88e78c"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "887738f6-abff-4ea8-8044-83091c88e78c"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+onecad.core.faceboundary: projectFaceBoundaries:start existingEntityCount= 0 preferExactPrimitives= true lockInsertedBoundaryPoints= true fallbackSegmentsPerCurve= 32
+onecad.core.faceboundary: projectFaceBoundaries:wire-start wireIndex= 1 wireClosed= true
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "7a354df3-4a49-4c4a-b462-40cef8d4d420" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "aad2cdc5-9f4a-420d-9482-7f1e751f8240" totalEntities= 2
+onecad.core.sketch: addLine startId= "7a354df3-4a49-4c4a-b462-40cef8d4d420" endId= "aad2cdc5-9f4a-420d-9482-7f1e751f8240" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "88c62b70-989c-4362-84f3-9b5855cc61b7" totalEntities= 4
+onecad.core.sketch: addLine startId= "aad2cdc5-9f4a-420d-9482-7f1e751f8240" endId= "88c62b70-989c-4362-84f3-9b5855cc61b7" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "b451c548-120c-4834-b180-25b55bc98fec" totalEntities= 6
+onecad.core.sketch: addLine startId= "88c62b70-989c-4362-84f3-9b5855cc61b7" endId= "b451c548-120c-4834-b180-25b55bc98fec" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "b451c548-120c-4834-b180-25b55bc98fec" endId= "7a354df3-4a49-4c4a-b462-40cef8d4d420" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.core.faceboundary: projectFaceBoundaries:wire-done wireIndex= 1 wireCurveCount= 4 wireClosedByCircle= false firstPointId= "7a354df3-4a49-4c4a-b462-40cef8d4d420" lastPointId= "7a354df3-4a49-4c4a-b462-40cef8d4d420"
+onecad.core.sketch: addConstraint:start type= 3 id= "2892a907-cbbf-46e3-88cf-2cf4e5fbe3ed"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "2892a907-cbbf-46e3-88cf-2cf4e5fbe3ed" totalConstraints= 1
+onecad.core.sketch: addConstraint:start type= 3 id= "e7255941-90b1-4cac-9e02-a364d30ee8c1"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 2
+onecad.core.sketch: addConstraint:done id= "e7255941-90b1-4cac-9e02-a364d30ee8c1" totalConstraints= 2
+onecad.core.sketch: addConstraint:start type= 3 id= "bf6a62d3-78c3-4755-a068-8a2836a6e2a2"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 3
+onecad.core.sketch: addConstraint:done id= "bf6a62d3-78c3-4755-a068-8a2836a6e2a2" totalConstraints= 3
+onecad.core.sketch: addConstraint:start type= 3 id= "b24d01cc-bdd4-41af-bd44-d2e021e5d71e"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 4
+onecad.core.sketch: addConstraint:done id= "b24d01cc-bdd4-41af-bd44-d2e021e5d71e" totalConstraints= 4
+onecad.core.faceboundary: projectFaceBoundaries:done entityCount= 8 wireCount= 1 success= true hasClosedBoundary= true insertedPoints= 4 insertedCurves= 4 insertedFixedConstraints= 4
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "b3020b95-0144-40e4-ad15-5e9b03e53614" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "887738f6-abff-4ea8-8044-83091c88e78c" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "887738f6-abff-4ea8-8044-83091c88e78c"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "887738f6-abff-4ea8-8044-83091c88e78c"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 4
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 2
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "7c8d4832-1263-473c-b956-75872e73a6cc" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "b3020b95-0144-40e4-ad15-5e9b03e53614" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "887738f6-abff-4ea8-8044-83091c88e78c" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "887738f6-abff-4ea8-8044-83091c88e78c"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "887738f6-abff-4ea8-8044-83091c88e78c"
+onecad.app.history.regeneration: executeOperation:start opId= "af4f58cf-88ec-4e9f-9624-e0b78ec7e5f7" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:null-shape opId= "af4f58cf-88ec-4e9f-9624-e0b78ec7e5f7" error= "Region not found: no-such-region"
+onecad.app.history.regeneration: regenerateAll:operation-failed opId= "af4f58cf-88ec-4e9f-9624-e0b78ec7e5f7" error= "Region not found: no-such-region" source= "SketchRegionRef(66ea96fb-3c71-410a-acd3-f034f0c3cd98,no-such-region)" resultBodies= "7c8d4832-1263-473c-b956-75872e73a6cc"
+onecad.app.history.regeneration: regenerateAll:done status= 1 succeeded= 1 failed= 1 skipped= 0
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 4
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 2
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "7c8d4832-1263-473c-b956-75872e73a6cc" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "b3020b95-0144-40e4-ad15-5e9b03e53614" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "887738f6-abff-4ea8-8044-83091c88e78c" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "887738f6-abff-4ea8-8044-83091c88e78c"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "887738f6-abff-4ea8-8044-83091c88e78c"
+onecad.app.history.regeneration: executeOperation:start opId= "af4f58cf-88ec-4e9f-9624-e0b78ec7e5f7" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:null-shape opId= "af4f58cf-88ec-4e9f-9624-e0b78ec7e5f7" error= "Region not found: no-such-region"
+onecad.app.history.regeneration: regenerateAll:operation-failed opId= "af4f58cf-88ec-4e9f-9624-e0b78ec7e5f7" error= "Region not found: no-such-region" source= "SketchRegionRef(66ea96fb-3c71-410a-acd3-f034f0c3cd98,no-such-region)" resultBodies= "7c8d4832-1263-473c-b956-75872e73a6cc"
+onecad.app.history.regeneration: regenerateAll:done status= 1 succeeded= 1 failed= 1 skipped= 0
+ PASS
+Test: Two-direction extrude sums both depths...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "cc6c1c53-b346-46cc-902b-7367854f03b9" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "bad0f4af-f550-43ad-8214-b7359216eafd" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "e2cb414f-1a41-4340-9b22-96658b51497b" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "b4fbba2d-77c3-4b7b-b83a-fe39a12a7d2e" totalEntities= 4
+onecad.core.sketch: addLine startId= "cc6c1c53-b346-46cc-902b-7367854f03b9" endId= "bad0f4af-f550-43ad-8214-b7359216eafd" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "bad0f4af-f550-43ad-8214-b7359216eafd" endId= "e2cb414f-1a41-4340-9b22-96658b51497b" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "e2cb414f-1a41-4340-9b22-96658b51497b" endId= "b4fbba2d-77c3-4b7b-b83a-fe39a12a7d2e" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "b4fbba2d-77c3-4b7b-b83a-fe39a12a7d2e" endId= "cc6c1c53-b346-46cc-902b-7367854f03b9" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "dc9891ab-26b3-44c6-8555-07868387f4eb" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "12b6f9f1-e7e9-4eea-b914-299497ee1a77" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "12b6f9f1-e7e9-4eea-b914-299497ee1a77"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "12b6f9f1-e7e9-4eea-b914-299497ee1a77"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+ PASS
+Test: Through-all cut removes a full-height column...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "0e8ca94a-1091-419f-847b-5ed05677438c" totalEntities= 1
+onecad.core.sketch: addPoint 20 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "d97c945a-0445-4760-985f-c6d432fc7f6a" totalEntities= 2
+onecad.core.sketch: addPoint 20 20 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "5de82794-c5e7-4ad3-9353-bc8849def76d" totalEntities= 3
+onecad.core.sketch: addPoint 0 20 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "5837b92f-e978-4934-9064-2a269a8b71bc" totalEntities= 4
+onecad.core.sketch: addLine startId= "0e8ca94a-1091-419f-847b-5ed05677438c" endId= "d97c945a-0445-4760-985f-c6d432fc7f6a" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "d97c945a-0445-4760-985f-c6d432fc7f6a" endId= "5de82794-c5e7-4ad3-9353-bc8849def76d" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "5de82794-c5e7-4ad3-9353-bc8849def76d" endId= "5837b92f-e978-4934-9064-2a269a8b71bc" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "5837b92f-e978-4934-9064-2a269a8b71bc" endId= "0e8ca94a-1091-419f-847b-5ed05677438c" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "f8675c6f-b656-45a7-99a9-57d3f66a6d80" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "f81f857e-d94a-434a-845f-0e7cf2e0824a" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "f81f857e-d94a-434a-845f-0e7cf2e0824a"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "f81f857e-d94a-434a-845f-0e7cf2e0824a"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "79b7b0db-675c-447c-970a-e8ca0372a08b" totalEntities= 1
+onecad.core.sketch: addPoint 5 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "5ae0c9f8-cbcf-4a5d-bca1-a0341b2b71c8" totalEntities= 2
+onecad.core.sketch: addPoint 5 5 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "30267593-30f2-46e3-b86b-56ee9c00efac" totalEntities= 3
+onecad.core.sketch: addPoint 0 5 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "f23f9b35-7815-4141-9a88-bf182bc05264" totalEntities= 4
+onecad.core.sketch: addLine startId= "79b7b0db-675c-447c-970a-e8ca0372a08b" endId= "5ae0c9f8-cbcf-4a5d-bca1-a0341b2b71c8" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "5ae0c9f8-cbcf-4a5d-bca1-a0341b2b71c8" endId= "30267593-30f2-46e3-b86b-56ee9c00efac" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "30267593-30f2-46e3-b86b-56ee9c00efac" endId= "f23f9b35-7815-4141-9a88-bf182bc05264" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "f23f9b35-7815-4141-9a88-bf182bc05264" endId= "79b7b0db-675c-447c-970a-e8ca0372a08b" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: extractDependencies:extrude-target-body opId= "84f934a1-fdfb-41ca-8a78-5e97d9ef5ba4" targetBodyId= "f8675c6f-b656-45a7-99a9-57d3f66a6d80" mode= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: extractDependencies:extrude-target-body opId= "84f934a1-fdfb-41ca-8a78-5e97d9ef5ba4" targetBodyId= "f8675c6f-b656-45a7-99a9-57d3f66a6d80" mode= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "f8675c6f-b656-45a7-99a9-57d3f66a6d80" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "f81f857e-d94a-434a-845f-0e7cf2e0824a" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "f81f857e-d94a-434a-845f-0e7cf2e0824a"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "f81f857e-d94a-434a-845f-0e7cf2e0824a"
+onecad.app.history.regeneration: executeOperation:start opId= "84f934a1-fdfb-41ca-8a78-5e97d9ef5ba4" type= 0 outputs= 1
+onecad.app.history.regeneration: resolveBooleanTargetBodyId:explicit opId= "84f934a1-fdfb-41ca-8a78-5e97d9ef5ba4" targetBodyId= "f8675c6f-b656-45a7-99a9-57d3f66a6d80"
+onecad.app.history.regeneration: resolveBooleanTargetBodyId:explicit opId= "84f934a1-fdfb-41ca-8a78-5e97d9ef5ba4" targetBodyId= "f8675c6f-b656-45a7-99a9-57d3f66a6d80"
+onecad.app.history.regeneration: executeOperation:done opId= "84f934a1-fdfb-41ca-8a78-5e97d9ef5ba4"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "84f934a1-fdfb-41ca-8a78-5e97d9ef5ba4"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 2 failed= 0 skipped= 0
+ PASS
+Test: To-Face extrude stops at the target face...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "9166d677-0c51-4e43-bbe1-5b8c8fec55fb" totalEntities= 1
+onecad.core.sketch: addPoint 20 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "c954d2a3-5e3f-47cf-8fc0-6b1b01d87d3a" totalEntities= 2
+onecad.core.sketch: addPoint 20 20 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "635447fe-2853-4cf4-a7c2-9b0d87c5fcbd" totalEntities= 3
+onecad.core.sketch: addPoint 0 20 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "98807370-e2b5-46b1-9860-7e1fa8dd71e4" totalEntities= 4
+onecad.core.sketch: addLine startId= "9166d677-0c51-4e43-bbe1-5b8c8fec55fb" endId= "c954d2a3-5e3f-47cf-8fc0-6b1b01d87d3a" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "c954d2a3-5e3f-47cf-8fc0-6b1b01d87d3a" endId= "635447fe-2853-4cf4-a7c2-9b0d87c5fcbd" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "635447fe-2853-4cf4-a7c2-9b0d87c5fcbd" endId= "98807370-e2b5-46b1-9860-7e1fa8dd71e4" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "98807370-e2b5-46b1-9860-7e1fa8dd71e4" endId= "9166d677-0c51-4e43-bbe1-5b8c8fec55fb" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "969b0722-ff97-4db0-b456-6286d55a0458" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "d536cd27-5199-4e98-b9d7-7eb1577f9a71" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "d536cd27-5199-4e98-b9d7-7eb1577f9a71"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "d536cd27-5199-4e98-b9d7-7eb1577f9a71"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "e61992d1-b258-4afd-acd5-4d6d902c7478" totalEntities= 1
+onecad.core.sketch: addPoint 5 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "5af25b9c-a9d2-4365-af73-1a3bee920f0e" totalEntities= 2
+onecad.core.sketch: addPoint 5 5 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "f687c664-707d-4c1c-a609-f72d4b517db6" totalEntities= 3
+onecad.core.sketch: addPoint 0 5 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "9ffe6b5e-1c51-4cb2-b9f5-dbd1e19e3a8f" totalEntities= 4
+onecad.core.sketch: addLine startId= "e61992d1-b258-4afd-acd5-4d6d902c7478" endId= "5af25b9c-a9d2-4365-af73-1a3bee920f0e" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "5af25b9c-a9d2-4365-af73-1a3bee920f0e" endId= "f687c664-707d-4c1c-a609-f72d4b517db6" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "f687c664-707d-4c1c-a609-f72d4b517db6" endId= "9ffe6b5e-1c51-4cb2-b9f5-dbd1e19e3a8f" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "9ffe6b5e-1c51-4cb2-b9f5-dbd1e19e3a8f" endId= "e61992d1-b258-4afd-acd5-4d6d902c7478" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 2
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "3593d53a-4744-42cd-9691-9247cfe0cd51" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "969b0722-ff97-4db0-b456-6286d55a0458" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "d536cd27-5199-4e98-b9d7-7eb1577f9a71" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "d536cd27-5199-4e98-b9d7-7eb1577f9a71"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "d536cd27-5199-4e98-b9d7-7eb1577f9a71"
+onecad.app.history.regeneration: executeOperation:start opId= "be9f92cb-7537-43a0-a3b5-2eb29c4c0166" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "be9f92cb-7537-43a0-a3b5-2eb29c4c0166"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "be9f92cb-7537-43a0-a3b5-2eb29c4c0166"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 2 failed= 0 skipped= 0
+ PASS
+Test: To-Next without a target body is rejected...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "95202439-fe73-4809-b859-74fa222feb40" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "b48c8359-83a8-4f06-b740-b82110c89fa5" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "d27b0a9e-2094-40ee-a5af-e9948468d943" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "b0af2c6e-ff5f-4d09-b726-1fb44f335b55" totalEntities= 4
+onecad.core.sketch: addLine startId= "95202439-fe73-4809-b859-74fa222feb40" endId= "b48c8359-83a8-4f06-b740-b82110c89fa5" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "b48c8359-83a8-4f06-b740-b82110c89fa5" endId= "d27b0a9e-2094-40ee-a5af-e9948468d943" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "d27b0a9e-2094-40ee-a5af-e9948468d943" endId= "b0af2c6e-ff5f-4d09-b726-1fb44f335b55" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "b0af2c6e-ff5f-4d09-b726-1fb44f335b55" endId= "95202439-fe73-4809-b859-74fa222feb40" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "8ca0afb7-86ef-4315-8458-1dc6493315bd" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "71e9a451-bc5a-486a-833b-325fcecc9202" type= 0 outputs= 1
+onecad.app.history.regeneration: resolveLegacySketchHostBodyId:no-host-face "7b5ee7c4-52fd-4893-985d-1b5b44598346"
+onecad.app.history.regeneration: resolveBooleanTargetBodyId:unresolved opId= "71e9a451-bc5a-486a-833b-325fcecc9202"
+onecad.app.history.regeneration: executeOperation:null-shape opId= "71e9a451-bc5a-486a-833b-325fcecc9202" error= "To Next requires an existing target body"
+onecad.app.history.regeneration: regenerateAll:operation-failed opId= "71e9a451-bc5a-486a-833b-325fcecc9202" error= "To Next requires an existing target body" source= "SketchRegionRef(7b5ee7c4-52fd-4893-985d-1b5b44598346,00d052d0-a90d-4159-9c35-bd7054e51f02#seg0_p0|95b3de3f-ce4d-4d67-ab3d-fd4b5078449c#seg0_p0|e171d50e-98f6-4129-97ca-93fc17281a77#seg0_p0|fabc3824-efb6-40b2-b94f-637bf94347b3#seg0_p0|)" resultBodies= "8ca0afb7-86ef-4315-8458-1dc6493315bd"
+onecad.app.history.regeneration: regenerateAll:done status= 2 succeeded= 0 failed= 1 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 0
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 0 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 0
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 0 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 0
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 0 failed= 0 skipped= 0
+ PASS
+Test: Boolean target produced by a later op is rejected...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "aadad00b-1bd3-4fd0-9274-4df06f977634" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "b83dae31-d43f-4a52-ac33-89c160292baf" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "3fe94707-f67b-487c-8aca-63c4f3c4e789" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "9090696d-f085-40e4-88ed-fabd56bc2c6e" totalEntities= 4
+onecad.core.sketch: addLine startId= "aadad00b-1bd3-4fd0-9274-4df06f977634" endId= "b83dae31-d43f-4a52-ac33-89c160292baf" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "b83dae31-d43f-4a52-ac33-89c160292baf" endId= "3fe94707-f67b-487c-8aca-63c4f3c4e789" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "3fe94707-f67b-487c-8aca-63c4f3c4e789" endId= "9090696d-f085-40e4-88ed-fabd56bc2c6e" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "9090696d-f085-40e4-88ed-fabd56bc2c6e" endId= "aadad00b-1bd3-4fd0-9274-4df06f977634" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "5800f186-96ed-48f8-acb6-8ef9a31eaa38" totalEntities= 1
+onecad.core.sketch: addPoint 8 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "2e5f6366-ed42-40ad-9bba-568656065584" totalEntities= 2
+onecad.core.sketch: addPoint 8 8 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "419f1c6f-87d0-4fc8-b714-fd303aaa7238" totalEntities= 3
+onecad.core.sketch: addPoint 0 8 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "d9f3eeaa-4b6c-4de1-8d2d-cf575776e60f" totalEntities= 4
+onecad.core.sketch: addLine startId= "5800f186-96ed-48f8-acb6-8ef9a31eaa38" endId= "2e5f6366-ed42-40ad-9bba-568656065584" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "2e5f6366-ed42-40ad-9bba-568656065584" endId= "419f1c6f-87d0-4fc8-b714-fd303aaa7238" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "419f1c6f-87d0-4fc8-b714-fd303aaa7238" endId= "d9f3eeaa-4b6c-4de1-8d2d-cf575776e60f" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "d9f3eeaa-4b6c-4de1-8d2d-cf575776e60f" endId= "5800f186-96ed-48f8-acb6-8ef9a31eaa38" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "c06430ee-8d2f-4e72-a5c1-943343d0038a" totalEntities= 1
+onecad.core.sketch: addPoint 6 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "7701d66b-6a7e-4ca3-9858-95649a3f86e8" totalEntities= 2
+onecad.core.sketch: addPoint 6 6 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "215173e3-8e9d-4532-9950-989899c2d48a" totalEntities= 3
+onecad.core.sketch: addPoint 0 6 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "ac9b1c81-e3b7-40aa-8160-4f256da7685e" totalEntities= 4
+onecad.core.sketch: addLine startId= "c06430ee-8d2f-4e72-a5c1-943343d0038a" endId= "7701d66b-6a7e-4ca3-9858-95649a3f86e8" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "7701d66b-6a7e-4ca3-9858-95649a3f86e8" endId= "215173e3-8e9d-4532-9950-989899c2d48a" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "215173e3-8e9d-4532-9950-989899c2d48a" endId= "ac9b1c81-e3b7-40aa-8160-4f256da7685e" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "ac9b1c81-e3b7-40aa-8160-4f256da7685e" endId= "c06430ee-8d2f-4e72-a5c1-943343d0038a" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 3
+onecad.app.history.dependency: extractDependencies:extrude-target-body opId= "74dcf938-571f-42ce-83be-d4bdab43a26a" targetBodyId= "bcf195f2-047c-40fb-ab17-f8e9e08f3825" mode= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 3 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 3
+onecad.app.history.dependency: extractDependencies:extrude-target-body opId= "74dcf938-571f-42ce-83be-d4bdab43a26a" targetBodyId= "bcf195f2-047c-40fb-ab17-f8e9e08f3825" mode= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 3 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 2
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "bcf195f2-047c-40fb-ab17-f8e9e08f3825" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "75756252-bcd3-4680-aa4a-a178db528ff4" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "bf290701-6e3f-4c89-b190-37e57d0bf223" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "bf290701-6e3f-4c89-b190-37e57d0bf223"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "bf290701-6e3f-4c89-b190-37e57d0bf223"
+onecad.app.history.regeneration: executeOperation:start opId= "74dcf938-571f-42ce-83be-d4bdab43a26a" type= 0 outputs= 1
+onecad.app.history.regeneration: resolveBooleanTargetBodyId:explicit opId= "74dcf938-571f-42ce-83be-d4bdab43a26a" targetBodyId= "bcf195f2-047c-40fb-ab17-f8e9e08f3825"
+onecad.app.history.regeneration: buildExtrude:boolean-target-time-travel opId= "74dcf938-571f-42ce-83be-d4bdab43a26a" targetBodyId= "bcf195f2-047c-40fb-ab17-f8e9e08f3825"
+onecad.app.history.regeneration: executeOperation:null-shape opId= "74dcf938-571f-42ce-83be-d4bdab43a26a" error= "Boolean target references a body created by a later operation: bcf195f2-047c-40fb-ab17-f8e9e08f3825"
+onecad.app.history.regeneration: regenerateAll:operation-failed opId= "74dcf938-571f-42ce-83be-d4bdab43a26a" error= "Boolean target references a body created by a later operation: bcf195f2-047c-40fb-ab17-f8e9e08f3825" source= "SketchRegionRef(f81904e7-2fa8-42f4-8266-ca441beb6819,2f84aff5-8404-4a32-a436-298fbcea465b#seg0_p0|8ec88e3c-f830-4e01-9b92-b379f5b6f090#seg0_p0|ca82079e-8778-49a8-b680-15698c448709#seg0_p0|d01f8f02-75ac-4c5a-a121-29f525f9364d#seg0_p0|)" resultBodies= "bcf195f2-047c-40fb-ab17-f8e9e08f3825"
+onecad.app.history.regeneration: executeOperation:start opId= "1d8cb2d3-7b5a-456a-a499-103a6fcefcc1" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "1d8cb2d3-7b5a-456a-a499-103a6fcefcc1"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "1d8cb2d3-7b5a-456a-a499-103a6fcefcc1"
+onecad.app.history.regeneration: regenerateAll:done status= 1 succeeded= 2 failed= 1 skipped= 0
+ PASS
+Test: Temporal guard rejects future bodies for boolean + pattern...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "b06b2c4c-d017-4245-8be3-1bcbd98aae28" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "ab9bb36a-f3a2-46fe-9ea7-a19df7acb398" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "bd4fd854-884f-4099-97d6-d4415a1d6186" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "d4ceff23-3edd-4e84-a798-688bd0f807c7" totalEntities= 4
+onecad.core.sketch: addLine startId= "b06b2c4c-d017-4245-8be3-1bcbd98aae28" endId= "ab9bb36a-f3a2-46fe-9ea7-a19df7acb398" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "ab9bb36a-f3a2-46fe-9ea7-a19df7acb398" endId= "bd4fd854-884f-4099-97d6-d4415a1d6186" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "bd4fd854-884f-4099-97d6-d4415a1d6186" endId= "d4ceff23-3edd-4e84-a798-688bd0f807c7" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "d4ceff23-3edd-4e84-a798-688bd0f807c7" endId= "b06b2c4c-d017-4245-8be3-1bcbd98aae28" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "a4a0cc44-eaf6-47e4-ab4c-9147444673b4" totalEntities= 1
+onecad.core.sketch: addPoint 6 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "5f3570d0-0259-4ea8-b80c-98db592f45b1" totalEntities= 2
+onecad.core.sketch: addPoint 6 6 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "00feed2f-1d00-45dc-98ba-df98ecfb442b" totalEntities= 3
+onecad.core.sketch: addPoint 0 6 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "e505f9a3-89b6-45e1-997d-028a343fa8fe" totalEntities= 4
+onecad.core.sketch: addLine startId= "a4a0cc44-eaf6-47e4-ab4c-9147444673b4" endId= "5f3570d0-0259-4ea8-b80c-98db592f45b1" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "5f3570d0-0259-4ea8-b80c-98db592f45b1" endId= "00feed2f-1d00-45dc-98ba-df98ecfb442b" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "00feed2f-1d00-45dc-98ba-df98ecfb442b" endId= "e505f9a3-89b6-45e1-997d-028a343fa8fe" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "e505f9a3-89b6-45e1-997d-028a343fa8fe" endId= "a4a0cc44-eaf6-47e4-ab4c-9147444673b4" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 4
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 4 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 4
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 4 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 2
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "2958b026-0d1e-4196-977f-2812d4cd7092" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "79dab9b1-5f44-4018-afc6-87eee9544e9d" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "c57fa883-9154-4848-a377-131b64205bcb" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "c57fa883-9154-4848-a377-131b64205bcb"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "c57fa883-9154-4848-a377-131b64205bcb"
+onecad.app.history.regeneration: executeOperation:start opId= "5c172638-f364-4ff6-b534-6fdbed79aefb" type= 5 outputs= 1
+onecad.app.history.regeneration: executeOperation:null-shape opId= "5c172638-f364-4ff6-b534-6fdbed79aefb" error= "Boolean tool references a body created by a later operation: 2958b026-0d1e-4196-977f-2812d4cd7092"
+onecad.app.history.regeneration: regenerateAll:operation-failed opId= "5c172638-f364-4ff6-b534-6fdbed79aefb" error= "Boolean tool references a body created by a later operation: 2958b026-0d1e-4196-977f-2812d4cd7092" source= "BodyRef(79dab9b1-5f44-4018-afc6-87eee9544e9d)" resultBodies= "79dab9b1-5f44-4018-afc6-87eee9544e9d"
+onecad.app.history.regeneration: executeOperation:start opId= "17813022-bda0-41fc-81f4-c786047b5a3d" type= 6 outputs= 1
+onecad.app.history.regeneration: executeOperation:null-shape opId= "17813022-bda0-41fc-81f4-c786047b5a3d" error= "Pattern source references a body created by a later operation: 2958b026-0d1e-4196-977f-2812d4cd7092"
+onecad.app.history.regeneration: regenerateAll:operation-failed opId= "17813022-bda0-41fc-81f4-c786047b5a3d" error= "Pattern source references a body created by a later operation: 2958b026-0d1e-4196-977f-2812d4cd7092" source= "BodyRef(2958b026-0d1e-4196-977f-2812d4cd7092)" resultBodies= "c98d5180-2f43-4014-8d7d-94b1829aecee"
+onecad.app.history.regeneration: executeOperation:start opId= "bb5bcb8c-93db-4760-b67d-ca54ffea405b" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "bb5bcb8c-93db-4760-b67d-ca54ffea405b"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "bb5bcb8c-93db-4760-b67d-ca54ffea405b"
+onecad.app.history.regeneration: regenerateAll:done status= 1 succeeded= 2 failed= 2 skipped= 0
+ PASS
+Test: Revolve profile crossing its axis fails the op, not the app...onecad.core.sketch: addPoint -5 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "9675a2b8-91ca-4293-80de-c11d8d881ed9" totalEntities= 1
+onecad.core.sketch: addPoint 5 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "a3d78f19-f84a-41a8-939c-2013c3ea197b" totalEntities= 2
+onecad.core.sketch: addPoint 5 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "fb72a44b-e367-4fc9-9f99-6015409e4ca5" totalEntities= 3
+onecad.core.sketch: addPoint -5 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "8ec62e83-2254-43b5-b5f9-d2ba7b863080" totalEntities= 4
+onecad.core.sketch: addLine startId= "9675a2b8-91ca-4293-80de-c11d8d881ed9" endId= "a3d78f19-f84a-41a8-939c-2013c3ea197b" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "a3d78f19-f84a-41a8-939c-2013c3ea197b" endId= "fb72a44b-e367-4fc9-9f99-6015409e4ca5" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "fb72a44b-e367-4fc9-9f99-6015409e4ca5" endId= "8ec62e83-2254-43b5-b5f9-d2ba7b863080" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "8ec62e83-2254-43b5-b5f9-d2ba7b863080" endId= "9675a2b8-91ca-4293-80de-c11d8d881ed9" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.core.sketch: addPoint 0 -20 construction= true
+onecad.core.sketch: invalidateSolver entityCount= 9 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "26ef80e6-9a54-484e-84d1-a3eebe2b54ad" totalEntities= 9
+onecad.core.sketch: addPoint 0 20 construction= true
+onecad.core.sketch: invalidateSolver entityCount= 10 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "9eee1ff7-8388-4dc7-9553-7565f1675606" totalEntities= 10
+onecad.core.sketch: addLine startId= "26ef80e6-9a54-484e-84d1-a3eebe2b54ad" endId= "9eee1ff7-8388-4dc7-9553-7565f1675606" construction= true
+onecad.core.sketch: invalidateSolver entityCount= 11 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "2c02820a-478c-46f9-98db-63786ab86094" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "1f23cc2b-fcfa-44dd-a2f9-ad38f5c9638e" type= 1 outputs= 1
+onecad.app.history.regeneration: executeOperation:null-shape opId= "1f23cc2b-fcfa-44dd-a2f9-ad38f5c9638e" error= "Revolve operation failed"
+onecad.app.history.regeneration: regenerateAll:operation-failed opId= "1f23cc2b-fcfa-44dd-a2f9-ad38f5c9638e" error= "Revolve operation failed" source= "SketchRegionRef(2e46462c-ad17-47e4-bb43-84b54799ab4e,425eea67-bddf-40de-8837-9c550505ef4d#seg0_p0|99bb5979-be77-4cab-99e1-7d6ae2a5ea4c#seg0_p0|bb3471a1-c5b1-460d-bfa7-90c77e16a06b#seg0_p0|e06abe6f-d340-49bd-8727-a8b437b624ca#seg0_p0|)" resultBodies= "2c02820a-478c-46f9-98db-63786ab86094"
+onecad.app.history.regeneration: regenerateAll:done status= 2 succeeded= 0 failed= 1 skipped= 0
+ PASS
+Test: Partial regen skips independent (clean) branches...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "1d34c3db-91a8-4b0e-8206-4ebcdb6113fc" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "285696f8-aa76-4d28-b480-e4e98bbe7540" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "3be4228f-6f73-4608-a238-d6104e14855e" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "63d11ac0-b9b4-488b-9397-23a58fea183c" totalEntities= 4
+onecad.core.sketch: addLine startId= "1d34c3db-91a8-4b0e-8206-4ebcdb6113fc" endId= "285696f8-aa76-4d28-b480-e4e98bbe7540" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "285696f8-aa76-4d28-b480-e4e98bbe7540" endId= "3be4228f-6f73-4608-a238-d6104e14855e" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "3be4228f-6f73-4608-a238-d6104e14855e" endId= "63d11ac0-b9b4-488b-9397-23a58fea183c" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "63d11ac0-b9b4-488b-9397-23a58fea183c" endId= "1d34c3db-91a8-4b0e-8206-4ebcdb6113fc" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "bc5b5d21-ebb5-4eba-9fcb-0194c00e6d4b" totalEntities= 1
+onecad.core.sketch: addPoint 8 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "7f26176c-c58b-433e-b2eb-3395b1397ef3" totalEntities= 2
+onecad.core.sketch: addPoint 8 8 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "f23a9570-9da3-45ec-8d86-78befbe6df6c" totalEntities= 3
+onecad.core.sketch: addPoint 0 8 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "0f887c58-094b-4a5f-9193-333069134dbd" totalEntities= 4
+onecad.core.sketch: addLine startId= "bc5b5d21-ebb5-4eba-9fcb-0194c00e6d4b" endId= "7f26176c-c58b-433e-b2eb-3395b1397ef3" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "7f26176c-c58b-433e-b2eb-3395b1397ef3" endId= "f23a9570-9da3-45ec-8d86-78befbe6df6c" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "f23a9570-9da3-45ec-8d86-78befbe6df6c" endId= "0f887c58-094b-4a5f-9193-333069134dbd" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "0f887c58-094b-4a5f-9193-333069134dbd" endId= "bc5b5d21-ebb5-4eba-9fcb-0194c00e6d4b" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "2414c2b9-53b8-44cc-97d7-e854ab476f6c" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "1c3dd44e-47dc-422c-b718-3c158caeef58" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "1c3dd44e-47dc-422c-b718-3c158caeef58"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "1c3dd44e-47dc-422c-b718-3c158caeef58"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 2
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "92724c4b-b29d-4582-a5eb-8ad19b20812d" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "2414c2b9-53b8-44cc-97d7-e854ab476f6c" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "1c3dd44e-47dc-422c-b718-3c158caeef58" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "1c3dd44e-47dc-422c-b718-3c158caeef58"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "1c3dd44e-47dc-422c-b718-3c158caeef58"
+onecad.app.history.regeneration: executeOperation:start opId= "156aa3ce-aa00-4c91-b1ae-a04feabb2df3" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "156aa3ce-aa00-4c91-b1ae-a04feabb2df3"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "156aa3ce-aa00-4c91-b1ae-a04feabb2df3"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 2 failed= 0 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: executeOperation:start opId= "1c3dd44e-47dc-422c-b718-3c158caeef58" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "1c3dd44e-47dc-422c-b718-3c158caeef58"
+ PASS
+Test: Boolean mode detection classifies by probe point... PASS
+Test: Datum+sketch transaction undoes as one step... PASS
+Test: Re-profiling an extrude swaps its source region...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "d847c188-ec5c-4395-9deb-7ed51198b4cc" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "667794ac-b518-4b30-be73-9317a5fc539e" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "586a840f-5b65-4622-97f0-16c5d36ceb23" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "461364d0-0177-48c2-af3f-88052bf92db5" totalEntities= 4
+onecad.core.sketch: addLine startId= "d847c188-ec5c-4395-9deb-7ed51198b4cc" endId= "667794ac-b518-4b30-be73-9317a5fc539e" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "667794ac-b518-4b30-be73-9317a5fc539e" endId= "586a840f-5b65-4622-97f0-16c5d36ceb23" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "586a840f-5b65-4622-97f0-16c5d36ceb23" endId= "461364d0-0177-48c2-af3f-88052bf92db5" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "461364d0-0177-48c2-af3f-88052bf92db5" endId= "d847c188-ec5c-4395-9deb-7ed51198b4cc" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "f9b2ff18-8243-4a59-be0e-b65a711f3c0c" totalEntities= 1
+onecad.core.sketch: addPoint 6 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "5ae08695-efb5-4d30-bab7-d53a8def8021" totalEntities= 2
+onecad.core.sketch: addPoint 6 6 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "4af05e24-02c8-441a-908e-9fec5ef8e2fd" totalEntities= 3
+onecad.core.sketch: addPoint 0 6 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "95351c9f-cb96-41a6-b6f4-1811211fd38d" totalEntities= 4
+onecad.core.sketch: addLine startId= "f9b2ff18-8243-4a59-be0e-b65a711f3c0c" endId= "5ae08695-efb5-4d30-bab7-d53a8def8021" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "5ae08695-efb5-4d30-bab7-d53a8def8021" endId= "4af05e24-02c8-441a-908e-9fec5ef8e2fd" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "4af05e24-02c8-441a-908e-9fec5ef8e2fd" endId= "95351c9f-cb96-41a6-b6f4-1811211fd38d" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "95351c9f-cb96-41a6-b6f4-1811211fd38d" endId= "f9b2ff18-8243-4a59-be0e-b65a711f3c0c" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "47f91d40-dde6-46ce-9086-230a606728ac" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "edcc22f5-5ea0-4793-9bd8-975da66a972c" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "edcc22f5-5ea0-4793-9bd8-975da66a972c"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "edcc22f5-5ea0-4793-9bd8-975da66a972c"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "47f91d40-dde6-46ce-9086-230a606728ac" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "edcc22f5-5ea0-4793-9bd8-975da66a972c" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "edcc22f5-5ea0-4793-9bd8-975da66a972c"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "edcc22f5-5ea0-4793-9bd8-975da66a972c"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "47f91d40-dde6-46ce-9086-230a606728ac" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "edcc22f5-5ea0-4793-9bd8-975da66a972c" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "edcc22f5-5ea0-4793-9bd8-975da66a972c"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "edcc22f5-5ea0-4793-9bd8-975da66a972c"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+ PASS
+Test: Re-profiling an extrude to a FaceRef is rejected...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "96af3414-6a0b-4ffc-9591-4c150f28f721" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "e7d24460-b17b-4f21-9074-b12be894bb81" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "a09fc367-4f37-451c-9cc4-36e7d02a5b09" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "21d5ecce-a9f9-4e41-b908-ee63628a3f89" totalEntities= 4
+onecad.core.sketch: addLine startId= "96af3414-6a0b-4ffc-9591-4c150f28f721" endId= "e7d24460-b17b-4f21-9074-b12be894bb81" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "e7d24460-b17b-4f21-9074-b12be894bb81" endId= "a09fc367-4f37-451c-9cc4-36e7d02a5b09" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "a09fc367-4f37-451c-9cc4-36e7d02a5b09" endId= "21d5ecce-a9f9-4e41-b908-ee63628a3f89" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "21d5ecce-a9f9-4e41-b908-ee63628a3f89" endId= "96af3414-6a0b-4ffc-9591-4c150f28f721" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "e4abaa99-e178-4bbd-9d7e-5ea3ef880101" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "56b877b0-ee39-440c-9756-0ff446047b50" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "56b877b0-ee39-440c-9756-0ff446047b50"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "56b877b0-ee39-440c-9756-0ff446047b50"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+ PASS
+Test 22: Linear pattern fuse and non-fuse results are valid...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "614c2953-a14d-426f-b5a7-d8f15836265e" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "43865efb-a94a-4702-a192-850ce8697c6a" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "2bf60a87-a9fe-4425-acf7-b08eb8e1e9fe" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "9011434b-bb62-4810-8423-d62839dda1fb" totalEntities= 4
+onecad.core.sketch: addLine startId= "614c2953-a14d-426f-b5a7-d8f15836265e" endId= "43865efb-a94a-4702-a192-850ce8697c6a" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "43865efb-a94a-4702-a192-850ce8697c6a" endId= "2bf60a87-a9fe-4425-acf7-b08eb8e1e9fe" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "2bf60a87-a9fe-4425-acf7-b08eb8e1e9fe" endId= "9011434b-bb62-4810-8423-d62839dda1fb" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "9011434b-bb62-4810-8423-d62839dda1fb" endId= "614c2953-a14d-426f-b5a7-d8f15836265e" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "7906af56-e557-447e-b54e-89ee6f948001" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "1758e134-7e4a-46f0-84fb-2e5223e7ef5c" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "1758e134-7e4a-46f0-84fb-2e5223e7ef5c"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "1758e134-7e4a-46f0-84fb-2e5223e7ef5c"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "7906af56-e557-447e-b54e-89ee6f948001" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "1758e134-7e4a-46f0-84fb-2e5223e7ef5c" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "1758e134-7e4a-46f0-84fb-2e5223e7ef5c"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "1758e134-7e4a-46f0-84fb-2e5223e7ef5c"
+onecad.app.history.regeneration: executeOperation:start opId= "1b1d3d61-456c-4f33-b1e2-d1c4c907778e" type= 6 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "1b1d3d61-456c-4f33-b1e2-d1c4c907778e"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "1b1d3d61-456c-4f33-b1e2-d1c4c907778e"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 2 failed= 0 skipped= 0
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "33011106-65a2-4904-b5e4-73683a7919d0" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "b27ee2a1-2ea1-4aa5-a42d-034c73e0ebbb" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "5108e8b7-4f33-42eb-9c15-723ad54d784e" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "bbc39a54-598c-4ed7-9755-9c2da0d3477d" totalEntities= 4
+onecad.core.sketch: addLine startId= "33011106-65a2-4904-b5e4-73683a7919d0" endId= "b27ee2a1-2ea1-4aa5-a42d-034c73e0ebbb" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "b27ee2a1-2ea1-4aa5-a42d-034c73e0ebbb" endId= "5108e8b7-4f33-42eb-9c15-723ad54d784e" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "5108e8b7-4f33-42eb-9c15-723ad54d784e" endId= "bbc39a54-598c-4ed7-9755-9c2da0d3477d" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "bbc39a54-598c-4ed7-9755-9c2da0d3477d" endId= "33011106-65a2-4904-b5e4-73683a7919d0" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "fedc2bf9-48db-4e1b-8d38-ae0685f27eff" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "47e89b16-7ecf-4e62-84f5-4f383a692ca6" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "47e89b16-7ecf-4e62-84f5-4f383a692ca6"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "47e89b16-7ecf-4e62-84f5-4f383a692ca6"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "fedc2bf9-48db-4e1b-8d38-ae0685f27eff" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "47e89b16-7ecf-4e62-84f5-4f383a692ca6" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "47e89b16-7ecf-4e62-84f5-4f383a692ca6"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "47e89b16-7ecf-4e62-84f5-4f383a692ca6"
+onecad.app.history.regeneration: executeOperation:start opId= "73aa5cd0-79d8-4322-a580-8b1c8f4b35c3" type= 6 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "73aa5cd0-79d8-4322-a580-8b1c8f4b35c3"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "73aa5cd0-79d8-4322-a580-8b1c8f4b35c3"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 2 failed= 0 skipped= 0
+ PASS
+Test 23: Linear pattern tracks source-body dependency...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "ebd18406-e2c3-4775-a876-ea56eb4ce3b5" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "bc1bc716-078e-4931-8238-8a725bf992c4" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "186bee83-3953-42df-92e6-32d840946030" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "ce1be818-0050-4cc5-bbbd-a0ee01bdae63" totalEntities= 4
+onecad.core.sketch: addLine startId= "ebd18406-e2c3-4775-a876-ea56eb4ce3b5" endId= "bc1bc716-078e-4931-8238-8a725bf992c4" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "bc1bc716-078e-4931-8238-8a725bf992c4" endId= "186bee83-3953-42df-92e6-32d840946030" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "186bee83-3953-42df-92e6-32d840946030" endId= "ce1be818-0050-4cc5-bbbd-a0ee01bdae63" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "ce1be818-0050-4cc5-bbbd-a0ee01bdae63" endId= "ebd18406-e2c3-4775-a876-ea56eb4ce3b5" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "2fe907d2-5886-4757-bec8-0b796d72d9fa" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "be36ab43-8838-4b42-b931-ac42156f87fa" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "be36ab43-8838-4b42-b931-ac42156f87fa"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "be36ab43-8838-4b42-b931-ac42156f87fa"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "2fe907d2-5886-4757-bec8-0b796d72d9fa" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "be36ab43-8838-4b42-b931-ac42156f87fa" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "be36ab43-8838-4b42-b931-ac42156f87fa"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "be36ab43-8838-4b42-b931-ac42156f87fa"
+onecad.app.history.regeneration: executeOperation:start opId= "635aa151-cdf4-4687-9b4c-59a468eaeab6" type= 6 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "635aa151-cdf4-4687-9b4c-59a468eaeab6"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "635aa151-cdf4-4687-9b4c-59a468eaeab6"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 2 failed= 0 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "2fe907d2-5886-4757-bec8-0b796d72d9fa" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "be36ab43-8838-4b42-b931-ac42156f87fa" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "be36ab43-8838-4b42-b931-ac42156f87fa"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "be36ab43-8838-4b42-b931-ac42156f87fa"
+onecad.app.history.regeneration: executeOperation:start opId= "635aa151-cdf4-4687-9b4c-59a468eaeab6" type= 6 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "635aa151-cdf4-4687-9b4c-59a468eaeab6"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "635aa151-cdf4-4687-9b4c-59a468eaeab6"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 2 failed= 0 skipped= 0
+ PASS
+Test 24: Circular pattern compound keeps all instances and tracks source...onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "dce2790c-2e65-4e95-b4d3-ac1069b6a75b" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "bc0aa489-1e79-4861-b661-78a96ea8de1a" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "d54e774f-8320-4e5c-b20e-8a045d8dd509" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "24b9d087-b689-4c2e-8c0f-60388df9ddd4" totalEntities= 4
+onecad.core.sketch: addLine startId= "dce2790c-2e65-4e95-b4d3-ac1069b6a75b" endId= "bc0aa489-1e79-4861-b661-78a96ea8de1a" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "bc0aa489-1e79-4861-b661-78a96ea8de1a" endId= "d54e774f-8320-4e5c-b20e-8a045d8dd509" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "d54e774f-8320-4e5c-b20e-8a045d8dd509" endId= "24b9d087-b689-4c2e-8c0f-60388df9ddd4" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "24b9d087-b689-4c2e-8c0f-60388df9ddd4" endId= "dce2790c-2e65-4e95-b4d3-ac1069b6a75b" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "0e1bae8e-94e4-4faf-a948-4242844ba677" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "f0da20b5-cd34-4e8e-a2a5-305fd7284fdf" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "f0da20b5-cd34-4e8e-a2a5-305fd7284fdf"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "f0da20b5-cd34-4e8e-a2a5-305fd7284fdf"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "0e1bae8e-94e4-4faf-a948-4242844ba677" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "f0da20b5-cd34-4e8e-a2a5-305fd7284fdf" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "f0da20b5-cd34-4e8e-a2a5-305fd7284fdf"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "f0da20b5-cd34-4e8e-a2a5-305fd7284fdf"
+onecad.app.history.regeneration: executeOperation:start opId= "55d03bd5-3b2b-4add-834e-b62b87faef1f" type= 7 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "55d03bd5-3b2b-4add-834e-b62b87faef1f"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "55d03bd5-3b2b-4add-834e-b62b87faef1f"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 2 failed= 0 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 1 backwardEdgeCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "0e1bae8e-94e4-4faf-a948-4242844ba677" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "f0da20b5-cd34-4e8e-a2a5-305fd7284fdf" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "f0da20b5-cd34-4e8e-a2a5-305fd7284fdf"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "f0da20b5-cd34-4e8e-a2a5-305fd7284fdf"
+onecad.app.history.regeneration: executeOperation:start opId= "55d03bd5-3b2b-4add-834e-b62b87faef1f" type= 7 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "55d03bd5-3b2b-4add-834e-b62b87faef1f"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "55d03bd5-3b2b-4add-834e-b62b87faef1f"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 2 failed= 0 skipped= 0
+ PASS
+
+=== All tests passed! ===
+
+exit_code: 0

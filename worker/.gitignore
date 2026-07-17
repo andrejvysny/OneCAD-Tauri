@@ -1,0 +1,6 @@
+# CMake build tree
+build/
+
+# Editor / tooling caches
+.cache/
+compile_commands.json

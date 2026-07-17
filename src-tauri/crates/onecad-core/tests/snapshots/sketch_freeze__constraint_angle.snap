@@ -1,0 +1,14 @@
+---
+source: crates/onecad-core/tests/sketch_freeze.rs
+expression: constraint
+---
+{
+  "kind": "angle",
+  "id": "00000000-0000-0000-0000-00000000000f",
+  "line1": "00000000-0000-0000-0000-000000000100",
+  "line2": "00000000-0000-0000-0000-000000000101",
+  "value": {
+    "value": 1.5707963267948966,
+    "expr": "rightAngle"
+  }
+}

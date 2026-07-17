@@ -1,0 +1,8 @@
+=== OneCAD-CPP prototype: proto_elementmap_rigorous ===
+date_utc: 2026-07-16T18:57:27Z
+git_rev: b4ddcccc48134531f3ff80f11ddf9f42ad5a967e
+binary: ./build/tests/proto_elementmap_rigorous
+=== stdout+stderr (exit code appended) ===
+--- ElementMap Rigorous Tests ---
+All ElementMap tests passed.
+exit_code: 0

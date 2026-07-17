@@ -1,0 +1,13 @@
+---
+source: crates/onecad-core/tests/sketch_freeze.rs
+expression: entity
+---
+{
+  "kind": "ellipse",
+  "id": "00000000-0000-0000-0000-000000000e10",
+  "center": "00000000-0000-0000-0000-000000000ec0",
+  "majorR": 10.0,
+  "minorR": 6.0,
+  "rotation": 0.25,
+  "construction": true
+}

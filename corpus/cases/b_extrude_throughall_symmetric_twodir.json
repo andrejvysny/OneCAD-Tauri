@@ -1,0 +1,71 @@
+{
+  "id": "b_extrude_throughall_symmetric_twodir",
+  "title": "Extrude end-conditions: ThroughAll (cut) + two-direction + Symmetric",
+  "source": [
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:1489-1523 — 'Through-all cut removes a full-height column': base 20x20x10 box vol 4000, then 5x5 ThroughAll Cut -> vol 3750 (4000 - 5*5*10).",
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:1503 — base bodyVolume ~4000 (tol 1.0); :1520 — after cut ~3750 (tol 1.0).",
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:1462-1487 — 'Two-direction extrude sums both depths': 10x10 footprint, dir1 Blind 5 + dir2 Blind 3 -> vol 800 (10*10*8).",
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:1484 — bodyVolume ~800 (tol 1.0).",
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:1525-1560 — 'To-Face extrude stops at the target face': 5x5 region up to z=10 top face -> vol 250 (5*5*10). (Sibling end-condition, included for completeness.)",
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:1562-1583 — 'To-Next without a target body is rejected': ToNext with NewBody fails the op (AddOperationCommand returns false).",
+    "OneCAD-CPP/src/app/document/OperationRecord.h:83-104 — ExtrudeMode enum + ExtrudeParams field names; :86 'Symmetric // Half-distance both directions'.",
+    "expected-values/proto_regeneration.txt — both tests PASS, exit 0."
+  ],
+  "opScript": [
+    {
+      "opType": "Extrude", "opId": "op_base_box",
+      "inputs": [ { "primary": { "kind": "face", "elementId": "sk_base.region.r0" } } ],
+      "params": { "distance": 10.0, "draftAngleDeg": 0.0, "extrudeMode": "Blind", "booleanMode": "NewBody", "targetBodyId": "", "twoDirections": false },
+      "sketch": { "footprint": "20x20 square on XY", "sketchId": "sk_base" }
+    },
+    {
+      "opType": "Extrude", "opId": "op_throughall_cut",
+      "inputs": [ { "primary": { "kind": "face", "elementId": "sk_cut.region.r0" } } ],
+      "params": { "distance": 1.0, "draftAngleDeg": 0.0, "extrudeMode": "ThroughAll", "booleanMode": "Cut", "targetBodyId": "body_1", "twoDirections": false },
+      "sketch": { "footprint": "5x5 square on XY", "sketchId": "sk_cut" },
+      "note": "distance sign only selects the through-all direction; extent is the target bbox (see H4 'ThroughAll bbox extent', TODO.md:148)."
+    },
+    {
+      "opType": "Extrude", "opId": "op_twodir",
+      "inputs": [ { "primary": { "kind": "face", "elementId": "sk_2.region.r0" } } ],
+      "params": { "distance": 5.0, "draftAngleDeg": 0.0, "extrudeMode": "Blind", "booleanMode": "NewBody", "twoDirections": true, "extrudeMode2": "Blind", "distance2": 3.0, "targetFaceId": "", "targetFaceId2": "" },
+      "sketch": { "footprint": "10x10 square on XY", "sketchId": "sk_2" },
+      "note": "Independent scenario (separate document in the C++ test); two directions sum to depth 8."
+    },
+    {
+      "opType": "Extrude", "opId": "op_symmetric",
+      "inputs": [ { "primary": { "kind": "face", "elementId": "sk_3.region.r0" } } ],
+      "params": { "distance": 8.0, "draftAngleDeg": 0.0, "extrudeMode": "Symmetric", "booleanMode": "NewBody", "twoDirections": false },
+      "sketch": { "footprint": "10x10 square on XY", "sketchId": "sk_3" },
+      "note": "Symmetric = half-distance each side of the sketch plane (OperationRecord.h:86). See expected.symmetric for provenance caveat."
+    }
+  ],
+  "expected": {
+    "throughAllCut": {
+      "baseBox": { "volume_mm3": 4000.0, "tol": 1.0, "provenance": "proto_regeneration.cpp:1503" },
+      "afterCut": { "volume_mm3": 3750.0, "tol": 1.0, "provenance": "proto_regeneration.cpp:1519-1520 (4000 - 5*5*10)" },
+      "bodyEvents": [ { "kind": "modified", "bodyId": "body_1" } ],
+      "targetBodyPreserved": true,
+      "provenance_targetBody": "proto_regeneration.cpp:1515-1517 (cutParams.targetBodyId=baseBody; resultBodyIds=baseBody)"
+    },
+    "twoDirection": {
+      "volume_mm3": 800.0, "tol": 1.0,
+      "provenance": "proto_regeneration.cpp:1483-1484 (10*10*(5+3))",
+      "bodyEvents": [ { "kind": "created", "bodyId": "body_2" } ]
+    },
+    "toFace_sibling": {
+      "volume_mm3": 250.0, "tol": 1.0,
+      "provenance": "proto_regeneration.cpp:1543-1557 (5x5 region to top face z=10)"
+    },
+    "toNext_rejection": {
+      "outcome": "op rejected (regeneration fails, command rolls back)",
+      "provenance": "proto_regeneration.cpp:1579-1580 (executeAddOperation returns false)",
+      "newStackMapping": "worker returns terminal resp error.code OP_FAILED or UNSUPPORTED (recoverable, session intact) per SCHEMA §8; NOT NeedsRepair."
+    },
+    "symmetric": {
+      "volume_mm3": { "value": 800.0, "confidence": "derived-not-asserted" },
+      "note": "NO current OneCAD-CPP test asserts a Symmetric extrude volume. Value shown is the geometric derivation (10x10 x total 8) for a distance-8 Symmetric, NOT a captured assertion. Do not treat as an oracle number; capture from the new worker and, if desired, add a Symmetric golden. The Symmetric MODE and its 'half each side' semantics ARE established (OperationRecord.h:86)."
+    }
+  },
+  "notes": "Covers three distinct end conditions plus the ToNext rejection. Only ThroughAll (3750), two-direction (800) and ToFace (250) carry hard C++ numeric assertions. Symmetric is structurally specified but numerically un-asserted by the old stack — flagged so no invented number leaks into a golden."
+}

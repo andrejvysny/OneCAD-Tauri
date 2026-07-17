@@ -1,0 +1,9 @@
+---
+source: crates/onecad-core/tests/sketch_freeze.rs
+expression: constraint
+---
+{
+  "kind": "vertical",
+  "id": "00000000-0000-0000-0000-000000000003",
+  "line": "00000000-0000-0000-0000-000000000101"
+}

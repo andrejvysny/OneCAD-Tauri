@@ -1,0 +1,6 @@
+# SketchUpsert happy path (SCHEMA §7.4): a horizontal-constrained line solves to
+# a fully-constrained state. Response carries {upserted, sketchRevision, dof, state}.
+# Consume the unsolicited hello (SCHEMA §6) first.
+{"expect":{"v":1,"t":"hello","seq":0}}
+{"send":{"v":1,"t":"req","id":1,"verb":"SketchUpsert","args":{"sketchId":"s","plane":{"kind":"XY"},"entities":[{"id":"a","type":"Point","at":[0,0]},{"id":"b","type":"Point","at":[10,0]},{"id":"L","type":"Line","p0Ref":"a","p1Ref":"b"}],"constraints":[{"id":"cH","type":"Horizontal","entities":["L"]},{"id":"cD","type":"Distance","entities":["L"],"value":10.0},{"id":"cF","type":"Fixed","entities":["a"]},{"id":"cVD","type":"VerticalDistance","entities":["a","b"],"value":0.0}]}}}
+{"expect":{"v":1,"t":"resp","id":1,"ok":true,"seq":"$any","result":{"upserted":true,"sketchId":"s","sketchRevision":1,"dof":"$any","state":"$any"}}}

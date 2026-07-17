@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust:
+    name: rust
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install rustfmt + clippy
+        run: rustup component add rustfmt clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: fmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: test
+        run: cargo test --workspace
+
+  worker:
+    name: worker
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      # These steps are skipped until worker/CMakeLists.txt exists (evaluated
+      # after checkout so hashFiles can see the tree). Once the worker lands they
+      # run for real — no continue-on-error.
+      - name: Install OCCT toolchain
+        if: hashFiles('worker/CMakeLists.txt') != ''
+        run: brew install opencascade boost eigen nlohmann-json || true
+      - name: Configure
+        if: hashFiles('worker/CMakeLists.txt') != ''
+        run: cmake -S worker -B worker/build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        if: hashFiles('worker/CMakeLists.txt') != ''
+        run: cmake --build worker/build --parallel
+      - name: Test
+        if: hashFiles('worker/CMakeLists.txt') != ''
+        run: ctest --test-dir worker/build --output-on-failure
+
+  frontend:
+    name: frontend
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install
+        run: bun install --frozen-lockfile || bun install
+      - name: Build
+        run: bun run build
+      - name: Test
+        # Guarded on a "test" script actually existing in package.json.
+        run: |
+          if grep -q '"test"' package.json; then
+            bun run test
+          else
+            echo "no test script in package.json — skipping"
+          fi

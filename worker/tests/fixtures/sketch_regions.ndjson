@@ -1,0 +1,11 @@
+# SketchRegions on the corpus (i) multi-region scenario: an outer 10x10 square
+# with an inner 4x4 square (3,3)-(7,7) => ONE region with ONE hole (LoopDetector
+# face semantics). regionId is the NORMATIVE FNV-1a-64 id ("r_<16hex>"); the
+# response also carries the outer/hole wire-edge lists and preview triangles
+# (format f32xyz+u32idx) in the binary tail (section "region:<id>").
+# Consume the unsolicited hello (SCHEMA §6) first.
+{"expect":{"v":1,"t":"hello","seq":0}}
+{"send":{"v":1,"t":"req","id":1,"verb":"SketchUpsert","args":{"sketchId":"sq","plane":{"kind":"XY"},"entities":[{"id":"a","type":"Point","at":[0,0]},{"id":"b","type":"Point","at":[10,0]},{"id":"c","type":"Point","at":[10,10]},{"id":"d","type":"Point","at":[0,10]},{"id":"ab","type":"Line","p0Ref":"a","p1Ref":"b"},{"id":"bc","type":"Line","p0Ref":"b","p1Ref":"c"},{"id":"cd","type":"Line","p0Ref":"c","p1Ref":"d"},{"id":"da","type":"Line","p0Ref":"d","p1Ref":"a"},{"id":"h1","type":"Point","at":[3,3]},{"id":"h2","type":"Point","at":[7,3]},{"id":"h3","type":"Point","at":[7,7]},{"id":"h4","type":"Point","at":[3,7]},{"id":"e1","type":"Line","p0Ref":"h1","p1Ref":"h2"},{"id":"e2","type":"Line","p0Ref":"h2","p1Ref":"h3"},{"id":"e3","type":"Line","p0Ref":"h3","p1Ref":"h4"},{"id":"e4","type":"Line","p0Ref":"h4","p1Ref":"h1"}],"constraints":[]}}}
+{"expect":{"v":1,"t":"resp","id":1,"ok":true,"result":{"upserted":true}}}
+{"send":{"v":1,"t":"req","id":2,"verb":"SketchRegions","args":{"sketchId":"sq"}}}
+{"expect":{"v":1,"t":"resp","id":2,"ok":true,"result":{"sketchId":"sq","regions":[{"regionId":"$any","outerLoop":"$any","holes":["$any"],"previewTriangles":{"format":"f32xyz+u32idx","triangleCount":"$any"}}]}}}

@@ -1,0 +1,68 @@
+{
+  "id": "c_boolean_cut_fuse_bodyid",
+  "title": "Boolean Cut and Fuse (Add) with target-BodyId preservation",
+  "source": [
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:486-541 — Test 9 'Attached sketch extrude Add targets host body': 20x20x10 box, then Add(Fuse) extrude of a 4x4 pad distance 4 -> volume grows (updated > base + 1.0); host body id reused.",
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:538 — assert updated volume > baseVolume + 1.0 (Fuse grows body).",
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:543-597 — Test 10 'Attached sketch extrude Cut targets host body': same box, Cut extrude distance -4 -> volume shrinks (updated < base - 1.0); explicit targetBodyId reused.",
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:594 — assert updated volume < baseVolume - 1.0 (Cut removes material).",
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:525-528,582-584 — target-body resolution: Add path leaves targetBodyId empty (resolved from sketch host-face attachment); Cut path sets targetBodyId explicitly; both push the SAME bodyId into resultBodyIds (BodyId preserved through the boolean).",
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:930-1000 — Test 22 linear-pattern FUSE gives exact numbers: 3 solids @ 1500 (fuseResult=false) and 1 solid @ 1300 (fuseResult=true) — a clean Union-count/volume oracle.",
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:663-701 — Test 12 'Boolean op fails explicitly when target body is unresolved' (unresolved target => op fails, session intact).",
+    "OneCAD-CPP/src/app/document/OperationRecord.h:127-132 — standalone BooleanParams {operation ∈ Union|Cut|Intersect, targetBodyId, toolBodyId}.",
+    "expected-values/proto_regeneration.txt — Tests 9,10,12,22 PASS, exit 0."
+  ],
+  "opScript": [
+    {
+      "opType": "Extrude", "opId": "op_base_box",
+      "inputs": [ { "primary": { "kind": "face", "elementId": "sk_base.region.r0" } } ],
+      "params": { "distance": 10.0, "extrudeMode": "Blind", "booleanMode": "NewBody" },
+      "note": "Base 20x20x10 box (C++ test seeds it via doc.addBody(MakeBox(20,20,10)); volume 4000)."
+    },
+    {
+      "opType": "Extrude", "opId": "op_add_pad",
+      "inputs": [ { "primary": { "kind": "face", "elementId": "body_1.face.top" } } ],
+      "params": { "distance": 4.0, "extrudeMode": "Blind", "booleanMode": "Add", "targetBodyId": "" },
+      "note": "4x4 pad on the top face, Add/Fuse. targetBodyId empty => resolved from sketch host-face attachment (legacy fallback path). Result reuses body_1."
+    },
+    {
+      "opType": "Extrude", "opId": "op_cut_pocket",
+      "inputs": [ { "primary": { "kind": "face", "elementId": "body_1.face.top" } } ],
+      "params": { "distance": -4.0, "extrudeMode": "Blind", "booleanMode": "Cut", "targetBodyId": "body_1" },
+      "note": "Independent scenario (fresh doc in C++). 4x4 pocket cut into the top face; explicit targetBodyId. Result reuses body_1."
+    },
+    {
+      "opType": "Boolean", "opId": "op_standalone_union",
+      "inputs": [ { "primary": { "kind": "body", "bodyId": "body_1" } }, { "primary": { "kind": "body", "bodyId": "body_2" } } ],
+      "params": { "operation": "Union", "targetBodyId": "body_1", "toolBodyId": "body_2" },
+      "note": "Standalone body-body boolean schema (BooleanParams). The old regen tests exercise booleans mainly as feature-fused Add/Cut and via patterns; this op documents the standalone verb shape (SCHEMA §7.3 Boolean)."
+    }
+  ],
+  "expected": {
+    "add_fuse": {
+      "baseVolume_mm3": 4000.0,
+      "assertion": "updatedVolume > baseVolume + 1.0",
+      "meaning": "Fuse adds material; result body id == input body id (BodyId preserved through Add).",
+      "provenance": "proto_regeneration.cpp:538 + :528 (resultBodyIds=bodyId)",
+      "bodyEvents": [ { "kind": "modified", "bodyId": "body_1" } ]
+    },
+    "cut": {
+      "baseVolume_mm3": 4000.0,
+      "assertion": "updatedVolume < baseVolume - 1.0",
+      "meaning": "Cut removes material; targetBodyId explicit; result body id preserved.",
+      "provenance": "proto_regeneration.cpp:594 + :582-584",
+      "bodyEvents": [ { "kind": "modified", "bodyId": "body_1" } ]
+    },
+    "fuse_exact_from_pattern": {
+      "nonFused": { "solids": 3, "volume_mm3": 1500.0, "tol": 0.01, "provenance": "proto_regeneration.cpp:963-964 (3 x 10x10x5)" },
+      "fused":    { "solids": 1, "volume_mm3": 1300.0, "tol": 0.01, "provenance": "proto_regeneration.cpp:998-999 (Union of 3 overlapping 10x10x5 at spacing 8)" },
+      "note": "Exact Union oracle: fuseResult toggles solidCount 3->1 and volume 1500->1300. Best hard number for boolean-Fuse correctness."
+    },
+    "unresolved_target_rejection": {
+      "outcome": "op fails explicitly, session/document intact",
+      "provenance": "proto_regeneration.cpp:663-701 (Test 12)",
+      "newStackMapping": "worker terminal resp error.code REF_UNRESOLVED (SCHEMA §8) — recoverable, NOT NeedsRepair."
+    }
+  },
+  "notes": "target-BodyId preservation is the invariant under test: Add and Cut both keep the operand body's id (plan: 'BodyId registry + lifecycle' owned by Rust). Old ids embed BodyId; new stack keeps BodyId as the body handle but element ids become body-independent. The pattern-fuse pair gives the only exact boolean volumes; Tests 9/10 assert only direction-of-change (grow/shrink)."
+}

@@ -1,0 +1,15 @@
+# W-WP4 — ExecutePlan fencing preconditions (SCHEMA §7.2). Both a wrong
+# expectedBaseHash and a wrong documentRevision are PROTOCOL_ERRORs (Rust
+# reconciles via GetWorkerHead / restart). The bad-hash error carries the
+# {expected, actual} reconciliation detail. The session stays intact (no scratch).
+{"expect":{"v":1,"t":"hello","seq":0}}
+{"send":{"v":1,"t":"req","id":1,"verb":"OpenSession","args":{"documentId":"doc_1","documentRevision":0,"workerEpoch":3,"mode":"determinism"}}}
+{"expect":{"v":1,"t":"resp","id":1,"ok":true,"result":{"sessionOpen":true}}}
+{"send":{"v":1,"t":"req","id":2,"verb":"ExecutePlan","args":{"jobId":88,"documentRevision":0,"workerEpoch":3,"expectedBaseHash":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef0","targetStep":0,"ops":[{"opType":"Extrude","opId":"op0","stepIndex":0,"params":{"distance":10.0,"booleanMode":"NewBody"}}]}}}
+{"expect":{"v":1,"t":"resp","id":2,"ok":false,"error":{"code":"PROTOCOL_ERROR","detail":{"expected":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef0","actual":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}}}
+{"send":{"v":1,"t":"req","id":3,"verb":"ExecutePlan","args":{"jobId":88,"documentRevision":99,"workerEpoch":3,"expectedBaseHash":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","targetStep":0,"ops":[{"opType":"Extrude","opId":"op0","stepIndex":0,"params":{"distance":10.0,"booleanMode":"NewBody"}}]}}}
+{"expect":{"v":1,"t":"resp","id":3,"ok":false,"error":{"code":"PROTOCOL_ERROR","detail":{"headRevision":0,"planRevision":99}}}}
+{"send":{"v":1,"t":"req","id":4,"verb":"GetWorkerHead","args":{}}}
+{"expect":{"v":1,"t":"resp","id":4,"ok":true,"result":{"documentRevision":0,"hasScratch":false,"historyPrefixHash":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}}
+{"send":{"v":1,"t":"req","id":9,"verb":"Shutdown","args":{}}}
+{"expect":{"v":1,"t":"resp","id":9,"ok":true,"result":{"goodbye":true}}}

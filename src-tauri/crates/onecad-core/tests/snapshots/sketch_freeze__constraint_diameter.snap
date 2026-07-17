@@ -1,0 +1,12 @@
+---
+source: crates/onecad-core/tests/sketch_freeze.rs
+expression: constraint
+---
+{
+  "kind": "diameter",
+  "id": "00000000-0000-0000-0000-000000000011",
+  "entity": "00000000-0000-0000-0000-000000000c10",
+  "value": {
+    "value": 6.0
+  }
+}

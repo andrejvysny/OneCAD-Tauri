@@ -1,0 +1,104 @@
+---
+source: crates/onecad-core/tests/schema_freeze.rs
+expression: rec
+---
+{
+  "recordId": "00000000-0000-0000-0000-000000002ed4",
+  "recordSchemaVersion": 1,
+  "stepIndex": 20,
+  "name": "Cut ToFace full",
+  "opType": "Extrude",
+  "params": {
+    "booleanMode": "Cut",
+    "distance": {
+      "value": 10.0
+    },
+    "distance2": {
+      "value": 0.0
+    },
+    "draftAngleDeg": {
+      "value": 0.0
+    },
+    "extrudeMode": "ToFace",
+    "extrudeMode2": "Blind",
+    "profile": {
+      "regionId": "r0",
+      "sketchId": "00000000-0000-0000-0000-000000005c01"
+    },
+    "targetBodyId": "00000000-0000-0000-0000-00000000b0d1",
+    "targetFace": {
+      "anchor": {
+        "adjacencyHint": "d41d8cd98f00b204",
+        "localFrame": {
+          "origin": [
+            12.0,
+            3.5,
+            0.0
+          ],
+          "x": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "y": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "z": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "surfaceUv": [
+          0.25,
+          0.75
+        ],
+        "worldPoint": [
+          12.0,
+          3.5,
+          0.0
+        ]
+      },
+      "intent": {
+        "descriptor": {
+          "areaQ": 120000,
+          "surfaceType": "plane"
+        },
+        "kind": "face",
+        "version": 1
+      },
+      "primary": {
+        "bodyId": "00000000-0000-0000-0000-00000000b0d1",
+        "elementId": "el_face_1",
+        "kind": "face"
+      }
+    },
+    "twoDirections": false
+  },
+  "inputs": {
+    "bodies": [
+      "00000000-0000-0000-0000-00000000b0d1"
+    ],
+    "sketches": [
+      "00000000-0000-0000-0000-000000005c01"
+    ],
+    "elements": []
+  },
+  "outputs": [
+    "00000000-0000-0000-0000-00000000b0d1"
+  ],
+  "determinism": {
+    "parallel": false,
+    "occtOptions": {
+      "fuzzyValue": 0.001,
+      "useOBB": true
+    },
+    "occtOptionsHash": "cbf29ce484222325",
+    "tolerancePolicyHash": "b2c9000000000000",
+    "solverPolicyHash": "3e9a000000000000"
+  },
+  "suppressed": false,
+  "uiColor": "#ff8800"
+}

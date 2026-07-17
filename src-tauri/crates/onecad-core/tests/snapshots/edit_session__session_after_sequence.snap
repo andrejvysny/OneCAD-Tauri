@@ -1,0 +1,413 @@
+---
+source: crates/onecad-core/tests/edit_session.rs
+expression: sess.document()
+---
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "schemaVersion": 1,
+  "settings": {
+    "units": "mm",
+    "tolerancePolicyHash": "tol"
+  },
+  "variables": [
+    {
+      "id": "00000000-0000-0000-0000-000000007001",
+      "name": "width",
+      "value": {
+        "value": 40.0
+      },
+      "unit": "mm"
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000007002",
+      "name": "height",
+      "value": {
+        "value": 20.0
+      },
+      "unit": "mm"
+    }
+  ],
+  "sketches": {
+    "00000000-0000-0000-0000-000000005c01": {
+      "id": "00000000-0000-0000-0000-000000005c01",
+      "name": "Sketch 1",
+      "plane": {
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "xAxis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "yAxis": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "attachment": {
+        "kind": "world",
+        "plane": "XY"
+      },
+      "entities": [
+        {
+          "kind": "point",
+          "id": "00000000-0000-0000-0000-00000000e001",
+          "at": [
+            0.0,
+            0.0
+          ],
+          "construction": false,
+          "referenceLocked": false
+        },
+        {
+          "kind": "point",
+          "id": "00000000-0000-0000-0000-00000000e002",
+          "at": [
+            40.0,
+            0.0
+          ],
+          "construction": false,
+          "referenceLocked": false
+        },
+        {
+          "kind": "line",
+          "id": "00000000-0000-0000-0000-00000000e020",
+          "start": "00000000-0000-0000-0000-00000000e001",
+          "end": "00000000-0000-0000-0000-00000000e002",
+          "construction": false
+        }
+      ],
+      "constraints": [
+        {
+          "kind": "distance",
+          "id": "00000000-0000-0000-0000-00000000c001",
+          "entity1": "00000000-0000-0000-0000-00000000e001",
+          "entity2": "00000000-0000-0000-0000-00000000e002",
+          "value": {
+            "value": 40.0
+          }
+        }
+      ]
+    }
+  },
+  "datumPlanes": {
+    "00000000-0000-0000-0000-00000000d001": {
+      "id": "00000000-0000-0000-0000-00000000d001",
+      "name": "Datum 1",
+      "kind": "OffsetFromPlane",
+      "basePlaneId": "XY",
+      "offset": 0.0,
+      "angleDeg": 0.0,
+      "resolvedPlane": {
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "xAxis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "yAxis": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "resolvedValid": false
+    },
+    "00000000-0000-0000-0000-00000000d002": {
+      "id": "00000000-0000-0000-0000-00000000d002",
+      "name": "Datum 2",
+      "kind": "OffsetFromPlane",
+      "basePlaneId": "XZ",
+      "offset": 5.0,
+      "angleDeg": 0.0,
+      "resolvedPlane": {
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "xAxis": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "yAxis": [
+          -1.0,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "resolvedValid": false
+    }
+  },
+  "timeline": {
+    "records": [
+      {
+        "recordId": "00000000-0000-0000-0000-000000002e00",
+        "recordSchemaVersion": 1,
+        "stepIndex": 0,
+        "name": "Sketch",
+        "opType": "Sketch",
+        "params": {
+          "plane": {
+            "kind": "XY",
+            "normal": [
+              0.0,
+              0.0,
+              1.0
+            ],
+            "origin": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "xAxis": [
+              0.0,
+              1.0,
+              0.0
+            ],
+            "yAxis": [
+              -1.0,
+              0.0,
+              0.0
+            ]
+          },
+          "sketchId": "00000000-0000-0000-0000-000000005c01"
+        },
+        "inputs": {
+          "bodies": [],
+          "sketches": [],
+          "elements": []
+        },
+        "outputs": [],
+        "determinism": {
+          "parallel": false
+        },
+        "suppressed": false
+      },
+      {
+        "recordId": "00000000-0000-0000-0000-000000002e01",
+        "recordSchemaVersion": 1,
+        "stepIndex": 0,
+        "name": "Extrude",
+        "opType": "Extrude",
+        "params": {
+          "booleanMode": "NewBody",
+          "distance": {
+            "value": 25.0
+          },
+          "distance2": {
+            "value": 0.0
+          },
+          "draftAngleDeg": {
+            "value": 0.0
+          },
+          "extrudeMode": "Blind",
+          "extrudeMode2": "Blind",
+          "profile": {
+            "regionId": "r0",
+            "sketchId": "00000000-0000-0000-0000-000000005c01"
+          },
+          "twoDirections": false
+        },
+        "inputs": {
+          "bodies": [],
+          "sketches": [
+            "00000000-0000-0000-0000-000000005c01"
+          ],
+          "elements": []
+        },
+        "outputs": [
+          "00000000-0000-0000-0000-00000000b001"
+        ],
+        "determinism": {
+          "parallel": false
+        },
+        "suppressed": false
+      },
+      {
+        "recordId": "00000000-0000-0000-0000-000000002e02",
+        "recordSchemaVersion": 1,
+        "stepIndex": 0,
+        "name": "Extrude",
+        "opType": "Extrude",
+        "params": {
+          "booleanMode": "NewBody",
+          "distance": {
+            "value": 10.0
+          },
+          "distance2": {
+            "value": 0.0
+          },
+          "draftAngleDeg": {
+            "value": 0.0
+          },
+          "extrudeMode": "Blind",
+          "extrudeMode2": "Blind",
+          "profile": {
+            "regionId": "r0",
+            "sketchId": "00000000-0000-0000-0000-000000005c01"
+          },
+          "twoDirections": false
+        },
+        "inputs": {
+          "bodies": [],
+          "sketches": [
+            "00000000-0000-0000-0000-000000005c01"
+          ],
+          "elements": []
+        },
+        "outputs": [
+          "00000000-0000-0000-0000-00000000b002"
+        ],
+        "determinism": {
+          "parallel": false
+        },
+        "suppressed": false
+      },
+      {
+        "recordId": "00000000-0000-0000-0000-000000002e03",
+        "recordSchemaVersion": 1,
+        "stepIndex": 0,
+        "name": "Boolean",
+        "opType": "Boolean",
+        "params": {
+          "operation": "Union",
+          "targetBodyId": "00000000-0000-0000-0000-00000000b001",
+          "toolBodyId": "00000000-0000-0000-0000-00000000b002"
+        },
+        "inputs": {
+          "bodies": [
+            "00000000-0000-0000-0000-00000000b001",
+            "00000000-0000-0000-0000-00000000b002"
+          ],
+          "sketches": [],
+          "elements": []
+        },
+        "outputs": [
+          "00000000-0000-0000-0000-00000000b001"
+        ],
+        "determinism": {
+          "parallel": false
+        },
+        "suppressed": false
+      },
+      {
+        "recordId": "00000000-0000-0000-0000-000000002e04",
+        "recordSchemaVersion": 1,
+        "stepIndex": 0,
+        "name": "Fillet",
+        "opType": "Fillet",
+        "params": {
+          "chainTangentEdges": true,
+          "edgeIds": [
+            "el_e1"
+          ],
+          "edges": [
+            {
+              "primary": {
+                "bodyId": "00000000-0000-0000-0000-00000000b001",
+                "elementId": "el_e1",
+                "kind": "edge"
+              }
+            }
+          ],
+          "radius": {
+            "value": 2.0
+          }
+        },
+        "inputs": {
+          "bodies": [
+            "00000000-0000-0000-0000-00000000b001"
+          ],
+          "sketches": [],
+          "elements": [
+            "el_e1"
+          ]
+        },
+        "outputs": [
+          "00000000-0000-0000-0000-00000000b001"
+        ],
+        "determinism": {
+          "parallel": false
+        },
+        "suppressed": false
+      },
+      {
+        "recordId": "00000000-0000-0000-0000-000000002e30",
+        "recordSchemaVersion": 1,
+        "stepIndex": 0,
+        "name": "Extrude",
+        "opType": "Extrude",
+        "params": {
+          "booleanMode": "NewBody",
+          "distance": {
+            "value": 12.5
+          },
+          "distance2": {
+            "value": 0.0
+          },
+          "draftAngleDeg": {
+            "value": 0.0
+          },
+          "extrudeMode": "Blind",
+          "extrudeMode2": "Blind",
+          "profile": {
+            "regionId": "r0",
+            "sketchId": "00000000-0000-0000-0000-000000005c01"
+          },
+          "twoDirections": false
+        },
+        "inputs": {
+          "bodies": [],
+          "sketches": [
+            "00000000-0000-0000-0000-000000005c01"
+          ],
+          "elements": []
+        },
+        "outputs": [
+          "00000000-0000-0000-0000-00000000b030"
+        ],
+        "determinism": {
+          "parallel": false
+        },
+        "suppressed": false
+      }
+    ],
+    "cursor": 3
+  },
+  "bodies": {
+    "bodies": [
+      {
+        "id": "00000000-0000-0000-0000-00000000b000",
+        "name": "Base Plate",
+        "visible": true,
+        "createdBy": "00000000-0000-0000-0000-000000002e00"
+      }
+    ]
+  },
+  "repair": []
+}

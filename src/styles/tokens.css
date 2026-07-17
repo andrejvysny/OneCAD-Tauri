@@ -1,0 +1,114 @@
+/*
+ * OneCAD design tokens (Tailwind v4 @theme).
+ *
+ * Every value below is extracted VERBATIM from the design prototype:
+ *   design/project/OneCAD UI Explorations.dc.html
+ * (color hexes confirmed byte-for-byte against that file; shadow/alpha
+ *  channels normalized to modern space-separated rgb() syntax — identical
+ *  values, Tailwind v4 form).
+ *
+ * GREP GATE: this file is the SOLE source of design colors. Any new color
+ * MUST be added HERE as a token, never written inline in a component. A CI
+ * grep rejects raw hex literals outside this file.
+ */
+
+@theme {
+  /* ---- Accent / interactive ---- */
+  --color-accent: #2e6fe0;
+  --color-accent-hover: #2660c6;
+
+  /* ---- Selection ---- */
+  --color-sel-bg: #e1ebfb;
+  --color-sel-text: #1d4fa8;
+
+  /* ---- Warning / caution ---- */
+  --color-warn: #b26b10;
+  --color-warn-surface: #fdf6ec;
+  --color-warn-border: #f0dfc2;
+  /* DOF-card body text (prototype 1e warn card, line 462). */
+  --color-warn-strong: #8a5b10;
+
+  /* ---- Canvas (viewport backgrounds) ---- */
+  --color-canvas: #eaecef;
+  --color-canvas-model: #eef0f3;
+  --color-canvas-sketch: #f4f7fc;
+  /* Start-screen desktop behind the card (prototype 1a, line 40). */
+  --color-canvas-start: #eceef1;
+
+  /* ---- Chrome surfaces ---- */
+  --color-panel: #fafafb;
+  --color-statusbar: #fbfbfc;
+  --color-titlebar: #f6f7f8;
+  /* Title-bar document title (prototype 1c titlebar, line 150). */
+  --color-titlebar-text: #3a3f46;
+
+  /* ---- Borders (default / strong / subtle) ---- */
+  --color-border: #e2e4e8;
+  --color-border-strong: #d8dbe0;
+  --color-border-subtle: #edeef1;
+  /* Recent-project card hover border (prototype 1a/1b, #B9CDF2). */
+  --color-card-hover-border: #b9cdf2;
+
+  /* ---- Ink scale (text, darkest → lightest) ---- */
+  --color-ink: #1b1d21;
+  --color-ink-2: #2a2e34;
+  /* Tree-row label, unselected (prototype 1c tree rows, line 544). */
+  --color-tree-label: #33383f;
+  --color-ink-3: #4a5158;
+  --color-ink-4: #5a626d;
+  --color-ink-5: #8a919c;
+  --color-ink-6: #9aa1ab;
+  --color-ink-7: #a6acb5;
+
+  /* ---- Hover surfaces ---- */
+  --color-hover: #f3f4f6;
+  --color-hover-2: #edf0f4;
+  --color-hover-3: #e9edf3;
+
+  /* ---- Chips ---- */
+  --color-chip: #f4f5f7;
+  --color-chip-2: #f0f1f4;
+
+  /* ---- Inset well ---- */
+  --color-well: #f0f2f5;
+
+  /* ---- Sketch mode chrome ---- */
+  --color-sketch-chrome: #e9f1fd;
+  --color-sketch-chrome-border: #cbdcf7;
+  --color-toolbar-sketch: #f0f5fe;
+
+  /* ---- Tooltip ---- */
+  --color-tooltip: #24272c;
+  --color-tooltip-text: #f4f5f6;
+
+  /* ---- Toggle (off state track) ---- */
+  --color-toggle-off: #d5d9df;
+
+  /* ---- Traffic-light window controls (close / minimize / maximize) ---- */
+  --color-traffic-close: #ff5f57;
+  --color-traffic-min: #febc2e;
+  --color-traffic-max: #28c840;
+
+  /* ---- Radii ---- */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+
+  /* ---- Shadows ---- */
+  --shadow-card: 0 2px 8px rgb(0 0 0 / 0.08);
+  --shadow-panel: 0 2px 8px rgb(0 0 0 / 0.07);
+  --shadow-popover: 0 8px 24px rgb(0 0 0 / 0.14);
+  --shadow-ctrl: 0 1px 3px rgb(0 0 0 / 0.06);
+  --shadow-start-card: 0 4px 20px rgb(0 0 0 / 0.07);
+  /* Recent-project card hover lift (prototype 1a, rgba(30,60,120,.1)). */
+  --shadow-card-hover: 0 3px 10px rgb(30 60 120 / 0.1);
+  /* Floating sketch-chrome pill lift (prototype 1c, line 172). */
+  --shadow-sketch-pill: 0 2px 8px rgb(30 60 120 / 0.1);
+  --shadow-focus-ring: 0 0 0 3px rgb(46 111 224 / 0.15);
+  /* Toggle/switch knob (prototype snap popover: 0 1px 2px rgba(0,0,0,.3)) */
+  --shadow-knob: 0 1px 2px rgb(0 0 0 / 0.3);
+
+  /* ---- Fonts ---- */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, Menlo, monospace;
+}

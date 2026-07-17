@@ -1,0 +1,11 @@
+---
+source: crates/onecad-core/tests/sketch_freeze.rs
+expression: entity
+---
+{
+  "kind": "circle",
+  "id": "00000000-0000-0000-0000-000000000c10",
+  "center": "00000000-0000-0000-0000-000000000ec0",
+  "radius": 3.0,
+  "construction": false
+}

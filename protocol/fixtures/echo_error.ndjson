@@ -1,0 +1,8 @@
+# Unknown verb -> PROTOCOL_ERROR terminal resp (SCHEMA.md §8). The request is
+# well-framed, so the worker replies with a terminal error resp rather than
+# tearing down. UNSUPPORTED is reserved for a known verb with an unsupported
+# op/param; an unrecognized verb is a protocol violation.
+# NDJSON: one directive object per physical line.
+{"expect":{"v":1,"t":"hello","seq":0,"result":{"protocolVersion":1}}}
+{"send":{"v":1,"t":"req","id":1,"verb":"Echo","args":{"anything":true}}}
+{"expect":{"v":1,"t":"resp","id":1,"ok":false,"seq":"$any","error":{"code":"PROTOCOL_ERROR","message":"$any","retriable":false}}}

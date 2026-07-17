@@ -1,0 +1,10 @@
+# Stale/unknown gesture (SCHEMA §7.4): a SolveDrag for a gestureId that was
+# never opened (or already ended) is a RECOVERABLE error, not a fatal one — the
+# session stays alive. Code REF_UNRESOLVED, retriable:false (§8: recoverable by
+# code; not retriable as-is). Consume the unsolicited hello (SCHEMA §6) first.
+{"expect":{"v":1,"t":"hello","seq":0}}
+{"send":{"v":1,"t":"req","id":1,"verb":"SolveDrag","args":{"gestureId":424242,"seq":1,"pointId":"x","target":[1,1]}}}
+{"expect":{"v":1,"t":"resp","id":1,"ok":false,"error":{"code":"REF_UNRESOLVED","retriable":false}}}
+# Session survived — a subsequent EndGesture for another unknown id also recovers.
+{"send":{"v":1,"t":"req","id":2,"verb":"EndGesture","args":{"gestureId":424243}}}
+{"expect":{"v":1,"t":"resp","id":2,"ok":false,"error":{"code":"REF_UNRESOLVED","retriable":false}}}

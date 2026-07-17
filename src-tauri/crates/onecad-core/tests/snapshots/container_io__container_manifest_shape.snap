@@ -1,0 +1,33 @@
+---
+source: crates/onecad-core/tests/container_io.rs
+expression: manifest
+---
+{
+  "appVersion": "0.1.0-test",
+  "containerVersion": 2,
+  "created": "2026-07-16T00:00:00Z",
+  "documentId": "00000000-0000-0000-0000-000000000d0c",
+  "entries": [
+    {
+      "path": "document.json",
+      "sha256": "[sha256]"
+    },
+    {
+      "path": "timeline/ops.jsonl",
+      "sha256": "[sha256]"
+    },
+    {
+      "path": "geometry/00000000-0000-0000-0000-00000000b0d1.brep",
+      "sha256": "[sha256]"
+    },
+    {
+      "path": "preview.png",
+      "sha256": "[sha256]"
+    }
+  ],
+  "globalSchemaVersion": 1,
+  "magic": "ONECAD",
+  "modified": "2026-07-16T00:00:00Z",
+  "occtFingerprint": "occt-7.9.3-fixed",
+  "opsHash": "[opsHash]"
+}

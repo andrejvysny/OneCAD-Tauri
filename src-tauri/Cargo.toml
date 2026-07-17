@@ -1,0 +1,62 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/onecad-core",
+    "crates/onecad-protocol",
+    "crates/onecad-worker-stub",
+]
+
+# Shared dependency versions for every workspace member. Individual crates
+# opt into features via `{ workspace = true, features = [...] }`.
+[workspace.dependencies]
+onecad-core = { path = "crates/onecad-core" }
+onecad-protocol = { path = "crates/onecad-protocol" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+tracing = "0.1"
+async-trait = "0.1"
+tokio = { version = "1", default-features = false }
+tokio-util = { version = "0.7", default-features = false }
+bytes = "1"
+zip = "2"
+
+[package]
+name = "onecad"
+version = "0.1.0"
+description = "OneCAD parametric CAD application (Tauri shell + Rust core)"
+authors = ["Andrej Vysny <vysnyandrej@gmail.com>"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix keeps the lib name unique so it does not conflict with the
+# bin name (only an issue on Windows, see rust-lang/cargo#8519).
+name = "onecad_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+onecad-core = { workspace = true }
+onecad-protocol = { workspace = true, features = ["client"] }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tokio = { workspace = true, features = [
+    "rt-multi-thread",
+    "macros",
+    "process",
+    "io-util",
+    "time",
+    "sync",
+] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+# Not in the plan's explicit dep list, but required by task 3 (stderr tracing init).
+tracing-subscriber = "0.3"
+uuid = { workspace = true }

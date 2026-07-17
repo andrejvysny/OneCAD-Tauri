@@ -1,0 +1,13 @@
+---
+source: crates/onecad-core/tests/sketch_freeze.rs
+expression: constraint
+---
+{
+  "kind": "verticalDistance",
+  "id": "00000000-0000-0000-0000-00000000000e",
+  "point1": "00000000-0000-0000-0000-000000000e00",
+  "point2": "00000000-0000-0000-0000-000000000e02",
+  "value": {
+    "value": 20.0
+  }
+}

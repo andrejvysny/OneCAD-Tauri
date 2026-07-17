@@ -1,0 +1,464 @@
+=== OneCAD-CPP prototype: proto_sketch_solver ===
+date_utc: 2026-07-16T18:48:36Z
+git_rev: b4ddcccc48134531f3ff80f11ddf9f42ad5a967e
+binary: ./build/tests/proto_sketch_solver
+=== stdout+stderr (exit code appended) ===
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "88c678cc-929b-49bb-a316-795502265d50" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "8df2987a-916e-49c0-a6e5-e5471fb4aede" totalEntities= 2
+onecad.core.sketch: addLine startId= "88c678cc-929b-49bb-a316-795502265d50" endId= "8df2987a-916e-49c0-a6e5-e5471fb4aede" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint 5 5 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "9456fb47-973a-4ee8-a685-439c487e9ea6" totalEntities= 4
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addPoint -2 2 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "0943656f-b095-475b-8b7c-b2d5a72abef6" totalEntities= 6
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addConstraint:start type= 11 id= "91f47275-74b5-4c17-be59-ff01015070af"
+onecad.core.sketch: addConstraint:unsupported type= 11 reason= "Distance supports point/line combinations only"
+onecad.core.sketch: addConstraint:start type= 11 id= "d56d52fe-f7ce-4dc4-ac3a-8078800ef581"
+onecad.core.sketch: addConstraint:unsupported type= 11 reason= "Distance supports point/line combinations only"
+onecad.core.sketch: addConstraint:start type= 11 id= "86ba0e43-da5b-4d9d-9854-c1e82fc2e0a6"
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "86ba0e43-da5b-4d9d-9854-c1e82fc2e0a6" totalConstraints= 1
+onecad.core.sketch: addConstraint:start type= 15 id= "65959ff7-d935-42a4-b063-5c7272b84d9b"
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 2
+onecad.core.sketch: addConstraint:done id= "65959ff7-d935-42a4-b063-5c7272b84d9b" totalConstraints= 2
+onecad.core.constraintsolver: clear entities(points,lines,arcs,circles)= 0 0 0 0 constraints= 0
+onecad.core.constraintsolver: addConstraint:start constraintId= "86ba0e43-da5b-4d9d-9854-c1e82fc2e0a6" type= 11
+onecad.core.constraintsolver: addConstraint:done constraintId= "86ba0e43-da5b-4d9d-9854-c1e82fc2e0a6" tagId= 1 totalConstraints= 1
+onecad.core.constraintsolver: addConstraint:start constraintId= "65959ff7-d935-42a4-b063-5c7272b84d9b" type= 15
+onecad.core.constraintsolver: addConstraint:done constraintId= "65959ff7-d935-42a4-b063-5c7272b84d9b" tagId= 2 totalConstraints= 2
+onecad.core.sketch: rebuildSolver:start entities= 7 constraints= 2
+onecad.core.constraintsolver: clear entities(points,lines,arcs,circles)= 0 0 0 0 constraints= 0
+onecad.core.constraintsolver: addConstraint:start constraintId= "86ba0e43-da5b-4d9d-9854-c1e82fc2e0a6" type= 11
+onecad.core.constraintsolver: addConstraint:done constraintId= "86ba0e43-da5b-4d9d-9854-c1e82fc2e0a6" tagId= 1 totalConstraints= 1
+onecad.core.constraintsolver: addConstraint:start constraintId= "65959ff7-d935-42a4-b063-5c7272b84d9b" type= 15
+onecad.core.constraintsolver: addConstraint:done constraintId= "65959ff7-d935-42a4-b063-5c7272b84d9b" tagId= 2 totalConstraints= 2
+onecad.core.sketch: rebuildSolver:done
+onecad.core.constraintsolver: solve:start points= 4 lines= 1 arcs= 1 circles= 1 constraints= 2 parameters= 12 algorithm= 1
+onecad.core.constraintsolver: solveWithDrag:start pointId= "88c678cc-929b-49bb-a316-795502265d50" target= 10 10 fixedPoints= 0
+onecad.core.constraintsolver: solve:start points= 4 lines= 1 arcs= 1 circles= 1 constraints= 2 parameters= 12 algorithm= 1
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "0b2e512a-6f89-4634-93b5-c79a4831c85c" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "cc458573-b525-4439-a37d-a634e40d2a70" totalEntities= 2
+onecad.core.sketch: addLine startId= "0b2e512a-6f89-4634-93b5-c79a4831c85c" endId= "cc458573-b525-4439-a37d-a634e40d2a70" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addConstraint:start type= 1 id= "e0cccdd6-bfe4-4930-8d9e-da5d95e245b9"
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "e0cccdd6-bfe4-4930-8d9e-da5d95e245b9" totalConstraints= 1
+onecad.core.sketch: addConstraint:start type= 3 id= "f73bd87c-8a52-44ec-aa44-2b508fc08abe"
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 2
+onecad.core.sketch: addConstraint:done id= "f73bd87c-8a52-44ec-aa44-2b508fc08abe" totalConstraints= 2
+onecad.core.sketch: rebuildSolver:start entities= 3 constraints= 2
+onecad.core.constraintsolver: clear entities(points,lines,arcs,circles)= 0 0 0 0 constraints= 0
+onecad.core.constraintsolver: addConstraint:start constraintId= "e0cccdd6-bfe4-4930-8d9e-da5d95e245b9" type= 1
+onecad.core.constraintsolver: addConstraint:done constraintId= "e0cccdd6-bfe4-4930-8d9e-da5d95e245b9" tagId= 1 totalConstraints= 1
+onecad.core.constraintsolver: addConstraint:start constraintId= "f73bd87c-8a52-44ec-aa44-2b508fc08abe" type= 3
+onecad.core.constraintsolver: addConstraint:done constraintId= "f73bd87c-8a52-44ec-aa44-2b508fc08abe" tagId= 2 totalConstraints= 2
+onecad.core.sketch: rebuildSolver:done
+onecad.core.constraintsolver: solve:start points= 2 lines= 1 arcs= 0 circles= 0 constraints= 2 parameters= 4 algorithm= 1
+onecad.core.constraintsolver: solveWithDrag:start pointId= "0b2e512a-6f89-4634-93b5-c79a4831c85c" target= 5 7 fixedPoints= 0
+onecad.core.constraintsolver: solve:start points= 2 lines= 1 arcs= 0 circles= 0 constraints= 2 parameters= 4 algorithm= 1
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "b6a250c3-3fd5-4096-8ab8-822072e7d6e5" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "d889bd08-82ec-4086-8bc5-c0616a005960" totalEntities= 2
+onecad.core.sketch: addPoint 10 6 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "cd7c8abe-b408-49a8-b08e-b2bc82a5ff86" totalEntities= 3
+onecad.core.sketch: addPoint 0 6 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "80d2300b-f288-4722-8e33-a9430c5ac517" totalEntities= 4
+onecad.core.sketch: addLine startId= "b6a250c3-3fd5-4096-8ab8-822072e7d6e5" endId= "d889bd08-82ec-4086-8bc5-c0616a005960" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "d889bd08-82ec-4086-8bc5-c0616a005960" endId= "cd7c8abe-b408-49a8-b08e-b2bc82a5ff86" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "cd7c8abe-b408-49a8-b08e-b2bc82a5ff86" endId= "80d2300b-f288-4722-8e33-a9430c5ac517" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "80d2300b-f288-4722-8e33-a9430c5ac517" endId= "b6a250c3-3fd5-4096-8ab8-822072e7d6e5" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.core.sketch: addConstraint:start type= 1 id= "e9a6b009-75b9-4c3b-b72d-b300f2c17fd4"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "e9a6b009-75b9-4c3b-b72d-b300f2c17fd4" totalConstraints= 1
+onecad.core.sketch: addConstraint:start type= 1 id= "d6dac739-c6d0-496d-8cf9-23486dfa0de1"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 2
+onecad.core.sketch: addConstraint:done id= "d6dac739-c6d0-496d-8cf9-23486dfa0de1" totalConstraints= 2
+onecad.core.sketch: addConstraint:start type= 2 id= "357da3b4-37a5-4a33-867c-7eba8f927e77"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 3
+onecad.core.sketch: addConstraint:done id= "357da3b4-37a5-4a33-867c-7eba8f927e77" totalConstraints= 3
+onecad.core.sketch: addConstraint:start type= 2 id= "759be22f-1a87-4df8-ac99-585c4a64e4ae"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 4
+onecad.core.sketch: addConstraint:done id= "759be22f-1a87-4df8-ac99-585c4a64e4ae" totalConstraints= 4
+onecad.core.sketch: rebuildSolver:start entities= 8 constraints= 4
+onecad.core.constraintsolver: clear entities(points,lines,arcs,circles)= 0 0 0 0 constraints= 0
+onecad.core.constraintsolver: addConstraint:start constraintId= "e9a6b009-75b9-4c3b-b72d-b300f2c17fd4" type= 1
+onecad.core.constraintsolver: addConstraint:done constraintId= "e9a6b009-75b9-4c3b-b72d-b300f2c17fd4" tagId= 1 totalConstraints= 1
+onecad.core.constraintsolver: addConstraint:start constraintId= "d6dac739-c6d0-496d-8cf9-23486dfa0de1" type= 1
+onecad.core.constraintsolver: addConstraint:done constraintId= "d6dac739-c6d0-496d-8cf9-23486dfa0de1" tagId= 2 totalConstraints= 2
+onecad.core.constraintsolver: addConstraint:start constraintId= "357da3b4-37a5-4a33-867c-7eba8f927e77" type= 2
+onecad.core.constraintsolver: addConstraint:done constraintId= "357da3b4-37a5-4a33-867c-7eba8f927e77" tagId= 3 totalConstraints= 3
+onecad.core.constraintsolver: addConstraint:start constraintId= "759be22f-1a87-4df8-ac99-585c4a64e4ae" type= 2
+onecad.core.constraintsolver: addConstraint:done constraintId= "759be22f-1a87-4df8-ac99-585c4a64e4ae" tagId= 4 totalConstraints= 4
+onecad.core.sketch: rebuildSolver:done
+onecad.core.constraintsolver: solveWithDrag:start pointId= "b6a250c3-3fd5-4096-8ab8-822072e7d6e5" target= -2 -1 fixedPoints= 1
+onecad.core.constraintsolver: solve:start points= 4 lines= 4 arcs= 0 circles= 0 constraints= 4 parameters= 8 algorithm= 1
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "93a0d71a-ba9b-4c1e-b556-37fd730c6428" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "c47495d6-056a-42f9-9b04-f6f52895d5bd" totalEntities= 2
+onecad.core.sketch: addPoint 10 6 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "d07b82ad-751b-4faa-89e7-d9763e042715" totalEntities= 3
+onecad.core.sketch: addPoint 0 6 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "bba2b6b0-ce9c-477a-9868-cc610620123c" totalEntities= 4
+onecad.core.sketch: addLine startId= "93a0d71a-ba9b-4c1e-b556-37fd730c6428" endId= "c47495d6-056a-42f9-9b04-f6f52895d5bd" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "c47495d6-056a-42f9-9b04-f6f52895d5bd" endId= "d07b82ad-751b-4faa-89e7-d9763e042715" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "d07b82ad-751b-4faa-89e7-d9763e042715" endId= "bba2b6b0-ce9c-477a-9868-cc610620123c" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "bba2b6b0-ce9c-477a-9868-cc610620123c" endId= "93a0d71a-ba9b-4c1e-b556-37fd730c6428" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.core.sketch: addConstraint:start type= 1 id= "53765757-de21-4e63-85cd-843ce04373f6"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "53765757-de21-4e63-85cd-843ce04373f6" totalConstraints= 1
+onecad.core.sketch: addConstraint:start type= 1 id= "3aa10921-ec8b-496f-ba5a-a9cb000db6e6"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 2
+onecad.core.sketch: addConstraint:done id= "3aa10921-ec8b-496f-ba5a-a9cb000db6e6" totalConstraints= 2
+onecad.core.sketch: addConstraint:start type= 2 id= "b3bbfac7-a45d-4230-afcf-550cef8eee23"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 3
+onecad.core.sketch: addConstraint:done id= "b3bbfac7-a45d-4230-afcf-550cef8eee23" totalConstraints= 3
+onecad.core.sketch: addConstraint:start type= 2 id= "0c70f788-e053-45f1-8b4b-70486cbef0d0"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 4
+onecad.core.sketch: addConstraint:done id= "0c70f788-e053-45f1-8b4b-70486cbef0d0" totalConstraints= 4
+onecad.core.sketch: rebuildSolver:start entities= 8 constraints= 4
+onecad.core.constraintsolver: clear entities(points,lines,arcs,circles)= 0 0 0 0 constraints= 0
+onecad.core.constraintsolver: addConstraint:start constraintId= "53765757-de21-4e63-85cd-843ce04373f6" type= 1
+onecad.core.constraintsolver: addConstraint:done constraintId= "53765757-de21-4e63-85cd-843ce04373f6" tagId= 1 totalConstraints= 1
+onecad.core.constraintsolver: addConstraint:start constraintId= "3aa10921-ec8b-496f-ba5a-a9cb000db6e6" type= 1
+onecad.core.constraintsolver: addConstraint:done constraintId= "3aa10921-ec8b-496f-ba5a-a9cb000db6e6" tagId= 2 totalConstraints= 2
+onecad.core.constraintsolver: addConstraint:start constraintId= "b3bbfac7-a45d-4230-afcf-550cef8eee23" type= 2
+onecad.core.constraintsolver: addConstraint:done constraintId= "b3bbfac7-a45d-4230-afcf-550cef8eee23" tagId= 3 totalConstraints= 3
+onecad.core.constraintsolver: addConstraint:start constraintId= "0c70f788-e053-45f1-8b4b-70486cbef0d0" type= 2
+onecad.core.constraintsolver: addConstraint:done constraintId= "0c70f788-e053-45f1-8b4b-70486cbef0d0" tagId= 4 totalConstraints= 4
+onecad.core.sketch: rebuildSolver:done
+onecad.core.constraintsolver: solveWithDrag:start pointId= "93a0d71a-ba9b-4c1e-b556-37fd730c6428" target= -2 -1 fixedPoints= 1
+onecad.core.constraintsolver: solve:start points= 4 lines= 4 arcs= 0 circles= 0 constraints= 4 parameters= 8 algorithm= 1
+onecad.core.sketch: addConstraint:start type= 3 id= "810fe3a6-fde0-4e3f-890b-4057de1af48d"
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 5
+onecad.core.sketch: addConstraint:done id= "810fe3a6-fde0-4e3f-890b-4057de1af48d" totalConstraints= 5
+onecad.core.sketch: rebuildSolver:start entities= 8 constraints= 5
+onecad.core.constraintsolver: clear entities(points,lines,arcs,circles)= 0 0 0 0 constraints= 0
+onecad.core.constraintsolver: addConstraint:start constraintId= "53765757-de21-4e63-85cd-843ce04373f6" type= 1
+onecad.core.constraintsolver: addConstraint:done constraintId= "53765757-de21-4e63-85cd-843ce04373f6" tagId= 1 totalConstraints= 1
+onecad.core.constraintsolver: addConstraint:start constraintId= "3aa10921-ec8b-496f-ba5a-a9cb000db6e6" type= 1
+onecad.core.constraintsolver: addConstraint:done constraintId= "3aa10921-ec8b-496f-ba5a-a9cb000db6e6" tagId= 2 totalConstraints= 2
+onecad.core.constraintsolver: addConstraint:start constraintId= "b3bbfac7-a45d-4230-afcf-550cef8eee23" type= 2
+onecad.core.constraintsolver: addConstraint:done constraintId= "b3bbfac7-a45d-4230-afcf-550cef8eee23" tagId= 3 totalConstraints= 3
+onecad.core.constraintsolver: addConstraint:start constraintId= "0c70f788-e053-45f1-8b4b-70486cbef0d0" type= 2
+onecad.core.constraintsolver: addConstraint:done constraintId= "0c70f788-e053-45f1-8b4b-70486cbef0d0" tagId= 4 totalConstraints= 4
+onecad.core.constraintsolver: addConstraint:start constraintId= "810fe3a6-fde0-4e3f-890b-4057de1af48d" type= 3
+onecad.core.constraintsolver: addConstraint:done constraintId= "810fe3a6-fde0-4e3f-890b-4057de1af48d" tagId= 5 totalConstraints= 5
+onecad.core.sketch: rebuildSolver:done
+onecad.core.constraintsolver: solveWithDrag:start pointId= "93a0d71a-ba9b-4c1e-b556-37fd730c6428" target= -4 -3 fixedPoints= 1
+onecad.core.constraintsolver: solve:start points= 4 lines= 4 arcs= 0 circles= 0 constraints= 5 parameters= 8 algorithm= 1
+onecad.core.sketch: addPoint 0 6 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "9a5729ad-9318-4946-b85f-c4d50b776b63" totalEntities= 1
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "f8c03ecd-ce3f-411a-9b75-7f5e5e2a5a25" totalEntities= 2
+onecad.core.sketch: addLine startId= "9a5729ad-9318-4946-b85f-c4d50b776b63" endId= "f8c03ecd-ce3f-411a-9b75-7f5e5e2a5a25" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addConstraint:start type= 2 id= "1121a53b-b548-4437-bdb7-0d95e2e7f2e4"
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "1121a53b-b548-4437-bdb7-0d95e2e7f2e4" totalConstraints= 1
+onecad.core.sketch: rebuildSolver:start entities= 3 constraints= 1
+onecad.core.constraintsolver: clear entities(points,lines,arcs,circles)= 0 0 0 0 constraints= 0
+onecad.core.constraintsolver: addConstraint:start constraintId= "1121a53b-b548-4437-bdb7-0d95e2e7f2e4" type= 2
+onecad.core.constraintsolver: addConstraint:done constraintId= "1121a53b-b548-4437-bdb7-0d95e2e7f2e4" tagId= 1 totalConstraints= 1
+onecad.core.sketch: rebuildSolver:done
+onecad.core.constraintsolver: solveWithDrag:start pointId= "f8c03ecd-ce3f-411a-9b75-7f5e5e2a5a25" target= 0 9 fixedPoints= 1
+onecad.core.constraintsolver: solve:start points= 2 lines= 1 arcs= 0 circles= 0 constraints= 1 parameters= 4 algorithm= 1
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "22d36621-7546-4441-9af2-e69bc3c02243" totalEntities= 1
+onecad.core.sketch: addPoint 12 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "6e651aba-800b-4e89-bfb3-c9288816c145" totalEntities= 2
+onecad.core.sketch: addLine startId= "22d36621-7546-4441-9af2-e69bc3c02243" endId= "6e651aba-800b-4e89-bfb3-c9288816c145" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addConstraint:start type= 1 id= "1a838b3e-80fc-440c-8e0f-3b46322b703e"
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "1a838b3e-80fc-440c-8e0f-3b46322b703e" totalConstraints= 1
+onecad.core.sketch: rebuildSolver:start entities= 3 constraints= 1
+onecad.core.constraintsolver: clear entities(points,lines,arcs,circles)= 0 0 0 0 constraints= 0
+onecad.core.constraintsolver: addConstraint:start constraintId= "1a838b3e-80fc-440c-8e0f-3b46322b703e" type= 1
+onecad.core.constraintsolver: addConstraint:done constraintId= "1a838b3e-80fc-440c-8e0f-3b46322b703e" tagId= 1 totalConstraints= 1
+onecad.core.sketch: rebuildSolver:done
+onecad.core.constraintsolver: solveWithDrag:start pointId= "22d36621-7546-4441-9af2-e69bc3c02243" target= 7.25 0 fixedPoints= 1
+onecad.core.constraintsolver: solve:start points= 2 lines= 1 arcs= 0 circles= 0 constraints= 1 parameters= 4 algorithm= 1
+onecad.core.sketch: addPoint 1 1 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "4e079316-0f01-44eb-8159-aff5810b3082" totalEntities= 1
+onecad.core.sketch: addPoint 2 1.5 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "76b60a8c-1551-4a40-9cac-80847b5ef3d2" totalEntities= 2
+onecad.core.sketch: addConstraint:start type= 0 id= "68a1d827-5ae6-4ba9-8f22-f6c9f3cc2b05"
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "68a1d827-5ae6-4ba9-8f22-f6c9f3cc2b05" totalConstraints= 1
+onecad.core.sketch: addConstraint:start type= 3 id= "34aa757c-2e6b-451c-a3b6-32fc10d686f9"
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 2
+onecad.core.sketch: addConstraint:done id= "34aa757c-2e6b-451c-a3b6-32fc10d686f9" totalConstraints= 2
+onecad.core.sketch: rebuildSolver:start entities= 2 constraints= 2
+onecad.core.constraintsolver: clear entities(points,lines,arcs,circles)= 0 0 0 0 constraints= 0
+onecad.core.constraintsolver: addConstraint:start constraintId= "68a1d827-5ae6-4ba9-8f22-f6c9f3cc2b05" type= 0
+onecad.core.constraintsolver: addConstraint:done constraintId= "68a1d827-5ae6-4ba9-8f22-f6c9f3cc2b05" tagId= 1 totalConstraints= 1
+onecad.core.constraintsolver: addConstraint:start constraintId= "34aa757c-2e6b-451c-a3b6-32fc10d686f9" type= 3
+onecad.core.constraintsolver: addConstraint:done constraintId= "34aa757c-2e6b-451c-a3b6-32fc10d686f9" tagId= 2 totalConstraints= 2
+onecad.core.sketch: rebuildSolver:done
+onecad.core.constraintsolver: solveWithDrag:start pointId= "76b60a8c-1551-4a40-9cac-80847b5ef3d2" target= 5 4 fixedPoints= 1
+onecad.core.constraintsolver: solve:start points= 2 lines= 0 arcs= 0 circles= 0 constraints= 2 parameters= 4 algorithm= 1
+onecad.core.sketch: addPoint -3.2 5.3 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "05d3b047-1e6e-41c5-9536-0e048dba9e29" totalEntities= 1
+onecad.core.sketch: addConstraint:start type= 3 id= "44e7d257-bdd6-4855-8a21-d6990c41e0ba"
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "44e7d257-bdd6-4855-8a21-d6990c41e0ba" totalConstraints= 1
+onecad.core.sketch: rebuildSolver:start entities= 1 constraints= 1
+onecad.core.constraintsolver: clear entities(points,lines,arcs,circles)= 0 0 0 0 constraints= 0
+onecad.core.constraintsolver: addConstraint:start constraintId= "44e7d257-bdd6-4855-8a21-d6990c41e0ba" type= 3
+onecad.core.constraintsolver: addConstraint:done constraintId= "44e7d257-bdd6-4855-8a21-d6990c41e0ba" tagId= 1 totalConstraints= 1
+onecad.core.sketch: rebuildSolver:done
+onecad.core.constraintsolver: solveWithDrag:start pointId= "05d3b047-1e6e-41c5-9536-0e048dba9e29" target= 2.8 2.8 fixedPoints= 0
+onecad.core.constraintsolver: solve:start points= 1 lines= 0 arcs= 0 circles= 0 constraints= 1 parameters= 2 algorithm= 1
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "d656f055-abe7-44fb-b2ab-9ca4bff626a6" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "5dd69eb1-ab9b-49d8-baa0-4180d5b2d991" totalEntities= 2
+onecad.core.sketch: addLine startId= "d656f055-abe7-44fb-b2ab-9ca4bff626a6" endId= "5dd69eb1-ab9b-49d8-baa0-4180d5b2d991" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint 5 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "6ee16799-5fee-4dfe-b264-6f563f199630" totalEntities= 4
+onecad.core.sketch: addConstraint:start type= 5 id= "0890395e-41ec-4e74-9b72-d7b0a619ddd5"
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "0890395e-41ec-4e74-9b72-d7b0a619ddd5" totalConstraints= 1
+onecad.core.sketch: addPoint 20 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 1
+onecad.core.sketch: addPoint:done id= "88fa8f4e-486f-4fb2-9ca4-d886d0f8222d" totalEntities= 5
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 1
+onecad.core.sketch: addPoint 25 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 1
+onecad.core.sketch: addPoint:done id= "4fc59249-98c3-4620-ab4a-7505c1d2cdc7" totalEntities= 7
+onecad.core.sketch: addConstraint:start type= 5 id= "e85210a0-dc83-4e4c-90f8-81384f4927d5"
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 2
+onecad.core.sketch: addConstraint:done id= "e85210a0-dc83-4e4c-90f8-81384f4927d5" totalConstraints= 2
+onecad.core.sketch: addPoint 40 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 2
+onecad.core.sketch: addPoint:done id= "c3a16aac-cffd-4867-a197-23568e83b762" totalEntities= 8
+onecad.core.sketch: invalidateSolver entityCount= 9 constraintCount= 2
+onecad.core.sketch: addPoint 43.5355 3.53553 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 10 constraintCount= 2
+onecad.core.sketch: addPoint:done id= "616ccc91-890b-427f-94c8-8f7f5a8c68f1" totalEntities= 10
+onecad.core.sketch: addConstraint:start type= 5 id= "79163bd3-eeed-4978-96e1-1023034f0792"
+onecad.core.sketch: invalidateSolver entityCount= 10 constraintCount= 3
+onecad.core.sketch: addConstraint:done id= "79163bd3-eeed-4978-96e1-1023034f0792" totalConstraints= 3
+onecad.core.sketch: rebuildSolver:start entities= 10 constraints= 3
+onecad.core.constraintsolver: clear entities(points,lines,arcs,circles)= 0 0 0 0 constraints= 0
+onecad.core.constraintsolver: addConstraint:start constraintId= "0890395e-41ec-4e74-9b72-d7b0a619ddd5" type= 5
+onecad.core.constraintsolver: addConstraint:done constraintId= "0890395e-41ec-4e74-9b72-d7b0a619ddd5" tagId= 1 totalConstraints= 1
+onecad.core.constraintsolver: addConstraint:start constraintId= "e85210a0-dc83-4e4c-90f8-81384f4927d5" type= 5
+onecad.core.constraintsolver: addConstraint:done constraintId= "e85210a0-dc83-4e4c-90f8-81384f4927d5" tagId= 2 totalConstraints= 2
+onecad.core.constraintsolver: addConstraint:start constraintId= "79163bd3-eeed-4978-96e1-1023034f0792" type= 5
+onecad.core.constraintsolver: addConstraint:done constraintId= "79163bd3-eeed-4978-96e1-1023034f0792" tagId= 3 totalConstraints= 3
+onecad.core.sketch: rebuildSolver:done
+onecad.core.constraintsolver: solve:start points= 7 lines= 1 arcs= 1 circles= 1 constraints= 3 parameters= 18 algorithm= 1
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "2e39aa0f-e505-43f1-a3cb-e953d9d78eac" totalEntities= 1
+onecad.core.sketch: addPoint 7 -3 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "00216f11-190b-4d8d-9f5d-8107f11004cc" totalEntities= 2
+onecad.core.sketch: addPoint 0 -5 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "cccf92e8-5c34-4207-a3bb-0cac96dbcf22" totalEntities= 3
+onecad.core.sketch: addPoint 0 5 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "da061cf7-0d85-4048-86bb-8a0a618474bb" totalEntities= 4
+onecad.core.sketch: addLine startId= "cccf92e8-5c34-4207-a3bb-0cac96dbcf22" endId= "da061cf7-0d85-4048-86bb-8a0a618474bb" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addConstraint:start type= 12 id= "966635d6-85dd-4df6-b5cb-dda31a3d9d18"
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "966635d6-85dd-4df6-b5cb-dda31a3d9d18" totalConstraints= 1
+onecad.core.sketch: addConstraint:start type= 13 id= "6d09b2a9-ea2a-4509-a497-c94f09de811d"
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 2
+onecad.core.sketch: addConstraint:done id= "6d09b2a9-ea2a-4509-a497-c94f09de811d" totalConstraints= 2
+onecad.core.sketch: addPoint 20 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 2
+onecad.core.sketch: addPoint:done id= "32aa6b39-4c3b-4c8c-a6bf-041f23cc8d2b" totalEntities= 6
+onecad.core.sketch: addPoint 20 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 2
+onecad.core.sketch: addPoint:done id= "33c0ec1e-8bec-4610-b40c-10a14abba6aa" totalEntities= 7
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 2
+onecad.core.sketch: invalidateSolver entityCount= 9 constraintCount= 2
+onecad.core.sketch: addConstraint:start type= 16 id= "10efdeb9-3b71-4e94-8e87-1bbd641335f7"
+onecad.core.sketch: invalidateSolver entityCount= 9 constraintCount= 3
+onecad.core.sketch: addConstraint:done id= "10efdeb9-3b71-4e94-8e87-1bbd641335f7" totalConstraints= 3
+onecad.core.sketch: addConstraint:start type= 9 id= "8fb0de9e-1fc9-4b83-ac9b-9b6a86d49aaf"
+onecad.core.sketch: invalidateSolver entityCount= 9 constraintCount= 4
+onecad.core.sketch: addConstraint:done id= "8fb0de9e-1fc9-4b83-ac9b-9b6a86d49aaf" totalConstraints= 4
+onecad.core.sketch: addPoint -2 1 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 10 constraintCount= 4
+onecad.core.sketch: addPoint:done id= "ad932c1b-0903-42f0-aba1-633f72df17f8" totalEntities= 10
+onecad.core.sketch: addPoint 2 1 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 11 constraintCount= 4
+onecad.core.sketch: addPoint:done id= "8e5aaa6f-5238-45a9-80dd-9d2991d9af9c" totalEntities= 11
+onecad.core.sketch: addConstraint:start type= 17 id= "da915a24-fb01-42f4-88a2-54b8fb7f7348"
+onecad.core.sketch: invalidateSolver entityCount= 11 constraintCount= 5
+onecad.core.sketch: addConstraint:done id= "da915a24-fb01-42f4-88a2-54b8fb7f7348" totalConstraints= 5
+onecad.core.sketch: rebuildSolver:start entities= 11 constraints= 5
+onecad.core.constraintsolver: clear entities(points,lines,arcs,circles)= 0 0 0 0 constraints= 0
+onecad.core.constraintsolver: addConstraint:start constraintId= "966635d6-85dd-4df6-b5cb-dda31a3d9d18" type= 12
+onecad.core.constraintsolver: addConstraint:done constraintId= "966635d6-85dd-4df6-b5cb-dda31a3d9d18" tagId= 1 totalConstraints= 1
+onecad.core.constraintsolver: addConstraint:start constraintId= "6d09b2a9-ea2a-4509-a497-c94f09de811d" type= 13
+onecad.core.constraintsolver: addConstraint:done constraintId= "6d09b2a9-ea2a-4509-a497-c94f09de811d" tagId= 2 totalConstraints= 2
+onecad.core.constraintsolver: addConstraint:start constraintId= "10efdeb9-3b71-4e94-8e87-1bbd641335f7" type= 16
+onecad.core.constraintsolver: addConstraint:done constraintId= "10efdeb9-3b71-4e94-8e87-1bbd641335f7" tagId= 3 totalConstraints= 3
+onecad.core.constraintsolver: addConstraint:start constraintId= "8fb0de9e-1fc9-4b83-ac9b-9b6a86d49aaf" type= 9
+onecad.core.constraintsolver: addConstraint:done constraintId= "8fb0de9e-1fc9-4b83-ac9b-9b6a86d49aaf" tagId= 4 totalConstraints= 4
+onecad.core.constraintsolver: addConstraint:start constraintId= "da915a24-fb01-42f4-88a2-54b8fb7f7348" type= 17
+onecad.core.constraintsolver: addConstraint:done constraintId= "da915a24-fb01-42f4-88a2-54b8fb7f7348" tagId= 5 totalConstraints= 5
+onecad.core.sketch: rebuildSolver:done
+onecad.core.constraintsolver: solve:start points= 8 lines= 1 arcs= 1 circles= 1 constraints= 5 parameters= 20 algorithm= 1
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "bc164187-fa02-434d-ad4d-0d6148b7ef4d" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "908ea0f9-f7b4-42e4-9f78-c172091bdd5b" totalEntities= 2
+onecad.core.sketch: addLine startId= "bc164187-fa02-434d-ad4d-0d6148b7ef4d" endId= "908ea0f9-f7b4-42e4-9f78-c172091bdd5b" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: rebuildSolver:start entities= 3 constraints= 0
+onecad.core.constraintsolver: clear entities(points,lines,arcs,circles)= 0 0 0 0 constraints= 0
+onecad.core.sketch: rebuildSolver:done
+onecad.core.sketch: addConstraint:start type= 1 id= "d40a7cd8-4e73-4e9a-883a-e47050da4ba1"
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "d40a7cd8-4e73-4e9a-883a-e47050da4ba1" totalConstraints= 1
+onecad.core.sketch: rebuildSolver:start entities= 3 constraints= 1
+onecad.core.constraintsolver: clear entities(points,lines,arcs,circles)= 0 0 0 0 constraints= 0
+onecad.core.constraintsolver: addConstraint:start constraintId= "d40a7cd8-4e73-4e9a-883a-e47050da4ba1" type= 1
+onecad.core.constraintsolver: addConstraint:done constraintId= "d40a7cd8-4e73-4e9a-883a-e47050da4ba1" tagId= 1 totalConstraints= 1
+onecad.core.sketch: rebuildSolver:done
+onecad.core.sketch: addConstraint:start type= 1 id= "cbd38a89-bd09-4a89-8c0e-5f53b50249b2"
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 2
+onecad.core.sketch: addConstraint:done id= "cbd38a89-bd09-4a89-8c0e-5f53b50249b2" totalConstraints= 2
+onecad.core.sketch: rebuildSolver:start entities= 3 constraints= 2
+onecad.core.constraintsolver: clear entities(points,lines,arcs,circles)= 0 0 0 0 constraints= 0
+onecad.core.constraintsolver: addConstraint:start constraintId= "d40a7cd8-4e73-4e9a-883a-e47050da4ba1" type= 1
+onecad.core.constraintsolver: addConstraint:done constraintId= "d40a7cd8-4e73-4e9a-883a-e47050da4ba1" tagId= 1 totalConstraints= 1
+onecad.core.constraintsolver: addConstraint:start constraintId= "cbd38a89-bd09-4a89-8c0e-5f53b50249b2" type= 1
+onecad.core.constraintsolver: addConstraint:done constraintId= "cbd38a89-bd09-4a89-8c0e-5f53b50249b2" tagId= 2 totalConstraints= 2
+onecad.core.sketch: rebuildSolver:done
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "d8091a7d-9b83-446d-966f-415ee22fbf77" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "fd21d7ad-132b-459a-a9cf-92a00d9927c1" totalEntities= 2
+onecad.core.sketch: addConstraint:start type= 3 id= "08e81ad4-3369-4f33-9e5b-bf8abcdd9117"
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "08e81ad4-3369-4f33-9e5b-bf8abcdd9117" totalConstraints= 1
+onecad.core.sketch: addConstraint:start type= 3 id= "fbaf5f97-0e81-4b97-a975-bec08a92d84e"
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 2
+onecad.core.sketch: addConstraint:done id= "fbaf5f97-0e81-4b97-a975-bec08a92d84e" totalConstraints= 2
+onecad.core.sketch: addConstraint:start type= 12 id= "7af47dc0-c50d-4690-8996-17b06af3d3e0"
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 3
+onecad.core.sketch: addConstraint:done id= "7af47dc0-c50d-4690-8996-17b06af3d3e0" totalConstraints= 3
+onecad.core.sketch: rebuildSolver:start entities= 2 constraints= 3
+onecad.core.constraintsolver: clear entities(points,lines,arcs,circles)= 0 0 0 0 constraints= 0
+onecad.core.constraintsolver: addConstraint:start constraintId= "08e81ad4-3369-4f33-9e5b-bf8abcdd9117" type= 3
+onecad.core.constraintsolver: addConstraint:done constraintId= "08e81ad4-3369-4f33-9e5b-bf8abcdd9117" tagId= 1 totalConstraints= 1
+onecad.core.constraintsolver: addConstraint:start constraintId= "fbaf5f97-0e81-4b97-a975-bec08a92d84e" type= 3
+onecad.core.constraintsolver: addConstraint:done constraintId= "fbaf5f97-0e81-4b97-a975-bec08a92d84e" tagId= 2 totalConstraints= 2
+onecad.core.constraintsolver: addConstraint:start constraintId= "7af47dc0-c50d-4690-8996-17b06af3d3e0" type= 12
+onecad.core.constraintsolver: addConstraint:done constraintId= "7af47dc0-c50d-4690-8996-17b06af3d3e0" tagId= 3 totalConstraints= 3
+onecad.core.sketch: rebuildSolver:done
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "8afe1996-d92a-464c-8ca1-75eb3fa5118d" totalEntities= 1
+onecad.core.sketch: addPoint 200 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "2ea9c279-b00a-4973-a405-24eb18699f49" totalEntities= 2
+onecad.core.sketch: addLine startId= "8afe1996-d92a-464c-8ca1-75eb3fa5118d" endId= "2ea9c279-b00a-4973-a405-24eb18699f49" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addConstraint:start type= 1 id= "bd1113a0-6d47-44c8-a292-cc7acbbab974"
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "bd1113a0-6d47-44c8-a292-cc7acbbab974" totalConstraints= 1
+onecad.core.sketch: addConstraint:start type= 3 id= "02a53511-5b31-44b2-b5e1-81cfd8099702"
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 2
+onecad.core.sketch: addConstraint:done id= "02a53511-5b31-44b2-b5e1-81cfd8099702" totalConstraints= 2
+onecad.core.sketch: rebuildSolver:start entities= 3 constraints= 2
+onecad.core.constraintsolver: clear entities(points,lines,arcs,circles)= 0 0 0 0 constraints= 0
+onecad.core.constraintsolver: addConstraint:start constraintId= "bd1113a0-6d47-44c8-a292-cc7acbbab974" type= 1
+onecad.core.constraintsolver: addConstraint:done constraintId= "bd1113a0-6d47-44c8-a292-cc7acbbab974" tagId= 1 totalConstraints= 1
+onecad.core.constraintsolver: addConstraint:start constraintId= "02a53511-5b31-44b2-b5e1-81cfd8099702" type= 3
+onecad.core.constraintsolver: addConstraint:done constraintId= "02a53511-5b31-44b2-b5e1-81cfd8099702" tagId= 2 totalConstraints= 2
+onecad.core.sketch: rebuildSolver:done
+onecad.core.constraintsolver: solve:start points= 2 lines= 1 arcs= 0 circles= 0 constraints= 2 parameters= 4 algorithm= 1
+onecad.core.constraintsolver: solveWithDrag:start pointId= "8afe1996-d92a-464c-8ca1-75eb3fa5118d" target= 500 300 fixedPoints= 0
+onecad.core.constraintsolver: solveWithDrag:substep-triggered pointId= "8afe1996-d92a-464c-8ca1-75eb3fa5118d" delta= 583.095 steps= 6
+onecad.core.constraintsolver: solve:start points= 2 lines= 1 arcs= 0 circles= 0 constraints= 2 parameters= 4 algorithm= 1
+onecad.core.constraintsolver: solve:start points= 2 lines= 1 arcs= 0 circles= 0 constraints= 2 parameters= 4 algorithm= 1
+onecad.core.constraintsolver: solve:start points= 2 lines= 1 arcs= 0 circles= 0 constraints= 2 parameters= 4 algorithm= 1
+onecad.core.constraintsolver: solve:start points= 2 lines= 1 arcs= 0 circles= 0 constraints= 2 parameters= 4 algorithm= 1
+onecad.core.constraintsolver: solve:start points= 2 lines= 1 arcs= 0 circles= 0 constraints= 2 parameters= 4 algorithm= 1
+onecad.core.constraintsolver: solve:start points= 2 lines= 1 arcs= 0 circles= 0 constraints= 2 parameters= 4 algorithm= 1
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "1d40760a-2ffc-4283-9531-745cf05ec03a" totalEntities= 1
+onecad.core.sketch: addPoint 40 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "174dc890-0d47-4cd3-a10e-46ab1e378031" totalEntities= 2
+onecad.core.sketch: addLine startId= "1d40760a-2ffc-4283-9531-745cf05ec03a" endId= "174dc890-0d47-4cd3-a10e-46ab1e378031" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addConstraint:start type= 1 id= "7b0f5778-d8b2-4cad-ad0f-8d100dc59f7c"
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 1
+onecad.core.sketch: addConstraint:done id= "7b0f5778-d8b2-4cad-ad0f-8d100dc59f7c" totalConstraints= 1
+onecad.core.sketch: rebuildSolver:start entities= 3 constraints= 1
+onecad.core.constraintsolver: clear entities(points,lines,arcs,circles)= 0 0 0 0 constraints= 0
+onecad.core.constraintsolver: addConstraint:start constraintId= "7b0f5778-d8b2-4cad-ad0f-8d100dc59f7c" type= 1
+onecad.core.constraintsolver: addConstraint:done constraintId= "7b0f5778-d8b2-4cad-ad0f-8d100dc59f7c" tagId= 1 totalConstraints= 1
+onecad.core.sketch: rebuildSolver:done
+onecad.core.constraintsolver: solve:start points= 2 lines= 1 arcs= 0 circles= 0 constraints= 1 parameters= 4 algorithm= 1
+onecad.core.constraintsolver: solveWithGroupDrag:start targetPoints= 2
+onecad.core.constraintsolver: solveWithGroupDrag:substep-triggered targetPoints= 2 maxDelta= 445.112 steps= 5
+onecad.core.constraintsolver: solve:start points= 2 lines= 1 arcs= 0 circles= 0 constraints= 1 parameters= 4 algorithm= 1
+onecad.core.constraintsolver: solve:start points= 2 lines= 1 arcs= 0 circles= 0 constraints= 1 parameters= 4 algorithm= 1
+onecad.core.constraintsolver: solve:start points= 2 lines= 1 arcs= 0 circles= 0 constraints= 1 parameters= 4 algorithm= 1
+onecad.core.constraintsolver: solve:start points= 2 lines= 1 arcs= 0 circles= 0 constraints= 1 parameters= 4 algorithm= 1
+onecad.core.constraintsolver: solve:start points= 2 lines= 1 arcs= 0 circles= 0 constraints= 1 parameters= 4 algorithm= 1
+Sketcher::RedundantSolving-DogLeg-
+Sketcher Redundant solving: 1 redundants
+Sketcher::RedundantSolving-DogLeg-
+Sketcher Redundant solving: 1 redundants
+Sketcher::RedundantSolving-DogLeg-
+Sketcher Redundant solving: 0 redundants
+Sketch solver adapter prototype: OK
+exit_code: 0

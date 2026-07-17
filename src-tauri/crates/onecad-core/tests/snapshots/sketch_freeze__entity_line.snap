@@ -1,0 +1,11 @@
+---
+source: crates/onecad-core/tests/sketch_freeze.rs
+expression: entity
+---
+{
+  "kind": "line",
+  "id": "00000000-0000-0000-0000-000000000100",
+  "start": "00000000-0000-0000-0000-000000000e00",
+  "end": "00000000-0000-0000-0000-000000000e01",
+  "construction": false
+}

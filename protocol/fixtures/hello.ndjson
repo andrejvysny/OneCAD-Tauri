@@ -1,0 +1,10 @@
+# Handshake happy path. Worker emits an unsolicited `hello` on spawn (SCHEMA.md §6),
+# then the driver opens a session. Version fields are asserted explicitly.
+# NDJSON: one directive object per physical line.
+{"expect":{"v":1,"t":"hello","seq":0,"result":{"protocolVersion":1,"workerVersion":"$any","occt":{"version":"$any","fingerprint":"$hex64"},"quantizationVersion":1,"solverPolicyVersion":1,"capabilities":"$any","limits":{"chunkSize":"$any","initialBulkCredit":"$any"}}}}
+{"send":{"v":1,"t":"req","id":1,"verb":"OpenSession","args":{"documentId":"doc_1","documentRevision":0,"workerEpoch":1,"tolerancePolicy":{"linear":1e-7,"angular":1e-9,"tolerancePolicyHash":"0000000000000000"},"mode":"determinism"}}}
+{"expect":{"v":1,"t":"resp","id":1,"ok":true,"documentRevision":0,"workerEpoch":1,"snapshotId":"$any","seq":"$any","result":{"sessionOpen":true,"workerHead":{"documentRevision":0,"snapshotId":"$any"}}}}
+{"send":{"v":1,"t":"req","id":2,"verb":"GetWorkerHead","args":{}}}
+{"expect":{"v":1,"t":"resp","id":2,"ok":true,"result":{"documentRevision":0,"workerEpoch":1,"historyPrefixHash":"$hex64","hasScratch":false}}}
+{"send":{"v":1,"t":"req","id":3,"verb":"Shutdown","args":{}}}
+{"expect":{"v":1,"t":"resp","id":3,"ok":true,"result":{"goodbye":true}}}

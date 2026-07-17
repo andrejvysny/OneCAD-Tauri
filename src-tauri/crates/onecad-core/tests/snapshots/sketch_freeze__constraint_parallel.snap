@@ -1,0 +1,10 @@
+---
+source: crates/onecad-core/tests/sketch_freeze.rs
+expression: constraint
+---
+{
+  "kind": "parallel",
+  "id": "00000000-0000-0000-0000-000000000007",
+  "line1": "00000000-0000-0000-0000-000000000100",
+  "line2": "00000000-0000-0000-0000-000000000101"
+}

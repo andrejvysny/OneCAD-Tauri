@@ -1,0 +1,6 @@
+# Unsolicited hello (SCHEMA.md §6) is the worker's FIRST frame on spawn: seq 0,
+# protocolVersion 1, occt.version present, 64-bit-hex fingerprint, limits present.
+# Then a graceful Shutdown. NDJSON: one directive object per physical line.
+{"expect":{"v":1,"t":"hello","seq":0,"result":{"protocolVersion":1,"workerVersion":"$any","occt":{"version":"$any","fingerprint":"$hex64"},"quantizationVersion":1,"solverPolicyVersion":1,"capabilities":"$any","limits":{"chunkSize":"$any","initialBulkCredit":"$any"}}}}
+{"send":{"v":1,"t":"req","id":1,"verb":"Shutdown","args":{}}}
+{"expect":{"v":1,"t":"resp","id":1,"ok":true,"seq":"$any","result":{"goodbye":true}}}

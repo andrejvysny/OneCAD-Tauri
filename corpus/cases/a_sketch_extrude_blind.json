@@ -1,0 +1,72 @@
+{
+  "id": "a_sketch_extrude_blind",
+  "title": "Sketch -> extrude Blind happy path (NewBody)",
+  "source": [
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:151-218 — Test 1 'Single extrude regeneration': 10x10 sketch, Blind extrude distance 20, NewBody.",
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:214-215 — asserts volume ~2000 mm^3 (10*10*20), tol 10.0.",
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:204-206 — RegenStatus::Success, succeededOps.size()==1, failedOps empty.",
+    "OneCAD-CPP/src/core/sketch/Sketch.h SketchPlane::XY() — non-standard basis xAxis(0,1,0) yAxis(-1,0,0) normal(0,0,1); default Sketch() ctor uses XY.",
+    "expected-values/proto_regeneration.txt — 'Test 1: Single extrude regeneration... PASS', exit 0."
+  ],
+  "opScript": [
+    {
+      "opType": "Sketch",
+      "opId": "op_sketch_1",
+      "inputs": [],
+      "params": {
+        "sketchId": "sk_1",
+        "plane": { "kind": "XY", "origin": [0,0,0], "xAxis": [0,1,0], "yAxis": [-1,0,0], "normal": [0,0,1] },
+        "entities": [
+          { "id": "e1", "type": "Line", "p0": [0,0],   "p1": [10,0] },
+          { "id": "e2", "type": "Line", "p0": [10,0],  "p1": [10,10] },
+          { "id": "e3", "type": "Line", "p0": [10,10], "p1": [0,10] },
+          { "id": "e4", "type": "Line", "p0": [0,10],  "p1": [0,0] }
+        ],
+        "constraints": []
+      }
+    },
+    {
+      "opType": "Extrude",
+      "opId": "op_extrude_1",
+      "inputs": [ { "primary": { "kind": "face", "elementId": "sk_1.region.r0" } } ],
+      "params": {
+        "distance": 20.0,
+        "draftAngleDeg": 0.0,
+        "extrudeMode": "Blind",
+        "booleanMode": "NewBody",
+        "targetBodyId": "",
+        "targetFaceId": "",
+        "twoDirections": false,
+        "extrudeMode2": "Blind",
+        "distance2": 0.0,
+        "targetFaceId2": ""
+      }
+    }
+  ],
+  "expected": {
+    "perStep": [
+      {
+        "stepIndex": 0,
+        "op": "Sketch",
+        "note": "sketch materialized; one closed region detected (LoopDetector). No body.",
+        "regions": 1,
+        "provenance": "proto_regeneration.cpp:173-178 (detect + regionKey on faces[0])"
+      },
+      {
+        "stepIndex": 1,
+        "op": "Extrude",
+        "bodyEvents": [ { "kind": "created", "bodyId": "body_1" } ],
+        "solids": 1,
+        "volume_mm3": 2000.0,
+        "volume_tol": 10.0,
+        "provenance": "proto_regeneration.cpp:214-215 (shapeVolume ~2000, tol 10.0); status Success proto_regeneration.cpp:204-206"
+      }
+    ],
+    "faceCount": {
+      "value": 6,
+      "confidence": "derived-not-asserted",
+      "note": "A prism from a 4-line rectangle is a box => 6 planar faces / 12 edges / 8 vertices. The C++ test does NOT assert topology counts here (only volume + validity via shapeValid). Recorded as derived geometry, verify against worker output; treat volume as the load-bearing assertion."
+    }
+  },
+  "notes": "Simplest golden. BodyId 'body_1' is illustrative (Rust mints the real opaque id). The extrude input is the sketch's first detected region; in the protocol this is a semanticRef of kind face/region to the sketch region. Volume 2000 and single created body are the hard expectations."
+}

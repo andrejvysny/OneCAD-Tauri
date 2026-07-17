@@ -1,0 +1,41 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  html,
+  body {
+    /* Desktop CAD shell: no rubber-band / pull-to-refresh. */
+    overscroll-behavior: none;
+  }
+
+  body {
+    font-family: var(--font-ui);
+    color: var(--color-ink);
+    background-color: var(--color-canvas);
+    /* CAD app: text/UI is not selectable by default. */
+    user-select: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Re-enable selection where the user actually types. */
+  input,
+  textarea,
+  [contenteditable="true"] {
+    user-select: text;
+  }
+
+  ::selection {
+    background-color: var(--color-sel-bg);
+    color: var(--color-sel-text);
+  }
+}

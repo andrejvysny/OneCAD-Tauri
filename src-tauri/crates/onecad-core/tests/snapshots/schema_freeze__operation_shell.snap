@@ -1,0 +1,39 @@
+---
+source: crates/onecad-core/tests/schema_freeze.rs
+expression: rec
+---
+{
+  "recordId": "00000000-0000-0000-0000-000000002ec6",
+  "recordSchemaVersion": 1,
+  "stepIndex": 6,
+  "name": "Shell 1",
+  "opType": "Shell",
+  "params": {
+    "openFaces": [
+      "f:3"
+    ],
+    "targetBodyId": "00000000-0000-0000-0000-00000000b0d1",
+    "thickness": {
+      "value": 1.5
+    }
+  },
+  "inputs": {
+    "bodies": [
+      "00000000-0000-0000-0000-00000000b0d1"
+    ],
+    "sketches": [],
+    "elements": [
+      "f:3"
+    ]
+  },
+  "outputs": [
+    "00000000-0000-0000-0000-00000000b0d1"
+  ],
+  "determinism": {
+    "parallel": false,
+    "occtOptionsHash": "cbf29ce484222325",
+    "tolerancePolicyHash": "b2c9000000000000",
+    "solverPolicyHash": "3e9a000000000000"
+  },
+  "suppressed": false
+}

@@ -1,0 +1,85 @@
+{
+  "id": "g_sketch_solver_drag_constraints",
+  "title": "Sketch solver: constrained drags + DOF diagnosis",
+  "source": [
+    "OneCAD-CPP/tests/prototypes/proto_sketch_solver.cpp:168-188 — testDofDiagnosisWithRedundantConstraint: 2 free points => DOF 4; +1 Horizontal on the line => DOF 3; + a REDUNDANT duplicate Horizontal => DOF still 3 (redundancy removes nothing); !isOverConstrained.",
+    "OneCAD-CPP/tests/prototypes/proto_sketch_solver.cpp:190-201 — testConflictingConstraintsDetected: two Fixed points + an incompatible HorizontalDistance(25) => isOverConstrained (genuine conflict).",
+    "OneCAD-CPP/tests/prototypes/proto_sketch_solver.cpp:33-52 — testVerticalConstraintDrag: line top(0,6)-bottom(0,0)+Vertical; drag bottom to (0,9); after: bottom.x==top.x==0, bottom.y==9.",
+    "OneCAD-CPP/tests/prototypes/proto_sketch_solver.cpp:54-74 — testHorizontalConstraintDrag: line east(0,0)-west(12,0)+Horizontal; drag east to (7.25,0); after: east.y==west.y==0, east.x==7.25; dragResult.success.",
+    "OneCAD-CPP/tests/prototypes/proto_sketch_solver.cpp:266-314 — rectangle drag: corners (0,0),(10,0),(10,6),(0,6); H on bottom+top, V on left+right; drag rp1 to (-2,-1); OPPOSITE corner rp3 stays at (10,6); rp2.y==rp1.y, rp4.x==rp1.x, rp3.x==rp2.x, rp3.y==rp4.y.",
+    "OneCAD-CPP/tests/prototypes/proto_sketch_solver.cpp:205-242 — driven drag: p1(0,0)-p2(10,0), circle center(5,5) r2.5; Distance(p1,p2,10)+Radius(circle,2.5); solve success; drag p1 to (10,10) (consistent with the distance); p1 ends exactly (10,10).",
+    "OneCAD-CPP/tests/prototypes/proto_sketch_solver.cpp:369-386 — large drag: line (0,0)-(200,0)+Horizontal, p2 Fixed; drag p1 to (500,300); p1.x==500 but p1.y==p2.y (stays on the horizontal => y~0, NOT 300).",
+    "OneCAD-CPP/tests/prototypes/proto_sketch_solver.cpp:316-358 — drag rollback determinism: after a failed solve within a gesture, endPointDrag() rolls back to the drag-start pose.",
+    "expected-values/proto_sketch_solver.txt — 'Sketch solver adapter prototype: OK', exit 0. NOTE: DOF and positions are asserted in the C++ source (not printed); stdout carries only qDebug solver traces (e.g. 'solve:start points=.. parameters=.. algorithm=1') + the terminal OK line proving the asserts held."
+  ],
+  "opScript": [
+    {
+      "opType": "SketchUpsert", "opId": "sk_dof",
+      "params": { "sketchId": "sk_dof", "entities": [ { "id": "p1", "type": "Point", "at": [0,0] }, { "id": "p2", "type": "Point", "at": [10,0] }, { "id": "l1", "type": "Line", "p0Ref": "p1", "p1Ref": "p2" } ], "constraints": [] },
+      "note": "DOF diagnosis fixture."
+    },
+    {
+      "opType": "SolveDrag", "opId": "drag_vertical",
+      "sketch": { "entities": ["line top(0,6)-bottom(0,0)"], "constraints": ["Vertical(line)"] },
+      "params": { "pointId": "bottom", "target": [0, 9] }
+    },
+    {
+      "opType": "SolveDrag", "opId": "drag_horizontal",
+      "sketch": { "entities": ["line east(0,0)-west(12,0)"], "constraints": ["Horizontal(line)"] },
+      "params": { "pointId": "east", "target": [7.25, 0] }
+    },
+    {
+      "opType": "SolveDrag", "opId": "drag_rectangle_corner",
+      "sketch": { "entities": ["rect (0,0)(10,0)(10,6)(0,6)"], "constraints": ["Horizontal(bottom)","Horizontal(top)","Vertical(left)","Vertical(right)"] },
+      "params": { "pointId": "rp1", "target": [-2, -1] }
+    }
+  ],
+  "expected": {
+    "dof": [
+      { "state": "twoFreePoints", "dof": 4, "provenance": "proto_sketch_solver.cpp:177 (dofBefore==4)" },
+      { "state": "afterHorizontal", "dof": 3, "provenance": "proto_sketch_solver.cpp:181 (dofOne==3)" },
+      { "state": "afterRedundantDuplicateHorizontal", "dof": 3, "overConstrained": false, "provenance": "proto_sketch_solver.cpp:186-187 (dofTwo==3, !isOverConstrained)" }
+    ],
+    "conflict": {
+      "scenario": "two Fixed points + HorizontalDistance(25)",
+      "state": "OverConstrained",
+      "provenance": "proto_sketch_solver.cpp:200 (isOverConstrained)",
+      "newStackMapping": "SketchUpsert result.state='OverConstrained' or 'Conflicting'; SolveDrag status='conflicting' (SCHEMA §7.4)."
+    },
+    "drags": [
+      {
+        "id": "drag_vertical", "status": "success", "dof_note": "Vertical keeps line vertical",
+        "positionsAfter": { "bottom": [0, 9], "top_x_equals_bottom_x": 0.0 },
+        "tol": 1e-4, "provenance": "proto_sketch_solver.cpp:49-51"
+      },
+      {
+        "id": "drag_horizontal", "status": "success",
+        "positionsAfter": { "east": [7.25, 0], "east_y_equals_west_y": 0.0 },
+        "tol": 1e-4, "provenance": "proto_sketch_solver.cpp:71-73"
+      },
+      {
+        "id": "drag_rectangle_corner", "status": "success",
+        "positionsAfter": { "rp1": "~(-2,-1)", "rp3_opposite_unchanged": [10, 6], "rp2.y==rp1.y": true, "rp4.x==rp1.x": true },
+        "provenance": "proto_sketch_solver.cpp:309-314 (opposite corner fixed; adjacent corners track)"
+      },
+      {
+        "id": "drag_driven_distance", "status": "success",
+        "setup": "Distance(p1,p2,10)+Radius(circle,2.5); drag p1 to (10,10) consistent with the fixed distance",
+        "positionsAfter": { "p1": [10, 10] },
+        "provenance": "proto_sketch_solver.cpp:240-241"
+      },
+      {
+        "id": "drag_large_horizontal_fixed", "status": "success",
+        "setup": "line (0,0)-(200,0) Horizontal, p2 Fixed; drag p1 to (500,300)",
+        "positionsAfter": { "p1.x": 500, "p1.y_equals_p2.y": "~0 (stays on horizontal, NOT 300)" },
+        "provenance": "proto_sketch_solver.cpp:385-386"
+      }
+    ],
+    "dragRollbackDeterminism": {
+      "meaning": "If a gesture has a failed solve after a successful move, EndGesture rolls back to the drag-start pose (not the last partial).",
+      "provenance": "proto_sketch_solver.cpp:334-358",
+      "newStackMapping": "SCHEMA §7.4 BeginGesture/SolveDrag(latest-wins)/EndGesture; final exact solve on pointer-up; Rust commits ONE undo command."
+    }
+  },
+  "notes": "DOF and drag positions are the load-bearing values, all from source asserts (the solver does not print them). Maps to the solver lane (SCHEMA §7.4): SketchUpsert returns {dof, state}; SolveDrag returns {status, dof, positions(changed-only)}. The redundant-vs-conflicting distinction (duplicate Horizontal = redundant, DOF unchanged; two Fixed + bad distance = conflicting) is a key correctness contract for the DOF badge. Uses PlaneGCS diagnose() (H4, TODO.md:148)."
+}

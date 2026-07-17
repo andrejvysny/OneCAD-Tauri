@@ -1,0 +1,13 @@
+---
+source: crates/onecad-core/tests/sketch_freeze.rs
+expression: constraint
+---
+{
+  "kind": "fixed",
+  "id": "00000000-0000-0000-0000-000000000004",
+  "point": "00000000-0000-0000-0000-000000000e00",
+  "at": [
+    0.0,
+    0.0
+  ]
+}

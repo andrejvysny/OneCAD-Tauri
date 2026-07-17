@@ -1,0 +1,75 @@
+---
+source: crates/onecad-core/tests/schema_freeze.rs
+expression: rec
+---
+{
+  "recordId": "00000000-0000-0000-0000-000000002ec0",
+  "recordSchemaVersion": 1,
+  "stepIndex": 0,
+  "name": "Sketch 1",
+  "opType": "Sketch",
+  "params": {
+    "constraints": [
+      {
+        "entities": [
+          "e1"
+        ],
+        "id": "c1",
+        "type": "Horizontal"
+      }
+    ],
+    "entities": [
+      {
+        "id": "e1",
+        "p0": [
+          0,
+          0
+        ],
+        "p1": [
+          40,
+          0
+        ],
+        "type": "Line"
+      }
+    ],
+    "plane": {
+      "kind": "XY",
+      "normal": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "xAxis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "yAxis": [
+        -1.0,
+        0.0,
+        0.0
+      ]
+    },
+    "sketchId": "00000000-0000-0000-0000-000000005c01"
+  },
+  "inputs": {
+    "bodies": [],
+    "sketches": [],
+    "elements": []
+  },
+  "outputs": [
+    "00000000-0000-0000-0000-00000000b0d1"
+  ],
+  "determinism": {
+    "parallel": false,
+    "occtOptionsHash": "cbf29ce484222325",
+    "tolerancePolicyHash": "b2c9000000000000",
+    "solverPolicyHash": "3e9a000000000000"
+  },
+  "suppressed": false
+}

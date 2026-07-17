@@ -1,0 +1,23 @@
+# Latest-wins mailbox, observable contract (SCHEMA §7.4 SolveDrag).
+#
+# Three SolveDrag frames are sent BACK-TO-BACK (no expect between them), so they
+# pile up in the solver mailbox and are coalesced latest-wins. The observable
+# semantics: EVERY request still gets EXACTLY ONE terminal resp (§3.2) — the
+# survivor(s) get a normal SolveDrag response, and any SUPERSEDED drag gets a
+# terminal ok:false code "CANCELLED" message "superseded" (§3.5/§8). So 3 sent =>
+# 3 terminal responses (asserted below). WHICH ids are superseded is timing-
+# dependent (it depends on how fast the solver drains vs the send loop), so the
+# per-id outcome is proven deterministically in test_solver_latest_wins instead;
+# this fixture pins the deterministic invariant: 3 requests -> 3 terminal resps.
+# Consume the unsolicited hello (SCHEMA §6) first.
+{"expect":{"v":1,"t":"hello","seq":0}}
+{"send":{"v":1,"t":"req","id":1,"verb":"SketchUpsert","args":{"sketchId":"lw","plane":{"kind":"XY"},"entities":[{"id":"a","type":"Point","at":[0,0]},{"id":"b","type":"Point","at":[10,0]},{"id":"L","type":"Line","p0Ref":"a","p1Ref":"b"}],"constraints":[{"id":"cH","type":"Horizontal","entities":["L"]}]}}}
+{"expect":{"v":1,"t":"resp","id":1,"ok":true}}
+{"send":{"v":1,"t":"req","id":2,"verb":"BeginGesture","args":{"sketchId":"lw","sketchRevision":1,"gestureId":3,"drag":{"pointId":"a"}}}}
+{"expect":{"v":1,"t":"resp","id":2,"ok":true,"result":{"ready":true}}}
+{"send":{"v":1,"t":"req","id":3,"verb":"SolveDrag","args":{"gestureId":3,"seq":1,"pointId":"a","target":[1,1]}}}
+{"send":{"v":1,"t":"req","id":4,"verb":"SolveDrag","args":{"gestureId":3,"seq":2,"pointId":"a","target":[2,2]}}}
+{"send":{"v":1,"t":"req","id":5,"verb":"SolveDrag","args":{"gestureId":3,"seq":3,"pointId":"a","target":[3,3]}}}
+{"expect":{"v":1,"t":"resp"}}
+{"expect":{"v":1,"t":"resp"}}
+{"expect":{"v":1,"t":"resp"}}

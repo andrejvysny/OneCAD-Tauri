@@ -1,0 +1,6 @@
+# Unknown verb -> well-framed PROTOCOL_ERROR terminal resp (SCHEMA.md §8): the
+# request parsed, so the worker replies with a terminal error resp (session stays
+# alive, no process exit) rather than tearing down. Consume the hello first.
+{"expect":{"v":1,"t":"hello","seq":0,"result":{"protocolVersion":1}}}
+{"send":{"v":1,"t":"req","id":1,"verb":"NoSuchVerb","args":{}}}
+{"expect":{"v":1,"t":"resp","id":1,"ok":false,"seq":"$any","error":{"code":"PROTOCOL_ERROR","message":"$any","retriable":false}}}

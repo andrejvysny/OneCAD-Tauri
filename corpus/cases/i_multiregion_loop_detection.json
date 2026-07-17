@@ -1,0 +1,26 @@
+{
+  "id": "i_multiregion_loop_detection",
+  "title": "Closed-sketch-loop region detection (region/hole counts + area)",
+  "source": [
+    "OneCAD-CPP/tests/prototypes/proto_loop_detector.cpp:11-30 — Case 1: rectangle 10x5 (4 lines) => success, faces.size()==1, faces[0].innerLoops EMPTY (no holes).",
+    "OneCAD-CPP/tests/prototypes/proto_loop_detector.cpp:32-61 — Case 2: outer 10x10 square + inner 4x4 square => success, faces.size()==1, faces[0].innerLoops.size()==1 (one hole).",
+    "OneCAD-CPP/tests/prototypes/proto_loop_detector.cpp:63-78 — Case 3: semicircle arc (center 0,0 r5 sweep 0..pi) + diameter line (5,0)->(-5,0) => success, faces NOT empty (>=1 region closed by arc+chord).",
+    "OneCAD-CPP/tests/prototypes/proto_loop_detector.cpp:80-94 — Case 4: single ellipse (center 0,0, rx6 ry3, rot 0.25) with planarizeIntersections => success, faces.size()==1, faces[0].outerLoop.area() > 50.0 (pi*6*3 ~= 56.5).",
+    "OneCAD-CPP/tests/prototypes/proto_face_builder.cpp:33-152 — FaceBuilder on the same loops: rectangle => 1 valid face; square+hole => 1 face with 2 WIRES (outer+hole, countWires==2); ellipse => 1 face, 1 wire. (Corroborates region->OCCT face build.)",
+    "OneCAD-CPP/tests/prototypes/proto_face_builder.cpp:92-131 — sketch-XY basis check: a 10x5 region built on SketchPlane XY lands at world x∈[-5,0], y∈[0,10], z==0 (confirms the non-standard XY basis).",
+    "expected-values/proto_loop_detector.txt — 'Loop detector prototype: OK', exit 0."
+  ],
+  "opScript": [
+    { "opType": "SketchRegions", "opId": "regions_rect",       "sketch": { "entities": ["4 lines: (0,0)(10,0)(10,5)(0,5)"] } },
+    { "opType": "SketchRegions", "opId": "regions_square_hole", "sketch": { "entities": ["outer 10x10 square", "inner 4x4 square (3,3)-(7,7)"] } },
+    { "opType": "SketchRegions", "opId": "regions_arc_chord",   "sketch": { "entities": ["arc center(0,0) r5 sweep 0..pi", "line (5,0)->(-5,0)"] } },
+    { "opType": "SketchRegions", "opId": "regions_ellipse",     "sketch": { "entities": ["ellipse center(0,0) rx6 ry3 rot0.25"] }, "config": { "planarizeIntersections": true } }
+  ],
+  "expected": {
+    "rectangle":   { "regions": 1, "holes": 0, "provenance": "proto_loop_detector.cpp:28-29" },
+    "squareWithHole": { "regions": 1, "holes": 1, "wiresInFace": 2, "provenance": "proto_loop_detector.cpp:59-60; proto_face_builder.cpp:89 (countWires==2)" },
+    "arcAndChord": { "regions": ">=1", "note": "faces not empty; exact count not asserted", "provenance": "proto_loop_detector.cpp:76-77" },
+    "ellipse":     { "regions": 1, "holes": 0, "outerLoopArea_gt": 50.0, "areaApprox": 56.5, "provenance": "proto_loop_detector.cpp:92-93 (area()>50.0; pi*6*3~=56.5, only '>50' asserted)" }
+  },
+  "notes": "Region/hole counts feed extrude/revolve profile selection and preview fill (SCHEMA §7.4 SketchRegions -> regions[] with outerLoop + holes[]). The square-with-hole case is the key multi-loop fixture: ONE region, ONE hole => an extrude of it produces a body with a through/blind pocket. The ellipse area is asserted only as '>50' (not an exact value) — recorded as such (approx 56.5 shown for orientation, not as an oracle). Loop detection uses makeRegionDetectionConfig() in the regen path (proto_regeneration Test 1)."
+}

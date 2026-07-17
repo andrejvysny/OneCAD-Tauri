@@ -1,0 +1,10 @@
+---
+source: crates/onecad-core/tests/sketch_freeze.rs
+expression: constraint
+---
+{
+  "kind": "concentric",
+  "id": "00000000-0000-0000-0000-00000000000a",
+  "entity1": "00000000-0000-0000-0000-000000000c10",
+  "entity2": "00000000-0000-0000-0000-000000000c11"
+}

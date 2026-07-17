@@ -1,0 +1,13 @@
+---
+source: crates/onecad-core/tests/sketch_freeze.rs
+expression: entity
+---
+{
+  "kind": "arc",
+  "id": "00000000-0000-0000-0000-000000000a00",
+  "center": "00000000-0000-0000-0000-000000000ec0",
+  "radius": 40.0,
+  "startAngle": 0.0,
+  "endAngle": 1.5707963267948966,
+  "construction": false
+}

@@ -1,0 +1,11 @@
+---
+source: crates/onecad-core/tests/sketch_freeze.rs
+expression: constraint
+---
+{
+  "kind": "symmetric",
+  "id": "00000000-0000-0000-0000-000000000012",
+  "point1": "00000000-0000-0000-0000-000000000e00",
+  "point2": "00000000-0000-0000-0000-000000000e01",
+  "axis": "00000000-0000-0000-0000-000000000101"
+}

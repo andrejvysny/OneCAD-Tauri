@@ -1,0 +1,41 @@
+---
+source: crates/onecad-core/tests/schema_freeze.rs
+expression: rec
+---
+{
+  "recordId": "00000000-0000-0000-0000-000000002ec8",
+  "recordSchemaVersion": 1,
+  "stepIndex": 8,
+  "name": "Linear Pattern 1",
+  "opType": "LinearPattern",
+  "params": {
+    "count": 3,
+    "direction": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "fuseResult": true,
+    "sourceBodyId": "00000000-0000-0000-0000-00000000b0d1",
+    "spacing": {
+      "value": 10.0
+    }
+  },
+  "inputs": {
+    "bodies": [
+      "00000000-0000-0000-0000-00000000b0d1"
+    ],
+    "sketches": [],
+    "elements": []
+  },
+  "outputs": [
+    "00000000-0000-0000-0000-00000000b0d1"
+  ],
+  "determinism": {
+    "parallel": false,
+    "occtOptionsHash": "cbf29ce484222325",
+    "tolerancePolicyHash": "b2c9000000000000",
+    "solverPolicyHash": "3e9a000000000000"
+  },
+  "suppressed": false
+}

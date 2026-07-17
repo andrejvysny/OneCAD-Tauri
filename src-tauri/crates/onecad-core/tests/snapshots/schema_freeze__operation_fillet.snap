@@ -1,0 +1,39 @@
+---
+source: crates/onecad-core/tests/schema_freeze.rs
+expression: rec
+---
+{
+  "recordId": "00000000-0000-0000-0000-000000002ec4",
+  "recordSchemaVersion": 1,
+  "stepIndex": 4,
+  "name": "Fillet 1",
+  "opType": "Fillet",
+  "params": {
+    "chainTangentEdges": true,
+    "edgeIds": [
+      "e:14",
+      "e:15"
+    ],
+    "radius": {
+      "value": 2.0
+    }
+  },
+  "inputs": {
+    "bodies": [],
+    "sketches": [],
+    "elements": [
+      "e:14",
+      "e:15"
+    ]
+  },
+  "outputs": [
+    "00000000-0000-0000-0000-00000000b0d1"
+  ],
+  "determinism": {
+    "parallel": false,
+    "occtOptionsHash": "cbf29ce484222325",
+    "tolerancePolicyHash": "b2c9000000000000",
+    "solverPolicyHash": "3e9a000000000000"
+  },
+  "suppressed": false
+}

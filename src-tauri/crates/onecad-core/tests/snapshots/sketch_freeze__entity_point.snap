@@ -1,0 +1,14 @@
+---
+source: crates/onecad-core/tests/sketch_freeze.rs
+expression: entity
+---
+{
+  "kind": "point",
+  "id": "00000000-0000-0000-0000-000000000e00",
+  "at": [
+    0.0,
+    0.0
+  ],
+  "construction": false,
+  "referenceLocked": true
+}

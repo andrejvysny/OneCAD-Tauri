@@ -1,0 +1,10 @@
+---
+source: crates/onecad-core/tests/sketch_freeze.rs
+expression: constraint
+---
+{
+  "kind": "equal",
+  "id": "00000000-0000-0000-0000-00000000000b",
+  "entity1": "00000000-0000-0000-0000-000000000100",
+  "entity2": "00000000-0000-0000-0000-000000000101"
+}

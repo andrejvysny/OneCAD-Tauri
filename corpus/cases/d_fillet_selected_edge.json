@@ -1,0 +1,52 @@
+{
+  "id": "d_fillet_selected_edge",
+  "title": "Fillet on selected edge(s) of a body",
+  "source": [
+    "OneCAD-CPP/src/app/history/RegenerationEngine.cpp:1285-1349 — buildFillet: real BRepFilletAPI_MakeFillet(targetShape) over resolved edge ids; guards 'Fillet requires body input' (:1302), 'Fillet radius too small' (:1315), 'Fillet operation failed (radius too large?)' (:1343-1345).",
+    "OneCAD-CPP/src/app/document/OperationRecord.h:114-120 — FilletChamferParams {mode, radius, edgeIds (ElementMap edge ids), chainTangentEdges}.",
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:220-268 — Test 2 dependency ordering: extrude(op1)->fillet(op2 uses body1); topo sort op1 before op2; downstream(op1)=[op2]; upstream(op2)=[op1].",
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:270-312 — Test 3 suppression/failure tracking with a fillet node.",
+    "OneCAD-CPP/src/core/modeling/EdgeChainer.h + CLAUDE.md — chainTangentEdges auto-expands the selection to a tangent-continuous edge chain (normal dot, tangent continuity).",
+    "OneCAD-CPP/src/kernel/elementmap/ElementMap.h:212-264 — resolveWithFallback: how a (possibly stale) edge id is resolved to a live edge (literal hit score 0; else descriptor re-match within maxScore; refuse on symmetric tie).",
+    "expected-values/proto_regeneration.txt — Tests 2,3 PASS, exit 0."
+  ],
+  "opScript": [
+    {
+      "opType": "Extrude", "opId": "op_extrude_1",
+      "inputs": [ { "primary": { "kind": "face", "elementId": "sk_1.region.r0" } } ],
+      "params": { "distance": 10.0, "extrudeMode": "Blind", "booleanMode": "NewBody" },
+      "note": "Produces body_1 (a box). Provides selectable edges."
+    },
+    {
+      "opType": "Fillet", "opId": "op_fillet_1",
+      "inputs": [
+        { "primary": { "bodyId": "body_1", "elementId": "body_1.edge.e14", "kind": "edge" },
+          "intent": { "version": 1, "kind": "edge", "descriptor": "frozen ElementDescriptor of the picked edge (14-field, see ElementMap.h:58-70)" },
+          "anchor": { "worldPoint": "midpoint of picked edge", "adjacencyHint": "FNV-1a over incident geometry" } }
+      ],
+      "params": { "mode": "Fillet", "radius": 1.0, "edgeIds": ["e:14"], "chainTangentEdges": true },
+      "note": "Fillet a single selected vertical edge, radius 1.0. edgeIds carry snapshot-scoped TopoKeys / ElementIds; the worker resolves each through the ladder (SCHEMA §10)."
+    }
+  ],
+  "expected": {
+    "dependency": {
+      "topoSort": ["op_extrude_1", "op_fillet_1"],
+      "downstream_of_extrude": ["op_fillet_1"],
+      "upstream_of_fillet": ["op_extrude_1"],
+      "provenance": "proto_regeneration.cpp:252-265"
+    },
+    "fillet_result": {
+      "bodyEvents": [ { "kind": "modified", "bodyId": "body_1" } ],
+      "topology": {
+        "confidence": "not-asserted",
+        "note": "NO current OneCAD-CPP prototype asserts fillet volume or face/edge counts. buildFillet is real (BRepFilletAPI) and used by the app, but the only fillet coverage in tests is dependency-graph ordering with placeholder edge ids ('edge1','edge2') that are NOT executed by OCCT. A single-edge fillet on a box adds 1 rolled face and rounds the edge; capture exact counts/volume from the new worker rather than inventing them here."
+      }
+    },
+    "guards": {
+      "radiusTooSmall": { "outcome": "op fails, error 'Fillet radius too small'", "provenance": "RegenerationEngine.cpp:1315" },
+      "radiusTooLarge": { "outcome": "op fails, error 'Fillet operation failed (radius too large?)'", "provenance": "RegenerationEngine.cpp:1343-1345", "newStackMapping": "worker terminal resp error.code OP_FAILED / GEOMETRY_INVALID (recoverable, session intact) SCHEMA §8" },
+      "noBodyInput": { "outcome": "op fails, error 'Fillet requires body input'", "provenance": "RegenerationEngine.cpp:1302" }
+    }
+  },
+  "notes": "This case establishes the fillet op SHAPE and reference-resolution path, not a numeric geometry oracle (the old stack has none for executed fillets). It is the setup body for case_e (naming break) and case_f (symmetric ambiguity). chainTangentEdges=true is the old default (OperationRecord.h:119). In the new stack each edge in edgeIds also carries a semanticRef (intent descriptor + anchor) so the ladder can rebind after upstream edits."
+}

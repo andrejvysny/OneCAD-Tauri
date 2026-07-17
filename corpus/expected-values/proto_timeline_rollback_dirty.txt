@@ -1,0 +1,118 @@
+=== OneCAD-CPP prototype: proto_timeline_rollback_dirty ===
+date_utc: 2026-07-16T18:57:27Z
+git_rev: b4ddcccc48134531f3ff80f11ddf9f42ad5a967e
+binary: ./build/tests/proto_timeline_rollback_dirty
+=== stdout+stderr (exit code appended) ===
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "2e9415f5-b68a-4e99-8f62-27c980403151" totalEntities= 1
+onecad.core.sketch: addPoint 20 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "f63b92d8-3a7c-4799-aa4b-caafeefcbacb" totalEntities= 2
+onecad.core.sketch: addPoint 20 15 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "5714abfd-3b72-4edf-b0fb-9c9d06e7b005" totalEntities= 3
+onecad.core.sketch: addPoint 0 15 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "43322d10-e7f9-42bf-abd1-d09810a10fb0" totalEntities= 4
+onecad.core.sketch: addLine startId= "2e9415f5-b68a-4e99-8f62-27c980403151" endId= "f63b92d8-3a7c-4799-aa4b-caafeefcbacb" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "f63b92d8-3a7c-4799-aa4b-caafeefcbacb" endId= "5714abfd-3b72-4edf-b0fb-9c9d06e7b005" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "5714abfd-3b72-4edf-b0fb-9c9d06e7b005" endId= "43322d10-e7f9-42bf-abd1-d09810a10fb0" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "43322d10-e7f9-42bf-abd1-d09810a10fb0" endId= "2e9415f5-b68a-4e99-8f62-27c980403151" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "28522156-ad7d-4b61-b99e-f3ecaa315a0e" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: executeOperation:start opId= "7be8103a-6d50-44ec-9816-3bb11fea228b" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "7be8103a-6d50-44ec-9816-3bb11fea228b"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "7be8103a-6d50-44ec-9816-3bb11fea228b"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 2
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "3c002cae-4074-4495-90ba-1b4b16416755" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "28522156-ad7d-4b61-b99e-f3ecaa315a0e" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "7be8103a-6d50-44ec-9816-3bb11fea228b" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "7be8103a-6d50-44ec-9816-3bb11fea228b"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "7be8103a-6d50-44ec-9816-3bb11fea228b"
+onecad.app.history.regeneration: executeOperation:start opId= "3943bd1f-7953-4df5-9af8-f255fdc27eef" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "3943bd1f-7953-4df5-9af8-f255fdc27eef"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "3943bd1f-7953-4df5-9af8-f255fdc27eef"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 2 failed= 0 skipped= 0
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 1
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 1 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 1
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "28522156-ad7d-4b61-b99e-f3ecaa315a0e" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "7be8103a-6d50-44ec-9816-3bb11fea228b" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "7be8103a-6d50-44ec-9816-3bb11fea228b"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "7be8103a-6d50-44ec-9816-3bb11fea228b"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 1 failed= 0 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 3
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 3 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 2
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "04122f42-c39a-42b6-a4b4-feef375ad1d7" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "28522156-ad7d-4b61-b99e-f3ecaa315a0e" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "7be8103a-6d50-44ec-9816-3bb11fea228b" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "7be8103a-6d50-44ec-9816-3bb11fea228b"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "7be8103a-6d50-44ec-9816-3bb11fea228b"
+onecad.app.history.regeneration: executeOperation:start opId= "ea32b505-eac2-4549-b340-627cfc84f78a" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "ea32b505-eac2-4549-b340-627cfc84f78a"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "ea32b505-eac2-4549-b340-627cfc84f78a"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 2 failed= 0 skipped= 0
+onecad.app.history.regeneration: RegenerationEngine:ctor hasDocument= true
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 3
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 3 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 2
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 2 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 2
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "04122f42-c39a-42b6-a4b4-feef375ad1d7" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "28522156-ad7d-4b61-b99e-f3ecaa315a0e" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "7be8103a-6d50-44ec-9816-3bb11fea228b" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "7be8103a-6d50-44ec-9816-3bb11fea228b"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "7be8103a-6d50-44ec-9816-3bb11fea228b"
+onecad.app.history.regeneration: executeOperation:start opId= "ea32b505-eac2-4549-b340-627cfc84f78a" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "ea32b505-eac2-4549-b340-627cfc84f78a"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "ea32b505-eac2-4549-b340-627cfc84f78a"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 2 failed= 0 skipped= 0
+onecad.app.history.regeneration: regenerateAll:start
+onecad.app.history.dependency: rebuildFromOperations:start operationCount= 3
+onecad.app.history.dependency: rebuildFromOperations:done nodeCount= 3 forwardEdgeCount= 0 backwardEdgeCount= 0
+onecad.app.history.regeneration: regenerateAll:pre-reset bodyCount= 3
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "3c002cae-4074-4495-90ba-1b4b16416755" bodyExisted= false bodyRemoved= false
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "04122f42-c39a-42b6-a4b4-feef375ad1d7" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: regenerateAll:pre-reset-body bodyId= "28522156-ad7d-4b61-b99e-f3ecaa315a0e" bodyExisted= true bodyRemoved= true
+onecad.app.history.regeneration: executeOperation:start opId= "7be8103a-6d50-44ec-9816-3bb11fea228b" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "7be8103a-6d50-44ec-9816-3bb11fea228b"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "7be8103a-6d50-44ec-9816-3bb11fea228b"
+onecad.app.history.regeneration: executeOperation:start opId= "ea32b505-eac2-4549-b340-627cfc84f78a" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "ea32b505-eac2-4549-b340-627cfc84f78a"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "ea32b505-eac2-4549-b340-627cfc84f78a"
+onecad.app.history.regeneration: executeOperation:start opId= "3943bd1f-7953-4df5-9af8-f255fdc27eef" type= 0 outputs= 1
+onecad.app.history.regeneration: executeOperation:done opId= "3943bd1f-7953-4df5-9af8-f255fdc27eef"
+onecad.app.history.regeneration: regenerateAll:operation-succeeded "3943bd1f-7953-4df5-9af8-f255fdc27eef"
+onecad.app.history.regeneration: regenerateAll:done status= 0 succeeded= 3 failed= 0 skipped= 0
+Timeline rollback/dirty prototype passed
+exit_code: 0

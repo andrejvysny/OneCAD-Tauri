@@ -1,0 +1,83 @@
+=== OneCAD-CPP prototype: proto_loop_detector ===
+date_utc: 2026-07-16T18:48:36Z
+git_rev: b4ddcccc48134531f3ff80f11ddf9f42ad5a967e
+binary: ./build/tests/proto_loop_detector
+=== stdout+stderr (exit code appended) ===
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "ec859d35-eb4a-4302-908b-0814f7438827" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "1d592d35-db01-43fd-a1d4-22b18b10af20" totalEntities= 2
+onecad.core.sketch: addPoint 10 5 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "7190a5e6-3550-4be5-8062-4b47cbae6946" totalEntities= 3
+onecad.core.sketch: addPoint 0 5 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "b1c3ba2d-347a-4e37-932b-18acab0f9485" totalEntities= 4
+onecad.core.sketch: addLine startId= "ec859d35-eb4a-4302-908b-0814f7438827" endId= "1d592d35-db01-43fd-a1d4-22b18b10af20" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "1d592d35-db01-43fd-a1d4-22b18b10af20" endId= "7190a5e6-3550-4be5-8062-4b47cbae6946" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "7190a5e6-3550-4be5-8062-4b47cbae6946" endId= "b1c3ba2d-347a-4e37-932b-18acab0f9485" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "b1c3ba2d-347a-4e37-932b-18acab0f9485" endId= "ec859d35-eb4a-4302-908b-0814f7438827" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "701520da-447f-4b4f-8d7e-e1bd52e5a236" totalEntities= 1
+onecad.core.sketch: addPoint 10 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "9e1416b4-1f5d-4dfa-bf2a-662b72901471" totalEntities= 2
+onecad.core.sketch: addPoint 10 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "ca73bf54-0bd5-4f61-9b58-5e06663ad3b5" totalEntities= 3
+onecad.core.sketch: addPoint 0 10 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "8f8d6cc3-fb7a-4c01-aa26-f5b44cdc4e05" totalEntities= 4
+onecad.core.sketch: addLine startId= "701520da-447f-4b4f-8d7e-e1bd52e5a236" endId= "9e1416b4-1f5d-4dfa-bf2a-662b72901471" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addLine startId= "9e1416b4-1f5d-4dfa-bf2a-662b72901471" endId= "ca73bf54-0bd5-4f61-9b58-5e06663ad3b5" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 6 constraintCount= 0
+onecad.core.sketch: addLine startId= "ca73bf54-0bd5-4f61-9b58-5e06663ad3b5" endId= "8f8d6cc3-fb7a-4c01-aa26-f5b44cdc4e05" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 7 constraintCount= 0
+onecad.core.sketch: addLine startId= "8f8d6cc3-fb7a-4c01-aa26-f5b44cdc4e05" endId= "701520da-447f-4b4f-8d7e-e1bd52e5a236" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 8 constraintCount= 0
+onecad.core.sketch: addPoint 3 3 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 9 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "de72ad5a-a38e-4c7e-a144-34d3da0b00f3" totalEntities= 9
+onecad.core.sketch: addPoint 7 3 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 10 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "2214b37f-3605-4472-8a29-114b3ff722e8" totalEntities= 10
+onecad.core.sketch: addPoint 7 7 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 11 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "ecb822fd-4c0c-490f-a756-4947809d7022" totalEntities= 11
+onecad.core.sketch: addPoint 3 7 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 12 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "c2f623e2-94ca-49ca-bca7-5b881283a21d" totalEntities= 12
+onecad.core.sketch: addLine startId= "de72ad5a-a38e-4c7e-a144-34d3da0b00f3" endId= "2214b37f-3605-4472-8a29-114b3ff722e8" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 13 constraintCount= 0
+onecad.core.sketch: addLine startId= "2214b37f-3605-4472-8a29-114b3ff722e8" endId= "ecb822fd-4c0c-490f-a756-4947809d7022" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 14 constraintCount= 0
+onecad.core.sketch: addLine startId= "ecb822fd-4c0c-490f-a756-4947809d7022" endId= "c2f623e2-94ca-49ca-bca7-5b881283a21d" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 15 constraintCount= 0
+onecad.core.sketch: addLine startId= "c2f623e2-94ca-49ca-bca7-5b881283a21d" endId= "de72ad5a-a38e-4c7e-a144-34d3da0b00f3" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 16 constraintCount= 0
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "26715ee8-1d5c-4c66-b9ce-731e1452c24e" totalEntities= 1
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+onecad.core.sketch: addPoint 5 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 3 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "256066b3-6042-49e7-9c1a-443a5f7e8667" totalEntities= 3
+onecad.core.sketch: addPoint -5 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 4 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "34282159-9a59-4ffd-96f1-679031f37673" totalEntities= 4
+onecad.core.sketch: addLine startId= "256066b3-6042-49e7-9c1a-443a5f7e8667" endId= "34282159-9a59-4ffd-96f1-679031f37673" construction= false
+onecad.core.sketch: invalidateSolver entityCount= 5 constraintCount= 0
+onecad.core.sketch: addPoint 0 0 construction= false
+onecad.core.sketch: invalidateSolver entityCount= 1 constraintCount= 0
+onecad.core.sketch: addPoint:done id= "c284fec8-d5c6-4c23-b776-89756e49ca15" totalEntities= 1
+onecad.core.sketch: invalidateSolver entityCount= 2 constraintCount= 0
+Loop detector prototype: OK
+exit_code: 0

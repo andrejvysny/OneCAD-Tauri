@@ -1,0 +1,34 @@
+[package]
+name = "onecad-core"
+version = "0.1.0"
+description = "OneCAD pure domain core: document, sketch, history, edit, regen, io"
+edition = "2021"
+
+# INVARIANT: onecad-core is the pure application core and MUST NOT depend on
+# `tauri` (or any UI/IPC crate). All geometry work is delegated over the
+# protocol to the C++ worker; this crate owns identity/repair/timeline/IO only.
+# Do not add a `tauri` dependency here.
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time", "macros"] }
+zip = { workspace = true }
+# History-prefix / content hashing (regen R-WP7): SHA-256 over canonical record
+# lines backs `expectedBaseHash` and checkpoint envelope content hashes (SCHEMA
+# §7.2/§7.7). Small, ubiquitous, no_std-capable.
+sha2 = "0.10"
+
+[dev-dependencies]
+insta = { version = "1", features = ["json"] }
+proptest = "1"
+# `test-util` adds `tokio::time::pause`/`advance` for the deterministic,
+# virtual-time scheduler tests (R-WP8). `full` does NOT include it.
+tokio = { workspace = true, features = ["full", "test-util"] }
+# Container IO tests (R-WP9): scratch dirs for atomic-save / recovery-marker tests.
+# `zip`/`sha2` (used by the tests to craft raw + hostile archives and recompute
+# entry hashes) are already normal deps, available to integration tests.
+tempfile = "3"

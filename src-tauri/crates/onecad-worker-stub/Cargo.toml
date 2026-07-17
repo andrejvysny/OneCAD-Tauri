@@ -1,0 +1,29 @@
+[package]
+name = "onecad-worker-stub"
+version = "0.1.0"
+description = "Fake OCW1 sidecar for protocol tests and chaos drills"
+edition = "2021"
+
+[[bin]]
+name = "onecad-worker-stub"
+path = "src/main.rs"
+
+[dependencies]
+# The stub speaks OCW1 with blocking stdio; it needs only the default (no-client)
+# framing + message types, keeping the binary lean.
+onecad-protocol = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# Integration tests spawn the built bin and drive it with the async client.
+onecad-protocol = { workspace = true, features = ["client"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = [
+    "rt-multi-thread",
+    "macros",
+    "process",
+    "io-util",
+    "time",
+    "sync",
+] }

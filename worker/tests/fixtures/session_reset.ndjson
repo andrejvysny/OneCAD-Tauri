@@ -1,0 +1,12 @@
+# W-WP4 — session lifecycle: OpenSession -> ResetSession bumps the workerEpoch
+# and drops all state (SCHEMA §7.1). GetWorkerHead reflects the new epoch and the
+# empty-prefix head.
+{"expect":{"v":1,"t":"hello","seq":0}}
+{"send":{"v":1,"t":"req","id":1,"verb":"OpenSession","args":{"documentId":"doc_1","documentRevision":7,"workerEpoch":3,"mode":"determinism"}}}
+{"expect":{"v":1,"t":"resp","id":1,"ok":true,"result":{"sessionOpen":true}}}
+{"send":{"v":1,"t":"req","id":2,"verb":"ResetSession","args":{"documentId":"doc_1","workerEpoch":3}}}
+{"expect":{"v":1,"t":"resp","id":2,"ok":true,"result":{"reset":true,"workerEpoch":4}}}
+{"send":{"v":1,"t":"req","id":3,"verb":"GetWorkerHead","args":{}}}
+{"expect":{"v":1,"t":"resp","id":3,"ok":true,"result":{"documentRevision":0,"workerEpoch":4,"snapshotId":0,"hasScratch":false,"historyPrefixHash":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}}
+{"send":{"v":1,"t":"req","id":9,"verb":"Shutdown","args":{}}}
+{"expect":{"v":1,"t":"resp","id":9,"ok":true,"result":{"goodbye":true}}}

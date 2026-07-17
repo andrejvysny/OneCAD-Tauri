@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 17017bd96040aa0014c490aacc3a9ec9038bdc2a3f6ededa7e4c2dfc574cbde2 # shrinks to rec = ArbRecord(OperationRecord { record_id: RecordId(00000000-0000-0000-0000-000000000000), record_schema_version: 1, step_index: 0, name: "", op: Known(Sketch(SketchOpParams { sketch: SketchId(00000000-0000-0000-0000-000000000000), plane: SketchPlaneRef { kind: Xy, origin: Vec3 { x: 0.0, y: 0.0, z: 0.0 }, x_axis: Vec3 { x: 0.0, y: 0.0, z: 502344.36966498755 }, y_axis: Vec3 { x: 0.0, y: 0.0, z: 0.0 }, normal: Vec3 { x: 0.0, y: 0.0, z: 0.0 } }, entities: [], constraints: [], extra: {} })), inputs: OperationInputs { bodies: [], sketches: [], elements: [] }, outputs: [], determinism: DeterminismSettings { parallel: false, occt_options: {}, occt_options_hash: "", tolerance_policy_hash: "", solver_policy_hash: "" }, suppressed: false, extra: {} })

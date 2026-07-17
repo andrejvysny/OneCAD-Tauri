@@ -1,0 +1,69 @@
+{
+  "id": "e_naming_break_fillet_upstream_edit",
+  "title": "THE naming break: fillet an edge, then edit an upstream sketch dimension, regen",
+  "source": [
+    "OneCAD-CPP/TODO.md:150-154 — 'H5-B PARKED'. Verbatim root-cause of the topological-naming failure and the redesign direction. Repro test 'testFilletSurvivesUpstreamCutEdit' lives ONLY in reverted commit 98b8083 (wiring attempt reverted in bae765e) — it is NOT in the frozen tree, so it cannot be run.",
+    "OneCAD-CPP/HANDOFF.md:29,41,45,72 — H5 A-half shipped (loud failure over wrong-face); H5-B redesign (parametric anchors) is future/unscheduled; tombstones+adoption alone insufficient.",
+    "OneCAD-CPP/src/app/history/RegenerationEngine.cpp + ElementMap.h:304-320 removeElementsForBody — the pre-reset erasure: regen erases every body element entry before replay, so descriptor-hash ids only reproduce for IDENTICAL geometry.",
+    "OneCAD-CPP/src/kernel/elementmap/ElementMap.h:762-787 makeChildId + :703-760 makeKey/stableHash — ids are deterministic FNV-1a hashes of the quantized (1e-6) descriptor => any geometry change from a parameter edit changes the hash => downstream edge/face references permanently orphan.",
+    "OneCAD-CPP/src/kernel/elementmap/ElementMap.h:212-264 resolveWithFallback — cannot recover an ERASED entry (no stored descriptor to re-match).",
+    "OneCAD-CPP/tests/prototypes/proto_regeneration.cpp:1310-1338 — 'Re-profiling an extrude swaps its source region' (500->180->500). Shows a parametric edit that DOES regen cleanly TODAY — precisely because the extrude has NO downstream op referencing its geometry ids. Contrast anchor for the break.",
+    "protocol/SCHEMA.md §9 (NeedsRepair payload), §10 (resolution ladder), §11 (Invariants 1,2,3) — the NEW required behavior."
+  ],
+  "opScript": [
+    {
+      "opType": "Sketch", "opId": "op_sketch_1",
+      "params": { "sketchId": "sk_1", "plane": { "kind": "XY", "xAxis": [0,1,0], "yAxis": [-1,0,0], "normal": [0,0,1] },
+        "entities": [ "rectangle 10 x 10 (a Distance constraint drives the width that will be edited)" ],
+        "constraints": [ { "id": "c_width", "type": "Distance", "value": 10.0 } ] }
+    },
+    {
+      "opType": "Extrude", "opId": "op_extrude_1",
+      "inputs": [ { "primary": { "kind": "face", "elementId": "sk_1.region.r0" } } ],
+      "params": { "distance": 5.0, "extrudeMode": "Blind", "booleanMode": "NewBody" },
+      "note": "Produces body_1, a 10x10x5 box. Volume 500 before edit (proto_regeneration.cpp:1325 analog)."
+    },
+    {
+      "opType": "Fillet", "opId": "op_fillet_1",
+      "inputs": [ { "primary": { "bodyId": "body_1", "elementId": "body_1.edge.top_rim", "kind": "edge" },
+        "intent": { "version": 1, "kind": "edge", "descriptor": "frozen descriptor of the top-rim edge at z=5" },
+        "anchor": { "worldPoint": "midpoint of picked top-rim edge", "surfaceUv": null, "adjacencyHint": "…" } } ],
+      "params": { "mode": "Fillet", "radius": 1.0, "edgeIds": ["e:top_rim"], "chainTangentEdges": true },
+      "note": "Fillet references a body_1 edge by ElementMap id (old scheme) / semanticRef (new scheme)."
+    },
+    {
+      "opType": "EditParam", "opId": "edit_sketch_width",
+      "target": "op_sketch_1.constraints.c_width",
+      "change": { "from": 10.0, "to": 14.0 },
+      "note": "Upstream sketch DIMENSION edit (width 10 -> 14). Then full regen replays sketch -> extrude -> fillet."
+    }
+  ],
+  "expected": {
+    "oldStack_behaviorToday": {
+      "outcome": "BROKEN — orphaned reference (H5-B). Regen erases body_1's element entries before replay (removeElementsForBody); the re-extruded box has a NEW top-rim edge whose descriptor-hash id differs from the frozen fillet edgeId (geometry changed => hash changed). The fillet's edgeIds no longer resolve; resolveWithFallback cannot recover an erased entry (no stored descriptor).",
+      "symptoms": [
+        "Fillet edge reference orphaned (silently dropped or op fails).",
+        "Descriptor drift: following the fillet's own Modified chain drags the input edge id onto the blend boundary (z=4 -> z=3 in the repro), corrupting identity for the next replay (TODO.md:152).",
+        "Tombstone variant: sibling blend-boundary tombstones outscore the true orphan for the recreated rim edge (TODO.md:153)."
+      ],
+      "provenance": "OneCAD-CPP/TODO.md:150-154 (parked). NOT reproducible at the frozen commit (repro test is in reverted 98b8083). Recorded as the ANTI-GOAL."
+    },
+    "newStack_requiredOutcome": {
+      "primary": "OCCT-history rebind: the worker keeps builder objects alive and consults Modified/Generated of ALL ops in the step (extrude + fillet), so the fillet's edge follows the re-extruded rim and the fillet SURVIVES the width edit. A unique history image auto-binds (SCHEMA §10 ladder step 1).",
+      "fallback": "If history is ambiguous/absent, descriptor+anchor matching narrows; if still not a confident unique match => NeedsRepair STATE (SCHEMA §9), NEVER a silent wrong bind.",
+      "hardInvariants": [
+        "Invariant 1: the fillet edge's ElementId never changes merely because geometry changed (SCHEMA §11).",
+        "Invariant 2: the frozen descriptor is EVIDENCE, never identity — it does not become the id.",
+        "Invariant 3: the fillet resolves its input on the EXACT predecessor snapshot (the re-extruded box), never overwriting the stored anchor with the fillet's own output (the z=4->z=3 drift bug)."
+      ],
+      "failureContract": "A NeedsRepair at the fillet step still prepares snapshot m-1 and returns a successful PlanPrepared (stoppedReason 'needsRepair'); it is STATE, not an Err (SCHEMA §8)."
+    },
+    "controlCase_noDownstreamRef": {
+      "scenario": "Same width edit on an extrude with NO downstream topology reference (the re-profile test).",
+      "outcome": "Regens cleanly TODAY: 10x10x5=500 -> 6x6x5=180 -> undo -> 500.",
+      "provenance": "proto_regeneration.cpp:1325,1331,1335",
+      "meaning": "Confirms the break is specifically about downstream references to descriptor-hash ids, not about parametric regen in general."
+    }
+  },
+  "notes": "This is the single unsolved defect the migration exists to fix. The corpus records the OLD outcome (orphan) as the anti-goal and the NEW outcome (history rebind, else NeedsRepair) as the golden. The new stack's calibration must prove: fillet-survives-upstream-edit when history is unambiguous, and deterministic NeedsRepair (never wrong bind) when it is not. See case_f for the deliberately-ambiguous companion."
+}

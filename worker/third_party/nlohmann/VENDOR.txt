@@ -1,0 +1,12 @@
+nlohmann/json — single-header amalgamation
+version:  3.12.0
+source:   https://github.com/nlohmann/json/releases/download/v3.12.0/json.hpp
+sha256:   aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63
+obtained: 2026-07-16
+license:  MIT (see header block at top of json.hpp)
+
+Note: Homebrew ships nlohmann-json 3.12.0 as the *split* multi-header
+distribution (json.hpp #includes ~31 nlohmann/ sub-headers), which is not
+self-contained. We vendor the official single-header amalgamation of the
+same version so the worker build has no external include-path dependency on
+Homebrew for JSON.

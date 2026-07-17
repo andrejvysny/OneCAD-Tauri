@@ -1,0 +1,53 @@
+{
+  "id": "f_symmetric_ambiguity",
+  "title": "Mirror-symmetric geometry: descriptor tie must yield NeedsRepair, never a guess",
+  "source": [
+    "OneCAD-CPP/tests/prototypes/proto_elementmap_rigorous.cpp:309-335 — testFallbackRefusesSymmetricTwins: a stale face centered between two equidistant same-kind twins; resolveWithFallback MUST return a null shape (refuse) rather than pick one. assert(rematched.IsNull()).",
+    "OneCAD-CPP/src/kernel/elementmap/ElementMap.h:256-261 — the uniqueness-margin guard: with two near-equidistant candidates 'a re-match is a coin flip — refuse rather than guess' (secondBest - best < max(0.5, best) => return null).",
+    "OneCAD-CPP/tests/prototypes/proto_elementmap_rigorous.cpp:282-307 — testRebindRejectsFarMatches: no close candidate => entry LOSES its shape (loud clearShape) instead of migrating to a wrong face. assert(farEntry->shape.IsNull()).",
+    "OneCAD-CPP/tests/prototypes/proto_elementmap_rigorous.cpp:221-257 — testResolveWithFallbackRematchesAndRejects: literal hit score 0; stale id re-matches a near-identical same-owner face (score<5); rejects when no same-kind candidate exists.",
+    "OneCAD-CPP/TODO.md:149 — H5-A shipped: 'resolveWithFallback 5.0->1.0 + uniqueness margin; global best-first assignment with deterministic tie-breaks'.",
+    "protocol/SCHEMA.md §9 (NeedsRepair candidates, margin), §10 (auto-bind iff score1>=0.85 AND score1-score2>=0.10; symmetric tie => NeedsRepair).",
+    "expected-values/proto_elementmap_rigorous NOTE — proto_elementmap_rigorous is a REQUIRED-before-commit test (CLAUDE.md) but was not among the three whose stdout was captured; it is assertion-based (boolean), so its meaning is recorded here rather than a numeric recording."
+  ],
+  "opScript": [
+    {
+      "opType": "note",
+      "description": "Construct mirror-symmetric geometry so a reference resolves to TWO equally-good candidates. In the C++ unit the twins are the top faces of a left box [-20..-10] and a right box [10..20], with the stale reference sitting exactly between them (top face of a centered box [-5..5]). In the new stack the analog is a symmetric part where a fillet/host reference could bind to either mirror-image edge/face after an edit."
+    },
+    {
+      "opType": "ResolveRefs", "opId": "resolve_symmetric_ref",
+      "inputs": [ { "refId": "op_fillet_1.input0",
+        "primary": { "kind": "face", "elementId": "el_center" },
+        "intent": { "version": 1, "kind": "face", "descriptor": "frozen descriptor of the centered/original face" },
+        "anchor": { "worldPoint": [0, 5, 5], "surfaceUv": [0.5, 0.5] } } ],
+      "note": "Dry-run ladder execution (SCHEMA §7.5 ResolveRefs). Two candidates score equally."
+    }
+  ],
+  "expected": {
+    "oldStack": {
+      "outcome": "REFUSE — resolveWithFallback returns a null shape (no bind). The downstream op then fails loudly / the entry loses its shape; it never silently migrates onto one of the twins.",
+      "provenance": "proto_elementmap_rigorous.cpp:333-334 (assert rematched.IsNull()); ElementMap.h:256-261 (margin guard).",
+      "meaning": "The old kernel already prefers 'loud failure over wrong-face' (H5-A). It has no user-facing repair path — it just refuses and the reference breaks."
+    },
+    "newStack_requiredOutcome": {
+      "outcome": "NeedsRepair STATE with both candidates surfaced.",
+      "ladderFailed": "descriptor",
+      "reason": "ambiguous",
+      "candidates": [
+        { "topoKey": "f:31", "score": 0.91, "margin": 0.00, "note": "left twin — illustrative scores per SCHEMA §9 example" },
+        { "topoKey": "f:44", "score": 0.91, "margin": 0.00, "note": "right twin" }
+      ],
+      "policy": "auto-bind requires score1>=0.85 AND (score1-score2)>=0.10; a 0.91/0.91 tie has margin 0.00 < 0.10 => NeedsRepair. A false positive (wrong silent bind) is strictly worse than a false negative (asking the user). SCHEMA §10.",
+      "notAnError": "NeedsRepair is per-step STATE inside PlanPrepared, never an error object (SCHEMA §8). Repair = Rust rewrites the OperationRecord ref + re-regen; there is no worker BindRepair verb (SCHEMA §9).",
+      "scoresCaveat": "0.91/0.91 are the SCHEMA §9 EXAMPLE values illustrating a tie, NOT captured from OneCAD-CPP (whose score() is an unbounded cost, not a normalized confidence). The load-bearing expectation is the OUTCOME (NeedsRepair on tie), not the specific score."
+    },
+    "farMatchControl": {
+      "scenario": "Reference whose geometry is gone and every candidate is far (~60mm) away.",
+      "outcome": "entry loses its shape (loud clearShape), does NOT migrate to unrelated geometry.",
+      "provenance": "proto_elementmap_rigorous.cpp:305-306 (assert farEntry->shape.IsNull())",
+      "newStackMapping": "NeedsRepair reason 'no-candidates' (SCHEMA §9)."
+    }
+  },
+  "notes": "Companion to case_e. This is the calibration fixture that guarantees the resolver refuses to guess under symmetry. The threshold moved from the old max(0.5, best) cost-margin to the new normalized 0.10 confidence-margin, but the invariant is identical: never silently bind a symmetric tie. All scores here are illustrative; only the refuse/NeedsRepair OUTCOME is asserted by the old stack (as a null-shape refusal)."
+}

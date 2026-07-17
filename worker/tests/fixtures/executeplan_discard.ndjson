@@ -1,0 +1,18 @@
+# W-WP5 — ExecutePlan prepared -> DiscardPrepared leaves the session untouched.
+# A Sketch-only plan materializes a sketch (planStep, no body) and prepares a
+# scratch (hasScratch=true); after discard, hasScratch=false and the head is
+# exactly as before (empty-prefix anchor, revision/snapshot 0).
+{"expect":{"v":1,"t":"hello","seq":0}}
+{"send":{"v":1,"t":"req","id":1,"verb":"OpenSession","args":{"documentId":"doc_1","documentRevision":0,"workerEpoch":3,"mode":"determinism"}}}
+{"expect":{"v":1,"t":"resp","id":1,"ok":true,"result":{"sessionOpen":true}}}
+{"send":{"v":1,"t":"req","id":2,"verb":"ExecutePlan","args":{"jobId":88,"documentRevision":0,"workerEpoch":3,"expectedBaseHash":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","prefixHashes":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],"targetStep":0,"ops":[{"opType":"Sketch","opId":"op0","stepIndex":0,"params":{"sketchId":"sk1","plane":{"kind":"XY"},"entities":[{"id":"e1","type":"Line","p0":[0,0],"p1":[40,0]},{"id":"e2","type":"Line","p0":[40,0],"p1":[40,20]},{"id":"e3","type":"Line","p0":[40,20],"p1":[0,20]},{"id":"e4","type":"Line","p0":[0,20],"p1":[0,0]}],"constraints":[]}}]}}}
+{"expect":{"v":1,"t":"event","id":2,"event":"planStep","stepIndex":0}}
+{"expect":{"v":1,"t":"resp","id":2,"ok":true,"result":{"planPrepared":true,"stoppedReason":"completed"}}}
+{"send":{"v":1,"t":"req","id":3,"verb":"GetWorkerHead","args":{}}}
+{"expect":{"v":1,"t":"resp","id":3,"ok":true,"result":{"documentRevision":0,"snapshotId":0,"hasScratch":true}}}
+{"send":{"v":1,"t":"req","id":4,"verb":"DiscardPrepared","args":{"jobId":88}}}
+{"expect":{"v":1,"t":"resp","id":4,"ok":true,"result":{"discarded":true}}}
+{"send":{"v":1,"t":"req","id":5,"verb":"GetWorkerHead","args":{}}}
+{"expect":{"v":1,"t":"resp","id":5,"ok":true,"result":{"documentRevision":0,"snapshotId":0,"hasScratch":false,"historyPrefixHash":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}}
+{"send":{"v":1,"t":"req","id":9,"verb":"Shutdown","args":{}}}
+{"expect":{"v":1,"t":"resp","id":9,"ok":true,"result":{"goodbye":true}}}

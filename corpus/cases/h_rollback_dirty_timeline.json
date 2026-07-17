@@ -1,0 +1,35 @@
+{
+  "id": "h_rollback_dirty_timeline",
+  "title": "Rollback cursor + dirty-timeline insert + partial/full replay",
+  "source": [
+    "OneCAD-CPP/tests/prototypes/proto_timeline_rollback_dirty.cpp:56-146 — full scenario.",
+    "OneCAD-CPP/tests/prototypes/proto_timeline_rollback_dirty.cpp:92 — after adding 2 extrudes: operations().size()==2 AND appliedOpCount()==2.",
+    "OneCAD-CPP/tests/prototypes/proto_timeline_rollback_dirty.cpp:97-105 — RollbackCommand(op1) moves the applied cursor: appliedOpCount()==1 (rollback = cursor move, ops NOT deleted).",
+    "OneCAD-CPP/tests/prototypes/proto_timeline_rollback_dirty.cpp:107-129 — insert op3 at the rollback cursor: operations().size()==3; ORDER op1@index0, op3@index1, op2@index2; appliedOpCount()==2 (cursor covers only the inserted prefix).",
+    "OneCAD-CPP/tests/prototypes/proto_timeline_rollback_dirty.cpp:131-136 — regenerateToAppliedCount(2): status != CriticalFailure (partial regen of the applied prefix succeeds).",
+    "OneCAD-CPP/tests/prototypes/proto_timeline_rollback_dirty.cpp:138-143 — setAppliedOpCount(3) then regenerateToAppliedCount(3): status != CriticalFailure AND failedOps empty (full regen-to-end recovers).",
+    "expected-values/proto_timeline_rollback_dirty.txt — 'Timeline rollback/dirty prototype passed', 'regenerateAll:done status= 0 succeeded= 3 failed= 0 skipped= 0', exit 0."
+  ],
+  "opScript": [
+    { "opType": "Extrude", "opId": "op1", "params": { "distance": 10.0, "extrudeMode": "Blind", "booleanMode": "NewBody" }, "note": "20x15 region (buildClosedRegionSketch), NewBody." },
+    { "opType": "Extrude", "opId": "op2", "params": { "distance": 5.0,  "extrudeMode": "Blind", "booleanMode": "NewBody" }, "note": "Same region, NewBody." },
+    { "opType": "Rollback", "opId": "cmd_rollback_to_op1", "target": "op1", "note": "Move applied cursor back to just-after op1 (op2 becomes a draft beyond the cursor)." },
+    { "opType": "Extrude", "opId": "op3", "params": { "distance": 2.5, "extrudeMode": "Blind", "booleanMode": "NewBody" }, "note": "Inserted AT the rollback cursor (between op1 and op2)." }
+  ],
+  "expected": {
+    "afterTwoExtrudes": { "opCount": 2, "appliedOpCount": 2, "provenance": "proto_timeline_rollback_dirty.cpp:92" },
+    "afterRollback":    { "appliedOpCount": 1, "opsDeleted": false, "provenance": "proto_timeline_rollback_dirty.cpp:102 (+ rollback preserves ops/deps)" },
+    "afterInsertAtCursor": {
+      "opCount": 3,
+      "order": { "op1": 0, "op3": 1, "op2": 2 },
+      "appliedOpCount": 2,
+      "provenance": "proto_timeline_rollback_dirty.cpp:117-129"
+    },
+    "partialRegen": { "toAppliedCount": 2, "status": "not CriticalFailure", "provenance": "proto_timeline_rollback_dirty.cpp:132-135" },
+    "fullRegen": {
+      "toAppliedCount": 3, "status": "Success", "succeeded": 3, "failed": 0, "skipped": 0,
+      "provenance": "proto_timeline_rollback_dirty.cpp:138-143 + expected-values/proto_timeline_rollback_dirty.txt ('status= 0 succeeded= 3 failed= 0 skipped= 0')"
+    }
+  },
+  "notes": "Establishes cursor-based rollback semantics: rollback moves appliedOpCount WITHOUT deleting ops (drafts live beyond the cursor and preserve dependency links); inserting at the cursor renumbers order (op1,op3,op2) and keeps the applied prefix at 2; partial regen replays only the applied prefix; setting the cursor to end + full regen recovers all 3. In the NEW stack this maps to the linear timeline + StepState{Valid,Dirty,Error,NeedsRepair,Suppressed} with cursor rollback (plan: 'rollback = cursor, NOT C++ suppression conflation'). RegenStatus enum value 0 == Success (per stdout 'status= 0')."
+}

@@ -1,0 +1,11 @@
+---
+source: crates/onecad-core/tests/sketch_freeze.rs
+expression: constraint
+---
+{
+  "kind": "onCurve",
+  "id": "00000000-0000-0000-0000-000000000006",
+  "point": "00000000-0000-0000-0000-000000000e02",
+  "curve": "00000000-0000-0000-0000-000000000c10",
+  "position": "arbitrary"
+}

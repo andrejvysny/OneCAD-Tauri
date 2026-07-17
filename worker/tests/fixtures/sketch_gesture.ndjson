@@ -1,0 +1,17 @@
+# BeginGesture -> SolveDrag (x2, sequential) -> EndGesture with seq ordering
+# (SCHEMA §7.4). Ports corpus (g) testVerticalConstraintDrag: line top(0,6)-
+# bottom(0,0) + Vertical; drag bottom down the vertical => x stays 0, y tracks.
+# Each SolveDrag result echoes its request seq (ordering), and reports only the
+# CHANGED points. EndGesture returns the final positions + a bumped sketchRevision.
+# Consume the unsolicited hello (SCHEMA §6) first.
+{"expect":{"v":1,"t":"hello","seq":0}}
+{"send":{"v":1,"t":"req","id":1,"verb":"SketchUpsert","args":{"sketchId":"vg","plane":{"kind":"XY"},"entities":[{"id":"top","type":"Point","at":[0,6]},{"id":"bottom","type":"Point","at":[0,0]},{"id":"l1","type":"Line","p0Ref":"top","p1Ref":"bottom"}],"constraints":[{"id":"cV","type":"Vertical","entities":["l1"]}]}}}
+{"expect":{"v":1,"t":"resp","id":1,"ok":true,"result":{"upserted":true,"sketchRevision":1}}}
+{"send":{"v":1,"t":"req","id":2,"verb":"BeginGesture","args":{"sketchId":"vg","sketchRevision":1,"gestureId":51,"drag":{"pointId":"bottom"}}}}
+{"expect":{"v":1,"t":"resp","id":2,"ok":true,"result":{"gestureId":51,"ready":true}}}
+{"send":{"v":1,"t":"req","id":3,"verb":"SolveDrag","args":{"gestureId":51,"seq":1,"pointId":"bottom","target":[0,9]}}}
+{"expect":{"v":1,"t":"resp","id":3,"ok":true,"result":{"gestureId":51,"seq":1,"status":"success","dof":"$any","positions":{"bottom":"$any"}}}}
+{"send":{"v":1,"t":"req","id":4,"verb":"SolveDrag","args":{"gestureId":51,"seq":2,"pointId":"bottom","target":[0,13]}}}
+{"expect":{"v":1,"t":"resp","id":4,"ok":true,"result":{"gestureId":51,"seq":2,"status":"success","positions":{"bottom":"$any"}}}}
+{"send":{"v":1,"t":"req","id":5,"verb":"EndGesture","args":{"gestureId":51}}}
+{"expect":{"v":1,"t":"resp","id":5,"ok":true,"result":{"gestureId":51,"status":"success","sketchRevision":2,"positions":{"bottom":"$any"}}}}

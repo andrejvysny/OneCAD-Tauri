@@ -1,0 +1,2 @@
+{"opId":"op-extrude-legacy-1","type":"Extrude","inputs":{"sketch":{"sketchId":"sketch-legacy-1","regionId":"region-legacy-1"}},"params":{"distance":10.0,"draftAngleDeg":0.0,"booleanMode":"NewBody"},"resultBodyIds":["body-legacy-1"]}
+{"opId":"op-shell-legacy-1","type":"Shell","inputs":{"body":{"bodyId":"body-legacy-1"}},"params":{"thickness":1.5,"openFaceIds":["body-legacy-1/face/0"]},"resultBodyIds":["body-legacy-1"]}

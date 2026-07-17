@@ -1,0 +1,46 @@
+---
+source: crates/onecad-core/tests/schema_freeze.rs
+expression: rec
+---
+{
+  "recordId": "00000000-0000-0000-0000-000000002ec9",
+  "recordSchemaVersion": 1,
+  "stepIndex": 9,
+  "name": "Circular Pattern 1",
+  "opType": "CircularPattern",
+  "params": {
+    "angleDeg": {
+      "value": 360.0
+    },
+    "axisDirection": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "axisOrigin": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "count": 4,
+    "fuseResult": true,
+    "sourceBodyId": "00000000-0000-0000-0000-00000000b0d1"
+  },
+  "inputs": {
+    "bodies": [
+      "00000000-0000-0000-0000-00000000b0d1"
+    ],
+    "sketches": [],
+    "elements": []
+  },
+  "outputs": [
+    "00000000-0000-0000-0000-00000000b0d1"
+  ],
+  "determinism": {
+    "parallel": false,
+    "occtOptionsHash": "cbf29ce484222325",
+    "tolerancePolicyHash": "b2c9000000000000",
+    "solverPolicyHash": "3e9a000000000000"
+  },
+  "suppressed": false
+}

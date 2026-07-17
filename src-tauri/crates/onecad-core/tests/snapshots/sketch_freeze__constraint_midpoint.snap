@@ -1,0 +1,10 @@
+---
+source: crates/onecad-core/tests/sketch_freeze.rs
+expression: constraint
+---
+{
+  "kind": "midpoint",
+  "id": "00000000-0000-0000-0000-000000000005",
+  "point": "00000000-0000-0000-0000-000000000e02",
+  "line": "00000000-0000-0000-0000-000000000100"
+}
