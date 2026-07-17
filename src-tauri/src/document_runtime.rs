@@ -7,29 +7,38 @@
 //! (async) function the thin `#[tauri::command]` wrappers delegate to, so the app
 //! logic is testable without a running webview (plan quality bar).
 //!
-//! ## Single-writer regen (driver seam)
+//! ## Single-writer regen (driver seam) — fencing live (R-WP11)
 //!
-//! The app layer runs the executor: [`run_regen`](DocumentRuntime::run_regen)
-//! compiles the plan from the current timeline, wraps the backend in an
-//! [`AdoptingEngine`] (D1 body-id adoption), drives
-//! [`RegenExecutor::run`](onecad_core::regen::RegenExecutor::run) against
-//! `&mut self.regen`, and — because the caller holds the runtime lock for the whole
-//! run — reads the fencing gate from the values captured at plan-build (no other
-//! writer can advance the revision mid-run). The
-//! [`RegenScheduler`](onecad_core::regen::RegenScheduler) drives this through its
-//! [`RegenDriver`](onecad_core::regen::RegenDriver) seam (wired in `crate::run`);
-//! debounce/coalesce/preview-priority live in the scheduler, policy-only.
+//! The app layer runs the executor in three phases so a slow worker never blocks
+//! edits and revision fencing goes **live**:
 //!
-//! **R-WP11 seam.** The runtime holds the backend behind
-//! `Arc<dyn `[`GeometryEngine`]`>` + `Arc<dyn `[`MeshProvider`]`>`; the current
-//! [`PendingBackend`](crate::worker::PendingBackend) fails every geometry call so
-//! the app boots. R-WP11 swaps in the real `WorkerManager` with zero changes here.
-//! While a real (slow) worker is in flight the runtime lock is held for the whole
-//! regen; making that window truly async (releasing the lock across worker I/O so
-//! revision fencing goes live) is R-WP11's refinement.
+//! * **phase 1 (locked)** — [`begin_regen`](DocumentRuntime::begin_regen) compiles
+//!   the plan, wraps the backend in an [`AdoptingEngine`] (D1 body-id adoption),
+//!   captures the [`FencingCell`] tokens, and **clones** the [`RegenSession`] so the
+//!   executor drives on a copy;
+//! * **phase 2 (unlocked)** — [`PreparedRegen::drive`] runs
+//!   [`RegenExecutor::run`](onecad_core::regen::RegenExecutor::run) over the cloned
+//!   scratch with the runtime lock **released**. Its
+//!   [`RevisionGate`](onecad_core::regen::RevisionGate) reads the live
+//!   [`FencingCell`], so an edit that lands during worker IO advances the revision
+//!   and the executor supersedes the stale prepare at accept time;
+//! * **phase 3 (locked)** — [`finish_regen`](DocumentRuntime::finish_regen) commits
+//!   the driven snapshot into the live session **iff** the tokens are unchanged
+//!   (else reports `Superseded`), preserving single-writer for the mutation.
+//!
+//! [`run_regen`](DocumentRuntime::run_regen) keeps the old inline (lock-held)
+//! variant for direct callers/tests. The
+//! [`RegenScheduler`](onecad_core::regen::RegenScheduler) drives phase 1→3 through
+//! its [`RegenDriver`](onecad_core::regen::RegenDriver) seam (wired in
+//! `crate::run`); debounce/coalesce/preview-priority live in the scheduler.
+//!
+//! The runtime holds the backend behind `Arc<dyn `[`GeometryEngine`]`>` +
+//! `Arc<dyn `[`MeshProvider`]`>`; production wires the real `WorkerManager`, with
+//! [`PendingBackend`](crate::worker::PendingBackend) the no-worker fallback.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use uuid::Uuid;
@@ -44,8 +53,8 @@ use onecad_core::io::container::{ContainerCaches, ContainerReader, ContainerWrit
 use onecad_core::io::IoError;
 use onecad_core::regen::{
     CancelToken, GeometryEngine, Lod, MeshKey, ModelSnapshot, Outcome, PlanArtifacts, PlanContext,
-    PolicyVersions, RegenExecutor, RegenPlanner, RegenRequest, RegenSession, SnapshotPublisher,
-    TessellateSpec,
+    PlanRequest, PolicyVersions, RegenExecutor, RegenPlanner, RegenRequest, RegenSession,
+    SnapshotPublisher, TessellateSpec,
 };
 
 use crate::dto::{
@@ -54,6 +63,53 @@ use crate::dto::{
 };
 use crate::mesh_cache::MeshCache;
 use crate::worker::{lod_str, AdoptingEngine, MeshProvider};
+
+/// The `(documentRevision, workerEpoch)` fencing tokens behind an `Arc` so the
+/// regen driver's [`RevisionGate`](onecad_core::regen::RevisionGate) can read them
+/// **lock-free** while slow worker IO is in flight (R-WP11).
+///
+/// This is what makes fencing **live**: the live regen path releases the runtime
+/// lock across the worker call and drives the executor on a **cloned** scratch
+/// session, so an edit that lands during the IO can acquire the lock and
+/// [`bump_revision`](FencingCell::bump_revision) here — the executor's gate then
+/// observes the change at accept time and supersedes the stale prepare (SCHEMA §7.2
+/// fencing). Single-writer for the document is preserved: only the runtime-lock
+/// holder ever mutates these tokens; reads are lock-free.
+#[derive(Debug)]
+pub struct FencingCell {
+    revision: AtomicU64,
+    epoch: AtomicU64,
+}
+
+impl FencingCell {
+    fn new(epoch: u64) -> Self {
+        Self {
+            revision: AtomicU64::new(0),
+            epoch: AtomicU64::new(epoch),
+        }
+    }
+
+    /// The current `(revision, epoch)` — the executor's gate reads this.
+    #[must_use]
+    pub fn get(&self) -> (DocumentRevision, WorkerEpoch) {
+        (
+            DocumentRevision(self.revision.load(Ordering::SeqCst)),
+            WorkerEpoch(self.epoch.load(Ordering::SeqCst)),
+        )
+    }
+
+    fn revision(&self) -> DocumentRevision {
+        DocumentRevision(self.revision.load(Ordering::SeqCst))
+    }
+
+    fn bump_revision(&self) {
+        self.revision.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn set_epoch(&self, epoch: u64) {
+        self.epoch.store(epoch, Ordering::SeqCst);
+    }
+}
 
 /// What one regen produced, for event emission. `outcome` is the executor's
 /// terminal; `changed`/`removed` drive the pull-model `document-changed` event.
@@ -95,15 +151,15 @@ impl RegenReport {
 pub struct DocumentRuntime {
     session: DocumentSession,
     regen: RegenSession,
-    revision: DocumentRevision,
-    epoch: WorkerEpoch,
+    /// The lock-free fencing tokens (revision + worker epoch). See [`FencingCell`].
+    fencing: Arc<FencingCell>,
     title: String,
     path: Option<PathBuf>,
     dirty: bool,
     read_only: bool,
     mesh_cache: MeshCache,
     latest_snapshot: Option<Arc<ModelSnapshot>>,
-    publisher: SnapshotPublisher,
+    publisher: Arc<SnapshotPublisher>,
     engine: Arc<dyn GeometryEngine>,
     meshes: Arc<dyn MeshProvider>,
     occt_fingerprint: String,
@@ -166,15 +222,14 @@ impl DocumentRuntime {
         Self {
             session: DocumentSession::new(doc),
             regen,
-            revision: DocumentRevision(0),
-            epoch: WorkerEpoch(1),
+            fencing: Arc::new(FencingCell::new(1)),
             title,
             path,
             dirty: false,
             read_only,
             mesh_cache: MeshCache::new(),
             latest_snapshot: None,
-            publisher: SnapshotPublisher::new(),
+            publisher: Arc::new(SnapshotPublisher::new()),
             engine,
             meshes,
             occt_fingerprint: "pending-r-wp11".to_string(),
@@ -199,7 +254,23 @@ impl DocumentRuntime {
     /// The current document revision.
     #[must_use]
     pub fn revision(&self) -> DocumentRevision {
-        self.revision
+        self.fencing.revision()
+    }
+
+    /// The lock-free fencing cell (revision + epoch). The live regen driver clones
+    /// this `Arc` so its gate observes concurrent edits during worker IO (R-WP11).
+    #[must_use]
+    pub fn fencing(&self) -> Arc<FencingCell> {
+        self.fencing.clone()
+    }
+
+    /// A worker (re)start bumped the epoch (SCHEMA §8 restart + replay): adopt the
+    /// new epoch so subsequent plans fence against it, and mark the document dirty
+    /// so the caller's replay recomputes geometry. Called by the WorkerManager's
+    /// restart hook (under the runtime lock).
+    pub fn on_worker_restart(&mut self, epoch: WorkerEpoch) {
+        self.fencing.set_epoch(epoch.0);
+        self.dirty = true;
     }
 
     /// The stored save path, if any.
@@ -276,7 +347,7 @@ impl DocumentRuntime {
     /// regen), bump the fencing revision, and mark unsaved.
     fn after_mutation(&mut self) {
         self.sync_regen_timeline();
-        self.revision = DocumentRevision(self.revision.0 + 1);
+        self.fencing.bump_revision();
         self.dirty = true;
     }
 
@@ -292,14 +363,33 @@ impl DocumentRuntime {
 
     // ── Regen (the driver body) ──────────────────────────────────────────────
 
-    /// Compiles and drives a regen plan to its terminal (the app-layer executor
-    /// run). Enforces D1 body-id adoption via [`AdoptingEngine`]. On a published
-    /// snapshot it updates the latest snapshot and returns the changed/removed
-    /// bodies for the `document-changed` event.
+    /// Compiles and drives a regen plan to its terminal **inline** (holding the
+    /// caller's `&mut self`). Kept for direct callers/tests; the live app path uses
+    /// the lock-free [`begin_regen`](Self::begin_regen) → drive →
+    /// [`finish_regen`](Self::finish_regen) split so a slow worker never blocks
+    /// edits and fencing goes live.
     ///
-    /// The caller holds the single-writer lock for the whole run, so the fencing
-    /// gate is the `(revision, epoch)` captured at plan-build.
+    /// Because this variant holds the runtime lock for the whole run, the fencing
+    /// gate cannot change during it (no edit can land) — sound, but fencing is
+    /// inert here by construction.
     pub async fn run_regen(&mut self, request: RegenRequest, cancel: CancelToken) -> RegenReport {
+        let Some(prepared) = self.begin_regen(request) else {
+            return RegenReport {
+                outcome: Outcome::NoOp,
+                revision: self.fencing.revision().0,
+                changed: Vec::new(),
+                removed: Vec::new(),
+            };
+        };
+        let driven = prepared.drive(cancel).await;
+        self.finish_regen(driven)
+    }
+
+    /// Phase 1 (**locked**): compile the plan against the current timeline, capture
+    /// the fencing tokens, and **clone** the regen session so the executor can drive
+    /// lock-free on the copy. `None` for an empty plan. Enforces D1 body-id
+    /// adoption via [`AdoptingEngine`].
+    pub fn begin_regen(&mut self, request: RegenRequest) -> Option<PreparedRegen> {
         let ctx = PlanContext {
             policy_versions: PolicyVersions::default(),
             occt_fingerprint: self.occt_fingerprint.clone(),
@@ -307,17 +397,10 @@ impl DocumentRuntime {
         let graph = DependencyGraph::new(); // linear timeline: order is authoritative.
         let plan = RegenPlanner::plan(&self.regen.timeline, &graph, &[], request, &ctx);
         if plan.is_empty() {
-            return RegenReport {
-                outcome: Outcome::NoOp,
-                revision: self.revision.0,
-                changed: Vec::new(),
-                removed: Vec::new(),
-            };
+            return None;
         }
-
         let job = self.next_job_id();
-        let plan_rev = self.revision;
-        let epoch = self.epoch;
+        let (plan_rev, epoch) = self.fencing.get();
         let artifacts = PlanArtifacts {
             tessellate: Some(TessellateSpec {
                 lod: Lod::Coarse,
@@ -326,41 +409,99 @@ impl DocumentRuntime {
         };
         let plan_req =
             plan.into_request(job, plan_rev, epoch, PolicyVersions::default(), artifacts);
-
-        // D1: the worker-minted `created` ids must match a known op in this plan
-        // and be unique. Replay-from-0 base is empty, so collisions are in-plan.
+        // D1: worker-minted `created` ids must match a known op in this plan and be
+        // unique. Replay-from-0 base is empty, so collisions are in-plan.
         let known_ops: HashSet<Uuid> = plan_req.ops.iter().map(|o| o.record_id.as_uuid()).collect();
-        let engine = AdoptingEngine::new(self.engine.clone(), known_ops, HashSet::new());
-        let executor = RegenExecutor::new(engine);
-        let gate = move || (plan_rev, epoch);
-
         let prior: Vec<BodyId> = self
             .latest_snapshot
             .as_ref()
             .map(|s| s.bodies.iter().map(|b| b.body).collect())
             .unwrap_or_default();
+        Some(PreparedRegen {
+            plan_req,
+            engine: AdoptingEngine::new(self.engine.clone(), known_ops, HashSet::new()),
+            scratch: self.clone_regen_session(),
+            fencing: self.fencing.clone(),
+            publisher: self.publisher.clone(),
+            expected: (plan_rev, epoch),
+            lod: Lod::Coarse,
+            prior,
+        })
+    }
 
-        let outcome = executor
-            .run(plan_req, &mut self.regen, &gate, &cancel, &self.publisher)
-            .await;
-
-        let (changed, removed) = if let Outcome::Published(snap) = &outcome {
-            self.latest_snapshot = Some(snap.clone());
-            self.dirty = true;
-            let changed: Vec<(BodyId, MeshKey)> =
-                snap.bodies.iter().map(|b| (b.body, b.mesh_key)).collect();
-            let current: HashSet<BodyId> = snap.bodies.iter().map(|b| b.body).collect();
-            let removed: Vec<BodyId> = prior.into_iter().filter(|b| !current.contains(b)).collect();
-            (changed, removed)
-        } else {
-            (Vec::new(), Vec::new())
-        };
-
+    /// Phase 3 (**locked**): commit a driven regen back into the live session.
+    ///
+    /// A `Published` snapshot commits **only if** the fencing tokens are unchanged
+    /// since [`begin_regen`](Self::begin_regen) — i.e. no edit landed during the
+    /// lock-free worker IO. If they advanced, the worker already accepted lock-free
+    /// but the document moved on: the snapshot is stale, so it is **not** committed
+    /// (the pending edit's regen reconverges) and the outcome is reported as
+    /// `Superseded`. This upholds single-writer for the session mutation.
+    pub fn finish_regen(&mut self, driven: DrivenRegen) -> RegenReport {
+        let DrivenRegen {
+            outcome,
+            scratch,
+            prior,
+            expected,
+            lod,
+        } = driven;
+        if let Outcome::Published(snap) = &outcome {
+            if self.fencing.get() == expected {
+                let (changed, removed) = self.commit_snapshot(scratch, snap, lod, &prior);
+                return RegenReport {
+                    outcome,
+                    revision: self.fencing.revision().0,
+                    changed,
+                    removed,
+                };
+            }
+            // Window race: worker accepted lock-free but the document advanced.
+            return RegenReport {
+                outcome: Outcome::Superseded,
+                revision: self.fencing.revision().0,
+                changed: Vec::new(),
+                removed: Vec::new(),
+            };
+        }
         RegenReport {
             outcome,
-            revision: self.revision.0,
-            changed,
-            removed,
+            revision: self.fencing.revision().0,
+            changed: Vec::new(),
+            removed: Vec::new(),
+        }
+    }
+
+    /// Moves the driven scratch state into the live session and records the
+    /// changed/removed bodies for the `document-changed` event.
+    fn commit_snapshot(
+        &mut self,
+        scratch: RegenSession,
+        snap: &Arc<ModelSnapshot>,
+        lod: Lod,
+        prior: &[BodyId],
+    ) -> (Vec<(BodyId, MeshKey)>, Vec<BodyId>) {
+        let _ = lod;
+        self.regen = scratch;
+        self.latest_snapshot = Some(snap.clone());
+        self.dirty = true;
+        let changed: Vec<(BodyId, MeshKey)> =
+            snap.bodies.iter().map(|b| (b.body, b.mesh_key)).collect();
+        let current: HashSet<BodyId> = snap.bodies.iter().map(|b| b.body).collect();
+        let removed: Vec<BodyId> = prior
+            .iter()
+            .copied()
+            .filter(|b| !current.contains(b))
+            .collect();
+        (changed, removed)
+    }
+
+    /// Deep-clones the regen session so the executor drives on a copy (lock-free).
+    fn clone_regen_session(&self) -> RegenSession {
+        RegenSession {
+            bodies: self.regen.bodies.clone(),
+            timeline: self.regen.timeline.clone(),
+            repair: self.regen.repair.clone(),
+            elements: self.regen.elements.clone(),
         }
     }
 
@@ -484,7 +625,7 @@ impl DocumentRuntime {
 
         DocumentProjection {
             status: DocStatus::Ready,
-            revision: self.revision.0,
+            revision: self.fencing.revision().0,
             title: self.title.clone(),
             dirty: self.dirty,
             bodies,
@@ -514,6 +655,68 @@ impl DocumentRuntime {
             status: feature_status(&state),
         }
     }
+}
+
+/// A compiled, fenced regen ready to drive **lock-free** (phase 2). Produced by
+/// [`DocumentRuntime::begin_regen`] under the lock; [`drive`](PreparedRegen::drive)
+/// runs the executor on the cloned scratch with the runtime lock released, so a
+/// concurrent edit can advance the fencing tokens and supersede a stale prepare.
+pub struct PreparedRegen {
+    plan_req: PlanRequest,
+    engine: AdoptingEngine,
+    scratch: RegenSession,
+    fencing: Arc<FencingCell>,
+    publisher: Arc<SnapshotPublisher>,
+    expected: (
+        onecad_core::ids::DocumentRevision,
+        onecad_core::ids::WorkerEpoch,
+    ),
+    lod: Lod,
+    prior: Vec<BodyId>,
+}
+
+impl PreparedRegen {
+    /// Drives the plan to its terminal with the runtime lock **released**. The
+    /// executor's [`RevisionGate`](onecad_core::regen::RevisionGate) reads the live
+    /// [`FencingCell`], so an edit that lands during worker IO is observed at accept
+    /// time (fencing live). Returns the driven result for
+    /// [`DocumentRuntime::finish_regen`].
+    pub async fn drive(self, cancel: CancelToken) -> DrivenRegen {
+        let PreparedRegen {
+            plan_req,
+            engine,
+            mut scratch,
+            fencing,
+            publisher,
+            expected,
+            lod,
+            prior,
+        } = self;
+        let gate = move || fencing.get();
+        let executor = RegenExecutor::new(engine);
+        let outcome = executor
+            .run(plan_req, &mut scratch, &gate, &cancel, &publisher)
+            .await;
+        DrivenRegen {
+            outcome,
+            scratch,
+            prior,
+            expected,
+            lod,
+        }
+    }
+}
+
+/// The result of driving a [`PreparedRegen`] lock-free (phase 2 → 3 handoff).
+pub struct DrivenRegen {
+    outcome: Outcome,
+    scratch: RegenSession,
+    prior: Vec<BodyId>,
+    expected: (
+        onecad_core::ids::DocumentRevision,
+        onecad_core::ids::WorkerEpoch,
+    ),
+    lod: Lod,
 }
 
 /// Renders a [`MeshKey`] as the `"<bodyId>:<lod>:<generation>"` string the

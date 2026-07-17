@@ -18,6 +18,7 @@
 //! [`AppState`]: crate::state::AppState
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -32,12 +33,31 @@ use onecad_core::regen::{
     RestoreResult, TessellateRequest, TessellateResult, WorkerElementEvidence, WorkerHead,
 };
 
-/// Worker sidecar lifecycle owner — **stub for R-WP11**.
-///
-/// Uses `tokio::process` (NOT `tauri-plugin-shell`); backoff 0.5/1/2s ×3 → Failed
-/// banner; a restart marks the document dirty and replays. Fields land in R-WP11.
-#[derive(Debug, Default)]
-pub struct WorkerManager;
+pub mod manager;
+pub mod wire;
+
+pub use manager::{RestartHook, SupervisorConfig, WorkerLifecycle, WorkerManager, WorkerState};
+
+/// The default dev-tree worker binary, relative to `src-tauri/`.
+pub const DEV_WORKER_PATH: &str = "../worker/build/onecad-worker";
+
+/// The `ONECAD_WORKER_PATH` override env var (highest precedence).
+pub const WORKER_PATH_ENV: &str = "ONECAD_WORKER_PATH";
+
+/// Resolves the worker binary path (SCHEMA-agnostic packaging seam):
+/// `ONECAD_WORKER_PATH` override → the dev fallback `../worker/build/onecad-worker`
+/// (a Tauri `externalBin`/resource path is resolved by the caller when bundled).
+/// Returns `None` when no candidate exists on disk, so the app keeps the
+/// [`PendingBackend`] fallback rather than spawning a missing binary.
+#[must_use]
+pub fn resolve_worker_path() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var(WORKER_PATH_ENV) {
+        let path = PathBuf::from(p);
+        return path.exists().then_some(path);
+    }
+    let dev = PathBuf::from(DEV_WORKER_PATH);
+    dev.exists().then_some(dev)
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mesh bytes seam

@@ -14,6 +14,9 @@ path = "src/main.rs"
 onecad-protocol = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# ExecutePlan/Tessellate chaos support: SHA-256 over the MESH1 blob a Tessellate
+# resp streams (SCHEMA §5.2 manifest integrity).
+sha2 = { workspace = true }
 
 [dev-dependencies]
 # Integration tests spawn the built bin and drive it with the async client.

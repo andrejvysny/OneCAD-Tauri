@@ -25,7 +25,24 @@ use crate::messages::{
     ReqFrame, RespFrame, PROTOCOL_VERSION,
 };
 
-type PendingMap = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<RespFrame, ProtocolError>>>>>;
+/// A terminal `resp` plus its raw binary tail (SCHEMA §1). The tail is the bytes
+/// a `resp` addressed by an inline `bin` section carries (e.g. a small MESH1 blob,
+/// SCHEMA §5.2); empty when the frame declared no tail.
+type RespWithBin = (RespFrame, Vec<u8>);
+
+/// The correlation table plus a **closed** latch. Once the reader task tears down
+/// (EOF / fatal frame — SCHEMA §8, no resync), it drains every waiter with
+/// [`ProtocolError::ConnectionLost`] **and** latches `closed`, so a request that
+/// races the teardown fails fast instead of registering a oneshot nothing will
+/// ever fire (which would hang the caller forever). Registration + closing take
+/// the same lock, so there is no lost-wakeup window.
+#[derive(Default)]
+struct Pending {
+    waiters: HashMap<u64, oneshot::Sender<Result<RespWithBin, ProtocolError>>>,
+    closed: bool,
+}
+
+type PendingMap = Arc<Mutex<Pending>>;
 
 /// A non-terminal frame surfaced to subscribers (SCHEMA §3.3/§3.4/§3.7).
 #[derive(Debug, Clone)]
@@ -34,10 +51,39 @@ pub enum WorkerEvent {
     Progress(ProgressFrame),
     /// An `event` frame (e.g. `ExecutePlan` `planStep`).
     Event(EventFrame),
-    /// A `chunk` frame (manifest or data). Assembly lands in a later WP.
-    Chunk(ChunkFrame),
+    /// A `chunk` frame (manifest or data) with its raw binary tail (SCHEMA §1):
+    /// a data frame's tail carries the bytes its `bin` section addresses, which
+    /// the bulk assembler concatenates by `byteOffset` (SCHEMA §5.2).
+    Chunk(ChunkFrame, Vec<u8>),
     /// A `credit` frame (normally Rust → worker; surfaced for completeness).
     Credit(CreditFrame),
+}
+
+/// An in-flight request handle: the assigned correlation `id` and a future for
+/// the terminal `resp` (see [`ProtocolClient::start_request`]).
+pub struct InflightRequest {
+    /// The Rust-assigned monotonic correlation id (SCHEMA §2). Match `event` /
+    /// `chunk` frames by this and pass it to [`ProtocolClient::cancel`].
+    pub id: u64,
+    rx: oneshot::Receiver<Result<RespWithBin, ProtocolError>>,
+}
+
+impl InflightRequest {
+    /// Awaits the terminal `resp` (its raw binary tail dropped).
+    /// [`ProtocolError::ConnectionLost`] if the worker connection dies before the
+    /// response arrives (SCHEMA §8 — no resync).
+    pub async fn response(self) -> Result<RespFrame, ProtocolError> {
+        self.response_with_bin().await.map(|(resp, _)| resp)
+    }
+
+    /// Awaits the terminal `resp` **with** its raw binary tail (SCHEMA §1) — for a
+    /// verb that inlines a small bulk payload in the `resp` tail (SCHEMA §5.2).
+    pub async fn response_with_bin(self) -> Result<RespWithBin, ProtocolError> {
+        match self.rx.await {
+            Ok(result) => result,
+            Err(_) => Err(ProtocolError::ConnectionLost("response channel dropped")),
+        }
+    }
 }
 
 /// Async handle to a running worker connection.
@@ -90,7 +136,7 @@ impl ProtocolClient {
             )));
         }
 
-        let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
+        let pending: PendingMap = Arc::new(Mutex::new(Pending::default()));
         let (events_tx, _) = broadcast::channel(256);
         let (cmd_tx, cmd_rx) = mpsc::channel::<RawFrame>(64);
 
@@ -127,29 +173,51 @@ impl ProtocolClient {
         verb: &str,
         args: serde_json::Value,
     ) -> Result<RespFrame, ProtocolError> {
+        self.start_request(verb, args, Lane::Control)
+            .await?
+            .response()
+            .await
+    }
+
+    /// Send a `req` and return an [`InflightRequest`] carrying the assigned
+    /// correlation `id` (for filtering `event`/`chunk` frames on
+    /// [`subscribe`](Self::subscribe) and for [`cancel`](Self::cancel)) plus a
+    /// future for the terminal `resp`.
+    ///
+    /// A streaming verb (`ExecutePlan`) needs the id *before* the terminal
+    /// arrives so its interleaved `planStep` events can be matched — hence the
+    /// split from [`request`](Self::request), which hides the id.
+    pub async fn start_request(
+        &self,
+        verb: &str,
+        args: serde_json::Value,
+        lane: Lane,
+    ) -> Result<InflightRequest, ProtocolError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let frame = Frame::Req(ReqFrame {
             v: PROTOCOL_VERSION,
             id,
             verb: verb.to_string(),
-            lane: Lane::Control,
+            lane,
             args,
             bin: None,
         });
         let raw = RawFrame::json_only(frame.to_json_vec()?);
 
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(id, tx);
+        {
+            let mut pending = self.pending.lock().unwrap();
+            if pending.closed {
+                return Err(ProtocolError::ConnectionLost("connection closed"));
+            }
+            pending.waiters.insert(id, tx);
+        }
 
         if self.cmd_tx.send(raw).await.is_err() {
-            self.pending.lock().unwrap().remove(&id);
+            self.pending.lock().unwrap().waiters.remove(&id);
             return Err(ProtocolError::ConnectionLost("writer task ended"));
         }
-
-        match rx.await {
-            Ok(result) => result,
-            Err(_) => Err(ProtocolError::ConnectionLost("response channel dropped")),
-        }
+        Ok(InflightRequest { id, rx })
     }
 
     /// [`request`](Self::request) with a Rust-side deadline (SCHEMA §8 timeouts
@@ -213,7 +281,7 @@ impl std::fmt::Debug for ProtocolClient {
             .field("next_id", &self.next_id.load(Ordering::Relaxed))
             .field(
                 "pending",
-                &self.pending.lock().map(|m| m.len()).unwrap_or(0),
+                &self.pending.lock().map(|m| m.waiters.len()).unwrap_or(0),
             )
             .finish_non_exhaustive()
     }
@@ -324,9 +392,9 @@ fn dispatch(frame: &RawFrame, pending: &PendingMap, events_tx: &broadcast::Sende
     };
     match parsed {
         Frame::Resp(resp) => {
-            let waiter = pending.lock().unwrap().remove(&resp.id);
+            let waiter = pending.lock().unwrap().waiters.remove(&resp.id);
             if let Some(tx) = waiter {
-                let _ = tx.send(Ok(resp));
+                let _ = tx.send(Ok((resp, frame.bin.clone())));
             } else {
                 eprintln!("onecad-protocol: resp for unknown id {}", resp.id);
             }
@@ -338,7 +406,7 @@ fn dispatch(frame: &RawFrame, pending: &PendingMap, events_tx: &broadcast::Sende
             let _ = events_tx.send(WorkerEvent::Event(e));
         }
         Frame::Chunk(c) => {
-            let _ = events_tx.send(WorkerEvent::Chunk(c));
+            let _ = events_tx.send(WorkerEvent::Chunk(c, frame.bin.clone()));
         }
         Frame::Credit(c) => {
             let _ = events_tx.send(WorkerEvent::Credit(c));
@@ -354,7 +422,8 @@ fn dispatch(frame: &RawFrame, pending: &PendingMap, events_tx: &broadcast::Sende
 
 fn fail_all(pending: &PendingMap) {
     let mut map = pending.lock().unwrap();
-    for (_, tx) in map.drain() {
+    map.closed = true; // latch first: a racing request now fails fast, never hangs.
+    for (_, tx) in map.waiters.drain() {
         let _ = tx.send(Err(ProtocolError::ConnectionLost(
             "worker connection closed",
         )));
@@ -560,6 +629,37 @@ mod tests {
         for h in handles {
             let result = h.await.unwrap();
             assert!(matches!(result, Err(ProtocolError::ConnectionLost(_))));
+        }
+    }
+
+    #[tokio::test]
+    async fn request_after_connection_closed_fails_fast_not_hang() {
+        // Regression: once the reader tears down (EOF), a NEW request must fail
+        // fast rather than register a oneshot nothing will ever fire (which hung
+        // the worker manager's post-crash `discard_prepared`). Every request here
+        // must resolve within the deadline — a timeout means the latch regressed.
+        let (client_io, server_io) = tokio::io::duplex(4096);
+        let mut server = MockServer {
+            io: server_io,
+            rbuf: BytesMut::new(),
+        };
+        server.write_frame(&hello_frame()).await;
+        let (r, w) = tokio::io::split(client_io);
+        let client = ProtocolClient::connect(r, w).await.unwrap();
+        drop(server); // EOF → reader latches `closed`.
+
+        // Whether the request races the teardown (fired by `fail_all`) or arrives
+        // after the latch (rejected at registration), it must resolve ConnectionLost
+        // within the deadline — a timeout means the closed-latch regressed.
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            client.request("X", json!({})),
+        )
+        .await
+        {
+            Ok(Err(ProtocolError::ConnectionLost(_))) => {}
+            Ok(other) => panic!("no server should respond: {other:?}"),
+            Err(_) => panic!("request hung — closed-latch regression"),
         }
     }
 

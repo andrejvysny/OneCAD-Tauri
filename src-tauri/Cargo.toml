@@ -21,6 +21,7 @@ tokio = { version = "1", default-features = false }
 tokio-util = { version = "0.7", default-features = false }
 bytes = "1"
 zip = "2"
+sha2 = "0.10"
 
 [package]
 name = "onecad"
@@ -63,7 +64,24 @@ uuid = { workspace = true }
 # R-WP10: the geometry-backend seam (MeshProvider / AdoptingEngine) implements the
 # core `#[async_trait]` GeometryEngine, so the app crate needs async-trait too.
 async-trait = { workspace = true }
+# R-WP11: verify the SHA-256 integrity of assembled MESH1 bulk streams (SCHEMA §5.2).
+sha2 = { workspace = true }
 
 [dev-dependencies]
-# Save/reopen round-trip tests for the open/save command path.
+# Save/reopen round-trip tests for the open/save command path; chaos drills spawn
+# the built stub bin from a scratch dir.
 tempfile = "3"
+# R-WP11 chaos/convergence/smoke integration tests drive the WorkerManager over
+# the real stub/worker with core plan types, and validate MESH1 headers.
+onecad-core = { workspace = true }
+onecad-protocol = { workspace = true, features = ["client"] }
+uuid = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = [
+    "rt-multi-thread",
+    "macros",
+    "process",
+    "io-util",
+    "time",
+    "sync",
+] }

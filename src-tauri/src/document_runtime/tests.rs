@@ -458,3 +458,34 @@ async fn save_then_reopen_round_trips_the_document() {
     );
     assert!(!reopened.is_dirty());
 }
+
+#[tokio::test]
+async fn edit_during_regen_supersedes_via_live_fencing() {
+    // R-WP11 fencing-live: begin_regen captures the tokens; an edit that lands
+    // before the (lock-free) drive commits bumps the shared FencingCell, so the
+    // executor's gate supersedes the stale prepare — nothing partial is published.
+    let mut rt = runtime_with(Arc::new(FakeBackend::new()));
+    rt.apply(add_extrude(0x10, 25.0)).unwrap();
+
+    let prepared = rt
+        .begin_regen(RegenRequest::ToEnd { from: 0 })
+        .expect("non-empty plan");
+    // The concurrent edit (bumps the fencing revision the gate reads).
+    rt.apply(add_extrude(0x11, 10.0)).unwrap();
+    let driven = prepared.drive(CancelToken::new()).await;
+    let report = rt.finish_regen(driven);
+
+    assert!(
+        matches!(report.outcome, Outcome::Superseded),
+        "the stale prepare must be superseded, got {:?}",
+        report.outcome
+    );
+    assert!(report.document_change().is_none(), "nothing published");
+
+    // A fresh regen at the new revision converges to both bodies.
+    let converge = rt
+        .run_regen(RegenRequest::ToEnd { from: 0 }, CancelToken::new())
+        .await;
+    assert!(matches!(converge.outcome, Outcome::Published(_)));
+    assert_eq!(rt.projection().bodies.len(), 2, "converged after supersede");
+}

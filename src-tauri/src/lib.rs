@@ -40,11 +40,17 @@ use crate::state::AppState;
 /// distinct type per call, so it is type-erased for the scheduler's `select!`).
 type BoxFut = Pin<Box<dyn Future<Output = Outcome> + Send>>;
 
-/// Builds the app-layer regen driver (plan "app layer runs the executor"): for one
-/// [`RegenDirective`] it locks the single-writer runtime, drives the executor via
-/// [`DocumentRuntime::run_regen`], and emits the post-regen `document-changed` +
-/// `projection-updated` events. Debounce/coalesce/preview-priority stay in the
-/// [`RegenScheduler`] (policy only); this is the executor side of the seam.
+/// Builds the app-layer regen driver (plan "app layer runs the executor").
+///
+/// **Fencing goes live (R-WP11):** the driver holds the single-writer lock only
+/// for the two short phases that mutate the document — phase 1
+/// ([`begin_regen`](DocumentRuntime::begin_regen): compile the plan + clone a
+/// scratch session) and phase 3 ([`finish_regen`](DocumentRuntime::finish_regen):
+/// commit or supersede). The slow worker IO (phase 2,
+/// [`PreparedRegen::drive`](crate::document_runtime::PreparedRegen::drive)) runs
+/// with the lock **released**, so an edit can land during it, advance the fencing
+/// tokens, and supersede the stale prepare via the executor's revision gate.
+/// Debounce/coalesce/preview-priority stay in the [`RegenScheduler`] (policy only).
 fn make_regen_driver(
     runtime: Arc<Mutex<Option<DocumentRuntime>>>,
     app: AppHandle,
@@ -53,12 +59,26 @@ fn make_regen_driver(
         let runtime = runtime.clone();
         let app = app.clone();
         Box::pin(async move {
-            let (report, projection) = {
+            // Phase 1 (locked): compile the plan + clone the scratch session.
+            let prepared = {
                 let mut guard = runtime.lock().await;
                 let Some(rt) = guard.as_mut() else {
                     return Outcome::NoOp; // document closed while the job was queued.
                 };
-                let report = rt.run_regen(directive.request, directive.cancel).await;
+                rt.begin_regen(directive.request)
+            };
+            let Some(prepared) = prepared else {
+                return Outcome::NoOp; // empty plan.
+            };
+            // Phase 2 (UNLOCKED): drive the worker; concurrent edits may supersede.
+            let driven = prepared.drive(directive.cancel).await;
+            // Phase 3 (locked): commit iff still current, then emit events.
+            let (report, projection) = {
+                let mut guard = runtime.lock().await;
+                let Some(rt) = guard.as_mut() else {
+                    return Outcome::NoOp; // document closed during the worker IO.
+                };
+                let report = rt.finish_regen(driven);
                 let projection = rt.projection();
                 (report, projection)
             };
