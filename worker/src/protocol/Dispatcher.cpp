@@ -4,6 +4,8 @@
 #include <unistd.h>
 #include <utility>
 
+#include <Standard_Failure.hxx>
+
 #include "protocol/Frame.h"
 #include "util/Log.h"
 
@@ -57,6 +59,16 @@ Envelope Dispatcher::execute(const Job& job, const std::function<void(Envelope&)
 
     try {
         return it->second(req, job.bin, ctx);
+    } catch (const Standard_Failure& f) {
+        // OCCT exceptions derive from Standard_Transient, NOT std::exception, so
+        // they'd otherwise escape this boundary -> std::terminate. Same recoverable
+        // op-failure contract as below (SCHEMA §8 OP_FAILED): session untouched.
+        const char* msg = f.GetMessageString();
+        const std::string message = (msg && *msg) ? msg : f.DynamicType()->Name();
+        WLOG_ERROR("handler for verb '%s' threw Standard_Failure: %s", req.verb.c_str(),
+                   message.c_str());
+        return Envelope::error_response(
+            req.id, ErrorInfo{"OP_FAILED", message, /*retriable=*/false});
     } catch (const std::exception& ex) {
         WLOG_ERROR("handler for verb '%s' threw: %s", req.verb.c_str(), ex.what());
         // A handler failure is a recoverable op failure (SCHEMA §8 OP_FAILED):

@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include <Standard_Failure.hxx>
+
 #include "nlohmann/json.hpp"
 #include "protocol/Dispatcher.h"
 #include "protocol/Envelope.h"
@@ -17,6 +19,7 @@
 
 using nlohmann::json;
 using onecad::CancelToken;
+using onecad::protocol::Dispatcher;
 using onecad::protocol::Envelope;
 using onecad::protocol::HandlerContext;
 using onecad::session::Session;
@@ -149,7 +152,7 @@ void test_boolean_grow_shrink_bodyid() {
         PlanRun r = run_plan(s, 1, ops, json::array({"a", "b", "c", "d"}));
         accept(s, 1);
         const double v = body_volume(s, "body_op1");
-        check(v > 4000.0 + 1.0, "corpus c: Fuse grows body (>4001)");
+        check_near(v, 4064.0, 1.0, "corpus c: Fuse grows body to 4064");
         check(s.bodies_copy().size() == 1, "corpus c: Fuse keeps a single body");
         check(s.bodies_copy().contains("body_op1"), "corpus c: Fuse preserves target BodyId");
     }
@@ -166,7 +169,7 @@ void test_boolean_grow_shrink_bodyid() {
         PlanRun r = run_plan(s, 1, ops, json::array({"a", "b", "c", "d"}));
         accept(s, 1);
         const double v = body_volume(s, "body_op1");
-        check(v < 4000.0 - 1.0 && v > 0.0, "corpus c: Cut shrinks body (<3999)");
+        check_near(v, 3936.0, 1.0, "corpus c: Cut shrinks body to 3936");
         check(s.bodies_copy().contains("body_op1"), "corpus c: Cut preserves target BodyId");
     }
 }
@@ -227,6 +230,26 @@ void test_cancellation_session_intact() {
     check(h.history_prefix_hash == kEmpty, "cancel: head token unchanged");
 }
 
+// --- Standard_Failure at the Dispatcher::execute boundary -> recoverable
+// OP_FAILED, not std::terminate (SCHEMA §8; OCCT throws derive from
+// Standard_Transient, not std::exception, so they need their own catch). ---
+void test_dispatcher_occt_exception_recoverable() {
+    Dispatcher d;
+    d.register_verb("__ThrowOcct", [](const Envelope&, const std::vector<std::uint8_t>&,
+                                      HandlerContext&) -> Envelope {
+        throw Standard_Failure("injected OCCT failure");
+    });
+    Envelope resp = d.dispatch_once(Envelope::request(1, "__ThrowOcct"));
+    check(resp.error.has_value() && resp.error->code == "OP_FAILED",
+          "OCCT Standard_Failure at dispatcher boundary yields OP_FAILED");
+
+    // Dispatcher (and by extension the session) stays usable afterwards.
+    d.register_verb("__Noop", [](const Envelope& req, const std::vector<std::uint8_t>&,
+                                 HandlerContext&) { return Envelope::ok_response(req.id); });
+    Envelope ok = d.dispatch_once(Envelope::request(2, "__Noop"));
+    check(ok.ok.has_value() && *ok.ok, "dispatcher stays usable after an OCCT throw");
+}
+
 }  // namespace
 
 int main() {
@@ -235,6 +258,7 @@ int main() {
     test_boolean_grow_shrink_bodyid();
     test_standalone_boolean_and_delta_bodyid();
     test_cancellation_session_intact();
+    test_dispatcher_occt_exception_recoverable();
     if (g_failures == 0) std::fprintf(stderr, "wp5_plan: OK\n");
     return g_failures;
 }

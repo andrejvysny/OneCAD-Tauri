@@ -21,7 +21,12 @@ Tracks: W = C++ worker, R = Rust core, F = frontend. Gates in **bold**.
 - [x] R-WP7 regen executor+engine trait+FakeEngine: golden fixtures a–j, 200/200 tests, SHA-256 historyPrefixHash (normative — W-WP4 notified to match), fencing via RevisionGate — provisional PASS, independent review in flight
 - [x] R-WP8 scheduler: driver-seam (policy only, no session ownership), preview>regen priority, latest-wins, 120ms debounce, cancel-timeout guard, 10/10 virtual-time tests — GATE PASSED
 - [x] R-WP9 file IO: atomic v2 container, attack-surface caps (fuzz: no panics), migration registry + read-only policy, autosave/marker layout, 262/262 — GATE PASSED (verified). Decisions accepted: ops.jsonl derived (document.json authoritative), sketches inline (no sketches/ dir — plan divergence, sound).
-- [ ] R-WP10 app shell DTOs → **R-WP11 WorkerManager+chaos (RISKY)** — HELD at pause point
+- [ ] R-WP10 app shell DTOs (Wave A, in flight)
+- [ ] **R-WP11 WorkerManager+chaos (RISKY)** (Wave B, after R-WP10)
+- [x] **W-WP5-R independent review**: APPROVE-WITH-FIXES, D1 UPHELD (body_<opId> deterministic+collision-safe). Verified: atomicity/fencing, opaque tokens (no op hashing), descriptor reuse by construction (no fork), MESH1 424B byte-identical probe, determinism 2× fresh runs, stderr-only. Findings: (1) MINOR Standard_Failure not caught at Dispatcher boundary → W-WP5-F fix in flight; (2) NOTE split binds Modified().First() unscored → W-WP6 MUST close; (3) NOTE fast-mode parallel TopoKey ordering unverified → W-WP6 must diff determinism-vs-fast TopoKey tables on corpus; (4) NOTE volumes 4064/3936 bounded not pinned → W-WP5-F; (5) NOTE scratch planStep frames stamped base snapshotId not preparedSnapshotId — optional SCHEMA §3.4 tightening, deferred.
+- [x] W-WP5-F fixes: Standard_Failure catch at Dispatcher boundary (GetMessageString fallback DynamicType name) + injected-throw recoverability test + Fuse/Cut volumes pinned 4064/3936 — 46/46 verified by orchestrator. **W-WP5 gate CLOSED.**
+- [ ] **W-WP6 ladder+scoring+Fillet/Chamfer/Revolve+ToNext/ToFace+ExportStep (RISKY)** (Wave B, gated on W-WP5-R clean)
+- [ ] F-WP8 real-backend swap (Wave C, needs R-WP10+11)
 - [x] W-WP2 kernel port + PlaneGCS vendor: 12 kernel + 8 loop + 2 modeling files, ctest 8/8, elementmap byte-parity PROVEN w/ negative control — GATE PASSED (loop/modeling copied-not-compiled pending sketch stack; proto_loop_detector/face_builder deferred to W-WP3)
 - [x] W-WP3a sketch stack port: 28 files/8.7k LOC Qt-stripped byte-faithful, loop+modeling compiled (BooleanMode.h adaptation), ctest 17/17, terminator-parity gates w/ negative control — GATE PASSED (verified: zero Qt tokens outside comments). Flag: ConstraintApplicability+SelectionTypes ported into worker for test parity — UI/selection layer, dedup vs Rust selection.rs later.
 - [x] W-WP3b solver lane + verbs: 2-lane dispatcher, latest-wins w/ CANCELLED/superseded terminals, WireSketch translator, RegionId byte-match vs Rust (r_fbf1e34acfb51ba4), **BENCHMARK GATE PASS** (solver p95 2.50ms / rtt p95 2.66ms @200ents; busy-kernel invariant), 26 ctests — GATE PASSED. V1 limits doc'd (holes not subtracted in preview fill, arc handles, redundant-status quirk).
@@ -54,11 +59,16 @@ Tracks: W = C++ worker, R = Rust core, F = frontend. Gates in **bold**.
 - [ ] Playwright e2e, perf baselines (1–5M tri bridge, solver tails), attack-surface tests, WebGPU spike, tauri-specta
 - [ ] Backlog: Shell/Loft/Sweep/Patterns/Mirror, checkpoint heuristics/scrubbing, expressions, v1 importer, Channel tessellation
 
-## PAUSE POINT (user-requested 2026-07-17)
-- After W-WP5 + R-WP8 + R-WP9 land and are gate-reviewed: STOP. User reviews everything before further launches.
+## Wave plan (user-approved 2026-07-17, pause resolved)
+- Cadence: run Wave A→C uninterrupted to M2 gate; consolidated user review at M2.
+- Wave A (parallel): W-WP5-R independent review + R-WP10 app shell.
+- Wave B: W-WP6 (after W-WP5-R clean) ∥ R-WP11 (after R-WP10).
+- Wave C: F-WP8 → M2 gate → /codex-implementation-review (approved for M2 AND M4) → M3 packaging.
+- D1 APPROVED: worker-minted deterministic BodyIds `body_<opId>` (splits later `body_<opId>:<k>`); Rust adopts from bodyEvents + validates; SCHEMA amendment in Wave A.
+- D2: ExportStep lands in W-WP6 (M2 needs it). D3: primary.topoKey removed in W-WP6.
 
 ## Execution rules
 - Orchestrator: decisions/review only. WPs → Opus 4.8 subagents.
 - RISKY WP = extra independent review pass.
 - protocol/ or Descriptor.* or serde schema change = cross-track sign-off + fixture bump.
-- No commits without explicit user ask.
+- Git: commit at gate boundaries (user-approved 2026-07-17). Initial commit e14774d.
