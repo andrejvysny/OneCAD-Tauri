@@ -1,9 +1,14 @@
 /*
- * In-memory CadClient — drives the full start screen UI with no backend.
+ * In-memory CadClient — drives the full start screen + editor UI with no backend.
  *
  * Seeded with a spread of names + dates so name-sort (A→Z), date-sort (newest
  * first) and substring search are all visibly exercised. Doc operations resolve
  * after a short simulated latency so the store's loading states are real.
+ *
+ * The sketch SOLVER lane + the drag-time PREVIEW lane live in the shared
+ * `localSolver` module (F-WP8 seam) so the real `tauriClient` reuses them
+ * verbatim. This file owns the mock's DOCUMENT model (synthetic bodies + feature
+ * timeline + undo/redo); the tauri client replaces that half with real commands.
  */
 import type { CadClient } from "./client";
 import type {
@@ -11,28 +16,13 @@ import type {
   BodyMeshRef,
   DocumentChange,
   DocumentSnapshot,
-  EnterSketchTarget,
-  ExtrudeParams,
   FeatureRecord,
-  FinishSketchResult,
   Lod,
   OperationOp,
-  PreviewDraft,
-  PreviewParams,
-  PreviewResult,
-  PreviewSession,
   RecentProject,
-  SketchConstraint,
-  SketchEntity,
-  SketchPlane,
-  SketchRegion,
-  SketchSession,
-  SketchUpsertResult,
-  Unsubscribe,
 } from "./types";
 import { makeBoxMesh, makeCylinderMesh, makeExtrudeBodyMesh } from "./mockMeshes";
-import { detectRegions, planeFor, solveDof } from "./mockSketch";
-import { profileFromRegion, type PrismProfile } from "@/tools/preview/prismPreview";
+import { createLocalSolverLane } from "./localSolver";
 
 const LATENCY_MS = 120;
 const MESH_LATENCY_MS = 30;
@@ -118,24 +108,6 @@ export function mockMeshKey(bodyId: string, lod: Lod, generation = 1): string {
 
 const docChangeListeners = new Set<(c: DocumentChange) => void>();
 
-// ── In-memory sketch sessions (mock solver lane state) ───────────────────────
-
-const sketchSessions = new Map<string, SketchSession>();
-const sketchRevisions = new Map<string, number>();
-let nextMockSketchSeq = 1;
-
-/** Deep clone so callers can't mutate the mock's stored session. */
-function cloneSession(s: SketchSession): SketchSession {
-  return JSON.parse(JSON.stringify(s)) as SketchSession;
-}
-
-/** Test seam: forget all sketch state so a fresh sketch starts empty. */
-export function resetMockSketches(): void {
-  sketchSessions.clear();
-  sketchRevisions.clear();
-  nextMockSketchSeq = 1;
-}
-
 /**
  * Simulate a worker `document-changed` event (the demo / seed fires this so the
  * viewport ingests through the SAME onDocumentChanged path the real worker uses).
@@ -146,11 +118,11 @@ export function emitMockDocumentChanged(change: DocumentChange): void {
 
 // ── Mock document model: synthetic bodies + feature timeline + undo/redo ───────
 //
-// The mock is now a tiny parametric document: applyOperation / endPreview(commit)
-// append feature entries and synthesize bodies; undo/redo restore whole-document
-// snapshots (simple + always correct for a mock). Body meshes live here keyed by
-// bodyId (getBodyMesh reads them, falling back to the seed box/cylinder). All
-// shapes mirror SCHEMA §7.3 so the F-WP8 swap is a no-op for the tool layer.
+// applyOperation / endPreview(commit) append feature entries and synthesize
+// bodies; undo/redo restore whole-document snapshots (simple + always correct for
+// a mock). Body meshes live here keyed by bodyId (getBodyMesh reads them, falling
+// back to the seed box/cylinder). All shapes mirror SCHEMA §7.3 so the F-WP8 swap
+// is a no-op for the tool layer.
 
 /** Base timeline — MUST mirror documentStore.seedMockDocument().features. */
 const MOCK_BASE_FEATURES: FeatureRecord[] = [
@@ -169,13 +141,9 @@ let mockFeatures: FeatureRecord[] = MOCK_BASE_FEATURES.map(cloneFeature);
 let mockRevision = 5; // matches the seed projection revision
 let nextBodySeq = 2; // body1 is the seed body
 let nextFeatureSeq = 100;
-let nextSessionSeq = 1;
 
 /** featureId → bodyId, so a parametric edit rebuilds the SAME body. */
 const featureBodies = new Map<string, string>();
-
-/** Finished regions per sketch (cached by finishSketch) for extrude synthesis. */
-const finishedRegions = new Map<string, SketchRegion[]>();
 
 interface DocSnap {
   label: string;
@@ -223,37 +191,10 @@ function nextFeatureId(): string {
   return `mf${nextFeatureSeq++}`;
 }
 
-/** Resolve an extrude's region → {plane, profile}. Falls back to a 40×40 square. */
-function resolveExtrudeInput(
-  sketchId: string | undefined,
-  regionId: string | undefined,
-): { plane: SketchPlane; profile: PrismProfile } {
-  const regions = sketchId ? finishedRegions.get(sketchId) : undefined;
-  const region = regions?.find((r) => r.regionId === regionId) ?? regions?.[0];
-  const plane = (sketchId && sketchSessions.get(sketchId)?.plane) || planeFor("XY");
-  const profile = region ? profileFromRegion(region) : null;
-  return { plane, profile: profile ?? fallbackSquareProfile() };
-}
-
-/** A default 40×40 square profile on the plane, so a demo extrude always shows. */
-function fallbackSquareProfile(): PrismProfile {
-  const s = 20;
-  const ring: [number, number][] = [
-    [-s, -s],
-    [s, -s],
-    [s, s],
-    [-s, s],
-  ];
-  const positions = [0, 0, ...ring.flat()];
-  const indices: number[] = [];
-  for (let i = 0; i < ring.length; i++) indices.push(0, 1 + i, 1 + ((i + 1) % ring.length));
-  return { ring, cap: { positions, indices } };
-}
-
 /** Apply one op forward (mutates features + bodies); returns the body diff. */
 function mutateOp(op: OperationOp): { changed: string[]; removed: string[]; label: string } {
   if (op.opType === "Extrude") {
-    const { plane, profile } = resolveExtrudeInput(op.sketchId, op.regionId);
+    const { plane, profile } = lane.resolveExtrudeInput(op.sketchId, op.regionId);
     const distance = op.params.distance ?? 10;
     const editing = op.featureId !== undefined && featureBodies.has(op.featureId);
     const featureId = op.featureId ?? nextFeatureId();
@@ -316,56 +257,38 @@ function noopResult(): ApplyOperationResult {
   };
 }
 
-// ── Preview sessions (two-level preview) ──────────────────────────────────────
-
-interface PreviewSessionState {
-  opType: PreviewDraft["opType"];
-  previewBodyId: string;
-  sketchId?: string;
-  regionId?: string;
-  plane: SketchPlane;
-  profile: PrismProfile;
-  latestParams: PreviewParams;
-  lastEpoch: number;
-}
-const previewSessions = new Map<string, PreviewSessionState>();
-const previewListeners = new Set<(r: PreviewResult) => void>();
-
-function emitPreviewResult(r: PreviewResult): void {
-  for (const cb of [...previewListeners]) cb(r);
+/** Commit one op through the local model + emit its document-changed (the lane's
+ *  `commit` seam + the client's own `applyOperation` share this path). */
+function commitAndEmit(op: OperationOp): Promise<ApplyOperationResult> {
+  return wait().then(() => {
+    const res = commitOp(op);
+    emitMockDocumentChanged({
+      revision: res.revision,
+      changedBodies: res.changedBodies,
+      removedBodies: res.removedBodies,
+    });
+    return res;
+  });
 }
 
-/** Build the concrete Extrude op a committed preview session materializes. */
-function buildOpFromSession(s: PreviewSessionState): OperationOp {
-  const distance = Number(s.latestParams.distance ?? 10);
-  const symmetric = s.latestParams.extrudeMode === "Symmetric";
-  const featureId = typeof s.latestParams.featureId === "string" ? s.latestParams.featureId : undefined;
-  const params: ExtrudeParams = {
-    distance,
-    extrudeMode: symmetric ? "Symmetric" : "Blind",
-    booleanMode: "NewBody",
-  };
-  return {
-    opType: "Extrude",
-    sketchId: s.sketchId ?? "",
-    regionId: s.regionId ?? "",
-    featureId,
-    inputs: [{ primary: { bodyId: "", kind: "face" }, anchor: {} }],
-    params,
-  };
+// ── Shared sketch-solver + preview lane (F-WP8 seam; same module the tauri
+//    client uses). Commit routes into the local document model above. ──────────
+const lane = createLocalSolverLane({ commit: commitAndEmit, latencyMs: () => mockLatency });
+
+/** Test seam: forget all sketch state so a fresh sketch starts empty. */
+export function resetMockSketches(): void {
+  lane.resetSketches();
 }
 
 /** Test seam: forget the whole mock document (bodies, features, undo, sessions). */
 export function resetMockDocument(): void {
   syntheticBodies.clear();
   featureBodies.clear();
-  finishedRegions.clear();
-  previewSessions.clear();
+  lane.resetPreview();
   mockFeatures = MOCK_BASE_FEATURES.map(cloneFeature);
   mockRevision = 5;
   nextBodySeq = 2;
   nextFeatureSeq = 100;
-  nextSessionSeq = 1;
   undoStack.length = 0;
   redoStack.length = 0;
 }
@@ -400,85 +323,15 @@ export const mockClient: CadClient = {
     return syntheticBodies.get(bodyId) ?? meshForBody(bodyId);
   },
 
-  onDocumentChanged(cb): Unsubscribe {
+  onDocumentChanged(cb): () => void {
     docChangeListeners.add(cb);
     return () => docChangeListeners.delete(cb);
   },
 
-  // ── Model operations + two-level preview (SCHEMA §7.3 / NEW_SPEC §15) ──────
+  // ── Model operations (SCHEMA §7.3) — the mock's local document model ───────
 
-  async applyOperation(op: OperationOp): Promise<ApplyOperationResult> {
-    await wait();
-    const res = commitOp(op);
-    emitMockDocumentChanged({
-      revision: res.revision,
-      changedBodies: res.changedBodies,
-      removedBodies: res.removedBodies,
-    });
-    return res;
-  },
-
-  async beginPreview(draft: PreviewDraft): Promise<PreviewSession> {
-    const sessionId = `pv-${nextSessionSeq++}`;
-    const previewBodyId = `preview:${sessionId}`;
-    const { plane, profile } = resolveExtrudeInput(draft.sketchId, draft.regionId);
-    previewSessions.set(sessionId, {
-      opType: draft.opType,
-      previewBodyId,
-      sketchId: draft.sketchId,
-      regionId: draft.regionId,
-      plane,
-      profile,
-      latestParams: { ...draft.params },
-      lastEpoch: 0,
-    });
-    return { sessionId, previewBodyId };
-  },
-
-  updatePreview(sessionId: string, params: PreviewParams, epoch: number): void {
-    const s = previewSessions.get(sessionId);
-    if (!s) return;
-    s.latestParams = { ...s.latestParams, ...params };
-    s.lastEpoch = epoch;
-    // Only Extrude produces a drag-time L2 mesh; fillet L2 is debounced on commit.
-    if (s.opType !== "Extrude") return;
-    const distance = Number(s.latestParams.distance ?? 0);
-    const bodyId = s.previewBodyId;
-    setTimeout(() => {
-      if (!previewSessions.has(sessionId)) return; // session ended → drop stale
-      const mesh = makeExtrudeBodyMesh(s.profile, s.plane, distance);
-      emitPreviewResult({ sessionId, epoch, bodyId, mesh });
-    }, mockLatency);
-  },
-
-  async endPreview(sessionId: string, commit: boolean): Promise<ApplyOperationResult | null> {
-    const s = previewSessions.get(sessionId);
-    previewSessions.delete(sessionId);
-    if (!s || !commit) {
-      await wait(0);
-      return null;
-    }
-    await wait();
-    const op = buildOpFromSession(s);
-    const res = commitOp(op);
-    emitMockDocumentChanged({
-      revision: res.revision,
-      changedBodies: res.changedBodies,
-      removedBodies: res.removedBodies,
-    });
-    // Deliver the committed exact mesh under the FINAL epoch so the tool can
-    // reconcile (drop L1 only once the matching-epoch result exists).
-    const committedBodyId = res.changedBodies[0]?.bodyId;
-    if (committedBodyId) {
-      const mesh = syntheticBodies.get(committedBodyId) ?? meshForBody(committedBodyId);
-      emitPreviewResult({ sessionId, epoch: s.lastEpoch, bodyId: committedBodyId, mesh, committed: true });
-    }
-    return res;
-  },
-
-  onPreviewResult(cb: (r: PreviewResult) => void): Unsubscribe {
-    previewListeners.add(cb);
-    return () => previewListeners.delete(cb);
+  applyOperation(op: OperationOp): Promise<ApplyOperationResult> {
+    return commitAndEmit(op);
   },
 
   async undo(): Promise<ApplyOperationResult> {
@@ -515,70 +368,16 @@ export const mockClient: CadClient = {
     return res;
   },
 
-  // ── Sketch solver lane (mock) ────────────────────────────────────────────
+  // ── Sketch solver lane + two-level preview (shared local lane) ─────────────
 
-  async enterSketch(target: EnterSketchTarget): Promise<SketchSession> {
-    await wait(MESH_LATENCY_MS);
-    let id: string;
-    let planeKind: SketchSession["plane"]["kind"] = "XY";
-    if (typeof target === "string") {
-      id = target;
-    } else {
-      planeKind = target.newOnPlane;
-      id = target.sketchId ?? `sk-${nextMockSketchSeq++}`;
-    }
-    let session = sketchSessions.get(id);
-    if (!session) {
-      session = {
-        sketchId: id,
-        plane: planeFor(planeKind),
-        entities: [],
-        constraints: [],
-        dof: 0,
-        status: "FullyConstrained",
-      };
-      sketchSessions.set(id, session);
-      sketchRevisions.set(id, 0);
-    }
-    return cloneSession(session);
-  },
-
-  async sketchUpsert(
-    sketchId: string,
-    entities: SketchEntity[],
-    constraints: SketchConstraint[],
-  ): Promise<SketchUpsertResult> {
-    // Near-synchronous: drawing must feel instant; the DOF badge refreshes live.
-    await wait(0);
-    const prev = sketchSessions.get(sketchId);
-    const { dof, status } = solveDof(entities, constraints);
-    const session: SketchSession = {
-      sketchId,
-      plane: prev?.plane ?? planeFor("XY"),
-      entities,
-      constraints,
-      dof,
-      status,
-    };
-    sketchSessions.set(sketchId, session);
-    const rev = (sketchRevisions.get(sketchId) ?? 0) + 1;
-    sketchRevisions.set(sketchId, rev);
-    // The mock is an identity solve (echoes positions) — nothing moved.
-    return { sketchId, sketchRevision: rev, dof, status, solvedPositions: {} };
-  },
-
-  async finishSketch(sketchId: string): Promise<FinishSketchResult> {
-    await wait(MESH_LATENCY_MS);
-    const session = sketchSessions.get(sketchId);
-    const regions = session ? detectRegions(session.entities) : [];
-    finishedRegions.set(sketchId, regions); // cache for extrude synthesis
-    return { regions };
-  },
-
-  async cancelSketch(_sketchId: string): Promise<void> {
-    await wait(0);
-    // Real backend discards scratch; the mock keeps the last committed session.
-  },
+  enterSketch: lane.enterSketch,
+  sketchUpsert: lane.sketchUpsert,
+  finishSketch: lane.finishSketch,
+  cancelSketch: lane.cancelSketch,
+  beginPreview: lane.beginPreview,
+  updatePreview: lane.updatePreview,
+  endPreview: lane.endPreview,
+  onPreviewResult: lane.onPreviewResult,
 };
 
 function basename(path: string): string {

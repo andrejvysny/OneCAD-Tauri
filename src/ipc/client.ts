@@ -29,6 +29,7 @@ import type {
   Unsubscribe,
 } from "./types";
 import { mockClient } from "./mockClient";
+import { createTauriClient } from "./tauriClient";
 
 export interface CadClient {
   /** Recent projects for the start screen list. */
@@ -131,16 +132,22 @@ export interface CadClient {
 }
 
 /**
- * Pick the client for the current runtime.
+ * Pick the client for the current runtime — the single construction point.
  *
- * Inside a Tauri webview `window.__TAURI_INTERNALS__` is present. The real
- * client is not built yet, so we fail loudly rather than silently mock in
- * production. In a plain browser / vitest jsdom we return the mock.
+ * Inside a Tauri webview `window.__TAURI_INTERNALS__` is injected (the property
+ * `invoke` bridge lives on it); we build the real `tauriClient`. In a plain
+ * browser, vitest jsdom, or Playwright-over-vite there is no bridge, so the mock
+ * drives the whole UI unchanged. `mockIPC` (test) also sets `__TAURI_INTERNALS__`,
+ * so a test that mocks the bridge exercises the real client — as intended.
+ *
+ * The tauri client is memoized: it owns persistent event listeners + one solver
+ * lane, so all call sites (appStore, ViewportRoot, badge layer) share one.
  */
+let tauriClientSingleton: CadClient | null = null;
+
 export function createClient(): CadClient {
   if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
-    // The real tauri-backed CadClient lands in F-WP8.
-    throw new Error("tauri client lands in F-WP8");
+    return (tauriClientSingleton ??= createTauriClient());
   }
   return mockClient;
 }
