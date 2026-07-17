@@ -3,12 +3,28 @@
 // the file exists + is non-empty AND is re-importable via STEPControl_Reader (a
 // roundtrip that recovers a non-null solid). The corpus records no STEP oracle
 // (UI-only exporter in the old stack), so validity is asserted structurally.
+//
+// stdout hygiene (F2 review finding): this binary calls handle_export_step()
+// in-process, WITHOUT main.cpp's normal startup sequence, so OCCT's default
+// messenger is not yet redirected off std::cout. STEPControl_Writer drives that
+// messenger, and unredirected it writes bytes straight to the process's real
+// stdout — which in the real worker would corrupt the protocol frame stream.
+// Replicate main.cpp's redirect_occt_to_stderr() (not linkable here: main.cpp
+// is a separate translation unit, not part of worker_core) and assert 0 bytes
+// land on fd 1 during the export call.
 // No framework: exit code == failure count.
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <cstdio>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 
 #include <IFSelect_ReturnStatus.hxx>
+#include <Message.hxx>
+#include <Message_Messenger.hxx>
+#include <Message_PrinterOStream.hxx>
 #include <STEPControl_Reader.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS_Shape.hxx>
@@ -38,9 +54,44 @@ constexpr const char* kEmpty =
 json line_ent(const std::string& id, double x0, double y0, double x1, double y1) {
     return json{{"id", id}, {"type", "Line"}, {"p0", {x0, y0}}, {"p1", {x1, y1}}};
 }
+
+// Mirrors main.cpp's redirect_occt_to_stderr() (src/main.cpp ~lines 57-61): drop
+// OCCT's default std::cout printer and route diagnostics to std::cerr instead.
+void redirect_occt_to_stderr() {
+    Handle(Message_Messenger) messenger = Message::DefaultMessenger();
+    messenger->RemovePrinters(STANDARD_TYPE(Message_PrinterOStream));
+    messenger->AddPrinter(new Message_PrinterOStream("cerr", Standard_False, Message_Info));
+}
+
+// Run `fn`, capturing every byte written to the process's real stdout (fd 1)
+// during the call, via a temp-file redirect (no concurrent reader needed).
+// Restores the original fd 1 before returning.
+template <typename Fn>
+std::uintmax_t capture_stdout_bytes(Fn&& fn) {
+    std::fflush(stdout);
+    const std::string tmp =
+        (std::filesystem::temp_directory_path() / "onecad_wp6_export_stdout.tmp").string();
+    const int cap_fd = ::open(tmp.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0600);
+    const int saved_fd = ::dup(STDOUT_FILENO);
+    ::dup2(cap_fd, STDOUT_FILENO);
+    ::close(cap_fd);
+
+    fn();
+
+    std::fflush(stdout);
+    ::dup2(saved_fd, STDOUT_FILENO);
+    ::close(saved_fd);
+
+    std::error_code ec;
+    const std::uintmax_t bytes = std::filesystem::file_size(tmp, ec);
+    std::filesystem::remove(tmp, ec);
+    return ec ? 0 : bytes;
+}
 }  // namespace
 
 int main() {
+    redirect_occt_to_stderr();  // stdout hygiene guard, mirrors main.cpp step 2
+
     Session s;
     s.open("doc", 0, 3, "determinism");
 
@@ -70,13 +121,17 @@ int main() {
     std::error_code rm;
     std::filesystem::remove(path, rm);
 
-    Envelope resp = onecad::io::handle_export_step(
-        s, Envelope::request(2, "ExportStep",
-                             json{{"path", path}, {"bodyIds", json::array({"body_op1"})}, {"schema", "AP214IS"}}));
+    Envelope resp;
+    const std::uintmax_t stdout_bytes = capture_stdout_bytes([&]() {
+        resp = onecad::io::handle_export_step(
+            s, Envelope::request(2, "ExportStep",
+                                 json{{"path", path}, {"bodyIds", json::array({"body_op1"})}, {"schema", "AP214IS"}}));
+    });
     check(resp.ok.value_or(false), "export: ExportStep ok");
     check(resp.result.value("written", false), "export: written true");
     const std::uint64_t bytes = resp.result.value("bytes", std::uint64_t{0});
     check(bytes > 0, "export: byte count > 0");
+    check(stdout_bytes == 0, "export: zero bytes written to real stdout during export (stdout hygiene)");
 
     // File exists + non-empty.
     std::error_code ec;

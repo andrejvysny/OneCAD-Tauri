@@ -13,10 +13,21 @@
 //       ref_B     0.91     0.20
 //   Greedy processes ref_A first, takes X (0.92); ref_B is then forced onto Y (0.20)
 //   → total 1.12, and ref_B looks unresolvable. Optimal assigns A→Y (0.90), B→X
-//   (0.91) → total 1.81, both confidently bound. Greedy's first-come choice destroyed
-//   ref_B's only good match. This module returns the OPTIMAL assignment (maximising
-//   total score ⇔ minimising total cost), so the confidence gate then sees each ref's
-//   true best available binding.
+//   (0.91) → total 1.81 — the global-best assignment, and B now has a real shot.
+//   Greedy's first-come choice would have destroyed ref_B's only good match. This
+//   module returns the OPTIMAL assignment (maximising total score ⇔ minimising
+//   total cost), so the confidence gate then sees each ref's true best AVAILABLE
+//   binding, not one starved by another ref's greedy grab.
+//
+//   NOTE this does not by itself guarantee AutoBind: the per-ref margin gate
+//   (assigned score − best OTHER candidate's score, applied after assignment —
+//   SCHEMA §10) still runs. Here ref_A's assigned score (0.90 on Y) is BELOW its
+//   own unassigned alternative (0.92 on X): margin = 0.90 − 0.92 = −0.02 <
+//   kAutoBindMinMargin, so ref_A still routes to NeedsRepair("ambiguous") even
+//   under the optimal assignment. Intended: a false negative (repair prompt) is
+//   preferred over a false positive (silent mis-bind) when two candidates are
+//   this close — optimal assignment fixes greedy's starvation bug, it does not
+//   relax the confidence gate.
 #pragma once
 
 #include <vector>

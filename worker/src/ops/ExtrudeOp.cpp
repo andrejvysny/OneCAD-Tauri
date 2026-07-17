@@ -37,7 +37,7 @@ namespace em = onecad::elementmap;
 
 namespace {
 
-constexpr double kMinValue = 1e-6;   // RegenerationEngine kMinValue (degenerate guard, worker port)
+constexpr double kMinValue = 1e-3;   // RegenerationEngine.cpp:61 kMinValue (blind/two-sided distance guard)
 constexpr double kToFaceMin = 1e-3;  // RegenerationEngine.cpp:61 kMinValue (ToFace coincidence)
 constexpr double kThroughAllFallback = 1.0e5;    // RegenerationEngine.cpp:856
 constexpr double kDraftAngleEpsilon = 1e-4;      // RegenerationEngine.cpp:59

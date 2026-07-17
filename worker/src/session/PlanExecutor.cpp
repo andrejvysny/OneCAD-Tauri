@@ -139,6 +139,7 @@ json make_needs_repair(const json& op, const std::string& op_id) {
         {"elementId", element_id},
         {"ladderFailed", "descriptor"},
         {"reason", "ambiguous"},
+        {"scoringVersion", em::kResolverVersion},
         {"candidates",
          json::array(
              {json{{"topoKey", "f:31"}, {"score", 0.91}, {"margin", 0.0}, {"worldPos", {12.0, 3.5, 0.0}},
