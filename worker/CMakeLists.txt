@@ -58,9 +58,17 @@ add_library(worker_core STATIC
     src/session/PlanExecutor.cpp
     # --- W-WP5: REAL OCCT ops + ElementMap V2 + tessellation ---
     src/elementmap/ElementMapPartition.cpp
+    # --- W-WP6: resolution ladder (scoring / min-cost assignment / orchestration) ---
+    src/elementmap/Scoring.cpp
+    src/elementmap/Assignment.cpp
+    src/elementmap/Ladder.cpp
     src/ops/OpCommon.cpp
     src/ops/ExtrudeOp.cpp
     src/ops/BooleanOp.cpp
+    # --- W-WP6: new OCCT ops (Revolve / Fillet / Chamfer) + STEP IO ---
+    src/ops/RevolveOp.cpp
+    src/ops/FilletChamferOp.cpp
+    src/io/ExportStep.cpp
     src/session/ElementIdentity.cpp
     src/tess/Mesh1.cpp
     src/tess/Tessellate.cpp

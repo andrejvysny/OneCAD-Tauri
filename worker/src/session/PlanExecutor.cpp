@@ -9,10 +9,16 @@
 #include <thread>
 #include <vector>
 
+#include <map>
+#include <utility>
+
 #include "elementmap/ElementMapPartition.h"
+#include "elementmap/Ladder.h"
 #include "ops/BooleanOp.h"
 #include "ops/ExtrudeOp.h"
+#include "ops/FilletChamferOp.h"
 #include "ops/OpTypes.h"
+#include "ops/RevolveOp.h"
 #include "session/Signatures.h"
 #include "tess/Tessellate.h"
 #include "util/Hashing.h"
@@ -56,41 +62,63 @@ std::vector<RefBinding> collect_ref_bindings(const json& op, const std::string& 
     return out;
 }
 
-// Mint partition entries for referenced sub-element inputs (ID-on-demand). Appends
-// each newly-minted binding to `delta.added`. Resolution order (W-WP5): the ref's
-// `primary.topoKey` (explicit), then `anchor.worldPoint` nearest — W-WP6 replaces
-// this with the full descriptor/anchor ladder. Body refs (kind "body") and refs
-// with an empty bodyId (e.g. a sketch region) are NOT tracked as elements.
-void mint_referenced_inputs(ScratchJob& job, const json& op, em::ElementMapDelta& delta) {
+// A minimal §9 NeedsRepair (STATE) for a ref whose owning body is gone.
+json missing_body_repair(const em::LadderRef& ref, const std::string& body_id) {
+    return json{{"refId", ref.ref_id},
+                {"elementId", ref.element_id},
+                {"ladderFailed", "descriptor"},
+                {"reason", "no-candidates"},
+                {"scoringVersion", em::kResolverVersion},
+                {"candidates", json::array()},
+                {"anchor", ref.anchor_json.is_null() ? json::object() : ref.anchor_json},
+                {"uiLabel", "referenced body not found: " + body_id}};
+}
+
+// Resolve + mint referenced sub-element inputs through the resolution ladder
+// (descriptor + anchor, SCHEMA §10 level 2). Runs BEFORE the op, on the PREDECESSOR
+// snapshot (Invariant 3). A confident unique match auto-binds → `delta.added`; a ref
+// that does not resolve ⇒ NeedsRepair (appended to `needs_repair`) and the caller
+// stops before running the op (prepare m−1). Replaces the interim primary.topoKey
+// shortcut (D3 — the field is gone). Body/region refs (no sub-element) are skipped.
+void resolve_input_refs(ScratchJob& job, const json& op, const std::string& op_id,
+                        em::ElementMapDelta& delta, std::vector<json>& needs_repair) {
     if (!op.contains("inputs") || !op["inputs"].is_array()) return;
+
+    // Group sub-element refs by owning body (assignment/scoring is per-body pool).
+    std::map<std::string, std::vector<em::LadderRef>> by_body;
+    std::size_t i = 0;
     for (const json& in : op["inputs"]) {
-        if (!in.is_object() || !in.contains("primary") || !in["primary"].is_object()) continue;
-        const json& pr = in["primary"];
-        const std::string bid = get_str(pr, "bodyId");
-        const std::string eid = get_str(pr, "elementId");
-        const em::km::ElementKind kind = em::ElementMapPartition::kind_from_name(get_str(pr, "kind"));
-        if (bid.empty() || eid.empty()) continue;
-        if (kind != em::km::ElementKind::Face && kind != em::km::ElementKind::Edge &&
-            kind != em::km::ElementKind::Vertex) {
+        em::LadderRef r = em::ladder_ref_from_input(in, op_id + ".input" + std::to_string(i++));
+        const std::string bid = (in.is_object() && in.contains("primary") && in["primary"].is_object())
+                                    ? get_str(in["primary"], "bodyId")
+                                    : "";
+        if (bid.empty() || r.element_id.empty()) continue;
+        if (r.kind != em::km::ElementKind::Face && r.kind != em::km::ElementKind::Edge &&
+            r.kind != em::km::ElementKind::Vertex) {
             continue;
         }
-        if (job.partition.contains(eid)) continue;  // already tracked
-        const BodyRecord* rec = job.bodies.get(bid);
-        if (!rec) continue;
+        if (job.partition.contains(r.element_id)) continue;  // already tracked
+        by_body[bid].push_back(std::move(r));
+    }
 
-        TopoDS_Shape sub;
-        const std::string topo = get_str(pr, "topoKey");
-        if (!topo.empty()) sub = em::ElementMapPartition::shape_for_topokey(rec->geom, topo);
-        if (sub.IsNull() && in.contains("anchor") && in["anchor"].is_object() &&
-            in["anchor"].contains("worldPoint") && in["anchor"]["worldPoint"].is_array() &&
-            in["anchor"]["worldPoint"].size() >= 3) {
-            const json& wp = in["anchor"]["worldPoint"];
-            sub = em::ElementMapPartition::nearest_subshape(rec->geom, kind, wp[0].get<double>(),
-                                                            wp[1].get<double>(), wp[2].get<double>());
+    for (auto& [bid, refs] : by_body) {
+        const BodyRecord* rec = job.bodies.get(bid);
+        if (!rec) {
+            for (const em::LadderRef& r : refs) needs_repair.push_back(missing_body_repair(r, bid));
+            continue;
         }
-        if (sub.IsNull()) continue;  // cannot resolve → no mint (W-WP6 ladder)
-        json anchor = (in.contains("anchor") && in["anchor"].is_object()) ? in["anchor"] : json();
-        delta.added.push_back(job.partition.mint(bid, eid, kind, sub, rec->geom, std::move(anchor)));
+        const std::vector<em::LadderResolution> resolutions =
+            em::resolve_descriptor_stage(rec->geom, bid, refs);
+        for (std::size_t k = 0; k < resolutions.size(); ++k) {
+            const em::LadderResolution& res = resolutions[k];
+            if (res.outcome == em::LadderOutcome::AutoBind && !res.bound_shape.IsNull()) {
+                json anchor = refs[k].anchor_json;
+                delta.added.push_back(job.partition.mint(bid, res.element_id, res.kind,
+                                                         res.bound_shape, rec->geom, std::move(anchor)));
+            } else {
+                needs_repair.push_back(res.to_needs_repair_json());
+            }
+        }
     }
 }
 
@@ -198,9 +226,11 @@ ops::OpOutcome run_single_op(ScratchJob& job, const json& op, const std::string&
 
     if (op_type == "Extrude") return ops::execute_extrude(octx, op, op_id);
     if (op_type == "Boolean") return ops::execute_boolean(octx, op, op_id);
+    if (op_type == "Revolve") return ops::execute_revolve(octx, op, op_id);
+    if (op_type == "Fillet") return ops::execute_fillet(octx, op, op_id);
+    if (op_type == "Chamfer") return ops::execute_chamfer(octx, op, op_id);
 
-    // Revolve / Fillet / Chamfer are out of scope this WP (Extrude + Boolean only).
-    return ops::OpOutcome::unsupported("unsupported opType this WP: " + op_type);
+    return ops::OpOutcome::unsupported("unsupported opType: " + op_type);
 }
 
 // Drive the ordered op slice into `job`, streaming one planStep per executed step
@@ -254,29 +284,38 @@ ExecResult execute_ops(ScratchJob& job, const json& ops, std::uint64_t job_id, s
             kind = StepKind::NeedsRepair;
             needs_repair.push_back(make_needs_repair(op, op_id));
         } else {
-            // Mint referenced inputs (added deltas) at the PREDECESSOR snapshot, then
-            // execute the op (relabeled/removed deltas from its OCCT history).
-            mint_referenced_inputs(job, op, delta);
-            ops::OpOutcome oc = run_single_op(job, op, op_id, last_sketch_id, ctx.cancel);
-            for (auto& e : oc.delta.added) delta.added.push_back(std::move(e));
-            for (auto& e : oc.delta.relabeled) delta.relabeled.push_back(std::move(e));
-            for (auto& id : oc.delta.removed) delta.removed.push_back(std::move(id));
+            // Resolve referenced sub-element inputs via the ladder (descriptor +
+            // anchor), minting confident bindings (delta.added) at the PREDECESSOR
+            // snapshot. Any unresolved ref ⇒ NeedsRepair — the op does NOT run
+            // (prepare m−1, never a wrong bind). Then execute the op (its own
+            // relabeled/removed deltas + operand resolution + geometry).
+            std::vector<json> input_repairs;
+            resolve_input_refs(job, op, op_id, delta, input_repairs);
+            if (!input_repairs.empty()) {
+                for (auto& nr : input_repairs) needs_repair.push_back(std::move(nr));
+                kind = StepKind::NeedsRepair;
+            } else {
+                ops::OpOutcome oc = run_single_op(job, op, op_id, last_sketch_id, ctx.cancel);
+                for (auto& e : oc.delta.added) delta.added.push_back(std::move(e));
+                for (auto& e : oc.delta.relabeled) delta.relabeled.push_back(std::move(e));
+                for (auto& id : oc.delta.removed) delta.removed.push_back(std::move(id));
 
-            switch (oc.status) {
-                case ops::OpOutcome::Status::Cancelled:
-                    res.status = ExecStatus::Cancelled;
-                    return res;
-                case ops::OpOutcome::Status::Failed:
-                case ops::OpOutcome::Status::Unsupported:
-                    kind = StepKind::Failed;
-                    diagnostics.push_back(fail_diagnostic(oc.error_code, oc.error_message));
-                    break;
-                case ops::OpOutcome::Status::Ok:
-                    body_events = std::move(oc.body_events);
-                    body_ids = std::move(oc.body_ids);
-                    for (auto& nr : oc.needs_repair) needs_repair.push_back(std::move(nr));
-                    kind = needs_repair.empty() ? StepKind::Ok : StepKind::NeedsRepair;
-                    break;
+                switch (oc.status) {
+                    case ops::OpOutcome::Status::Cancelled:
+                        res.status = ExecStatus::Cancelled;
+                        return res;
+                    case ops::OpOutcome::Status::Failed:
+                    case ops::OpOutcome::Status::Unsupported:
+                        kind = StepKind::Failed;
+                        diagnostics.push_back(fail_diagnostic(oc.error_code, oc.error_message));
+                        break;
+                    case ops::OpOutcome::Status::Ok:
+                        body_events = std::move(oc.body_events);
+                        body_ids = std::move(oc.body_ids);
+                        for (auto& nr : oc.needs_repair) needs_repair.push_back(std::move(nr));
+                        kind = needs_repair.empty() ? StepKind::Ok : StepKind::NeedsRepair;
+                        break;
+                }
             }
         }
 

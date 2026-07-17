@@ -63,8 +63,8 @@ void test_rebind_via_modified() {
     const TopoDS_Shape result = fuse.Shape();
 
     em::ElementMapDelta delta;
-    std::vector<std::string> unresolved;
-    part.apply_history("A", result, fuse, delta, &unresolved);
+    std::vector<nlohmann::json> needs_repair;
+    part.apply_history("A", result, fuse, delta, &needs_repair);
 
     // Every relabeled entry carries bodyId "A" + a topoKey resolving to a real face
     // in the fused result.

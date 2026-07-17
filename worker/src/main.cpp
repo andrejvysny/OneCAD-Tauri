@@ -21,6 +21,7 @@
 #include <Message_PrinterOStream.hxx>
 #include <Standard_Version.hxx>
 
+#include "io/ExportStep.h"
 #include "protocol/Dispatcher.h"
 #include "protocol/Envelope.h"
 #include "protocol/SolverLane.h"
@@ -89,8 +90,9 @@ nlohmann::json make_hello_result() {
          }},
         {"quantizationVersion", kQuantizationVersion},
         {"solverPolicyVersion", kSolverPolicyVersion},
-        {"capabilities", nlohmann::json::array({"op.sketch", "op.extrude", "op.boolean",
-                                                "solver.planegcs", "tessellate.mesh1"})},
+        {"capabilities", nlohmann::json::array({"op.sketch", "op.extrude", "op.revolve", "op.fillet",
+                                                "op.chamfer", "op.boolean", "solver.planegcs",
+                                                "tessellate.mesh1", "io.step"})},
         {"limits", {{"chunkSize", kChunkSize}, {"initialBulkCredit", kInitialBulkCredit}}},
     };
 }
@@ -270,6 +272,12 @@ void register_verbs(Dispatcher& dispatcher, SolverLane& solver_lane, Session& se
         "ResolveRefs",
         [&session](const Envelope& r, const std::vector<std::uint8_t>&, HandlerContext&) {
             return onecad::session::handle_resolve_refs(session, r);
+        });
+    // --- W-WP6: STEP export (SCHEMA §7.8, D2) ---
+    dispatcher.register_verb(
+        "ExportStep",
+        [&session](const Envelope& r, const std::vector<std::uint8_t>&, HandlerContext&) {
+            return onecad::io::handle_export_step(session, r);
         });
     dispatcher.register_verb("Shutdown", handle_shutdown);
     dispatcher.register_verb("Debug.Busy", handle_debug_busy);

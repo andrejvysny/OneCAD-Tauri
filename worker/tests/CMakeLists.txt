@@ -41,6 +41,14 @@ foreach(_t wp5_plan wp5_partition_history wp5_mesh1)
     add_test(NAME ${_t} COMMAND test_${_t})
 endforeach()
 
+# --- W-WP6: resolution-ladder calibration + new ops + fast-mode ordering (finding 3)
+#     + STEP export (in-process, real OCCT). ---
+foreach(_t wp6_ladder wp6_ops wp6_extrude wp6_faststode wp6_exportstep)
+    add_executable(test_${_t} test_${_t}.cpp)
+    target_link_libraries(test_${_t} PRIVATE worker_core)
+    add_test(NAME ${_t} COMMAND test_${_t})
+endforeach()
+
 # Harness-driven ExecutePlan / session fixtures (NDJSON send/expect flows).
 foreach(_fx executeplan_happy executeplan_fail_step executeplan_needsrepair
             executeplan_fencing executeplan_discard double_executeplan session_reset

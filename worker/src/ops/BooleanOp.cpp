@@ -52,10 +52,7 @@ OpOutcome execute_boolean(OpContext& ctx, const json& op, const std::string& op_
     // Publish the modified target (BodyId PRESERVED — corpus c invariant).
     ctx.bodies.create(target_id, op_id, br.shape);
     if (builder) {
-        std::vector<std::string> unresolved;
-        ctx.partition.apply_history(target_id, br.shape, *builder, out.delta, &unresolved);
-        for (const std::string& id : unresolved)
-            out.needs_repair.push_back(make_no_candidates_repair(id, target_id));
+        ctx.partition.apply_history(target_id, br.shape, *builder, out.delta, &out.needs_repair);
     }
     out.body_events.push_back({"modified", target_id});
     out.body_ids.push_back(target_id);

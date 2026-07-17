@@ -45,11 +45,6 @@ std::optional<TopoDS_Face> build_profile_face(const nlohmann::json& sketch_param
 // false when the face is null / non-planar.
 bool planar_face_plane_normal(const TopoDS_Face& face, gp_Pln& plane_out, gp_Dir& normal_out);
 
-// A §9 NeedsRepair item for a referenced element that OCCT history could not
-// uniquely rebind (ladderFailed "history", reason "no-candidates"). W-WP5
-// placeholder: W-WP6 replaces it with scored descriptor/anchor candidates.
-nlohmann::json make_no_candidates_repair(const std::string& element_id, const std::string& body_id);
-
 // Result of a checked boolean: the shape (null on failure) + the §8 error code to
 // surface. `hist_out` receives the builder so the caller can apply OCCT history to
 // the ElementMap partition (SCHEMA §10 ladder level 1 — builder kept alive).

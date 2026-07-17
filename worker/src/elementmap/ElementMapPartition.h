@@ -110,16 +110,24 @@ public:
                     km::ElementKind kind, const TopoDS_Shape& sub_shape,
                     const TopoDS_Shape& body_shape, nlohmann::json anchor = {});
 
-    // --- history application ---
+    // --- history application (ladder level 1, SCHEMA §10) ---
     // Apply OCCT history from `hist` to every entry of `body_id`, rebinding to the
     // shape's image in `new_body_shape` and recomputing its TopoKey. Appends
-    // removed/relabeled to `delta`. Entries whose old shape is IsDeleted (or whose
-    // image is not in the new body) are removed. `unresolved_out` collects the
-    // elementIds that history could not rebind (candidate NeedsRepair — W-WP6
-    // scoring; here surfaced as reason "no-candidates").
+    // removed/relabeled to `delta`.
+    //   * IsDeleted → the element is dropped (delta.removed).
+    //   * a UNIQUE Modified image (or an unchanged survivor) → auto-binds
+    //     (delta.relabeled if the TopoKey moved) — the fillet-survives-edit path.
+    //   * a SPLIT (Modified returns >1 images) is EXPLICIT LINEAGE, no forced 1:1
+    //     (W-WP6, closes review finding 2): every image becomes a scored candidate
+    //     (Scoring.h) narrowed by the entry's frozen descriptor + anchor; a confident
+    //     unique winner binds, an ambiguous/symmetric split ⇒ NeedsRepair.
+    //   * no identifiable image ⇒ NeedsRepair "no-candidates".
+    // `needs_repair_out` (optional) collects the §9 NeedsRepair payloads (STATE, not
+    // error); an entry that cannot be confidently rebound is dropped from the
+    // partition after its NeedsRepair item is recorded.
     void apply_history(const std::string& body_id, const TopoDS_Shape& new_body_shape,
                        BRepBuilderAPI_MakeShape& hist, ElementMapDelta& delta,
-                       std::vector<std::string>* unresolved_out = nullptr);
+                       std::vector<nlohmann::json>* needs_repair_out = nullptr);
 
     // Drop every entry of a body that was consumed/deleted (e.g. a boolean tool);
     // appends each removed elementId to `delta.removed`.
@@ -140,6 +148,9 @@ public:
     static km::ElementDescriptor describe(const TopoDS_Shape& shape);
     // Descriptor → JSON evidence (SCHEMA §10 fields), for QueryElement/ResolveRefs.
     static nlohmann::json descriptor_to_json(const km::ElementDescriptor& d);
+    // JSON evidence → descriptor (inverse of descriptor_to_json). Parses a frozen
+    // `intent.descriptor` from a semantic ref so the ladder can score against it.
+    static km::ElementDescriptor descriptor_from_json(const nlohmann::json& j);
     // "face"|"edge"|"vertex"|"body"|"unknown".
     static std::string kind_name(km::ElementKind kind);
     static km::ElementKind kind_from_name(const std::string& s);

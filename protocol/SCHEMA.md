@@ -1118,6 +1118,7 @@ STATE (see [§8](#8-error-taxonomy)).
   "elementId": "el_…4a1",
   "ladderFailed": "descriptor",          // "history" | "descriptor"
   "reason": "ambiguous",                 // "ambiguous" | "no-candidates" | "low-confidence"
+  "scoringVersion": 1,                   // = resolverVersion the scores were computed under
   "candidates": [
     {
       "topoKey": "f:31",
@@ -1140,6 +1141,9 @@ STATE (see [§8](#8-error-taxonomy)).
 - `ladderFailed`: the ladder level that could not decide (`history` = OCCT history
   gave no/ambiguous mapping; `descriptor` = descriptor+anchor matching was
   ambiguous/low-confidence).
+- `scoringVersion`: the `resolverVersion` (§10) the candidate scores were computed
+  under. Present on every NeedsRepair evidence payload so a repair UI / a
+  Rust-side policy knows which normalized-scoring scheme produced the numbers.
 - `candidates[]` is sorted by `score` descending; a symmetric tie (equal scores,
   `margin` below the policy margin) MUST produce NeedsRepair, never a guess (false
   positive is worse than false negative).
@@ -1258,6 +1262,17 @@ contract refinements (no worker has shipped against the prior text), so they are
 edits to version 1 rather than a version bump. They still fall under the
 [§13](#13-versioningchange-policy) change policy (fixture bump + cross-track
 sign-off) once fixtures exist.
+
+- **2026-07-17 — NeedsRepair evidence carries `scoringVersion`** (W-WP6,
+  orchestrator sign-off pending). [§9](#9-needsrepair-payload) every NeedsRepair
+  payload (in `planStep.needsRepair[]`, `ResolveRefs`, and the history-stage split
+  ambiguity) now stamps `scoringVersion` = the `resolverVersion`
+  ([§10](#10-resolution-ladder)) under which the candidate
+  `score`/`margin`/`featureContributions` were computed. *Reason:* the normalized
+  [0,1] scoring is versioned; a repair UI or a future Rust-side policy must know
+  which scheme produced the numbers to compare or re-evaluate them. Additive +
+  forward-compatible (readers ignore unknown keys per [§4](#4-json-encoding-rules));
+  no shape change to existing fields.
 
 - **2026-07-17 — NewBody `BodyId`s are worker-minted deterministic `body_<opId>`,
   adopted+fenced by Rust** (D1, orchestrator-approved; R-WP10). [§2](#2-identifier--scalar-types)

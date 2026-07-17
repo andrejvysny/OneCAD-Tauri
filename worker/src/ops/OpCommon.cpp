@@ -94,23 +94,6 @@ bool planar_face_plane_normal(const TopoDS_Face& face, gp_Pln& plane_out, gp_Dir
     }
 }
 
-nlohmann::json make_no_candidates_repair(const std::string& element_id,
-                                         const std::string& body_id) {
-    // ladderFailed "history": OCCT history alone could not produce a unique image
-    // (e.g. a multi-image split). reason "no-candidates" is the documented W-WP5
-    // placeholder — no scored descriptor candidates yet (W-WP6). candidates[] is
-    // empty; a false positive (silent wrong bind) is strictly worse (§9/§10).
-    return nlohmann::json{
-        {"refId", element_id},
-        {"elementId", element_id},
-        {"ladderFailed", "history"},
-        {"reason", "no-candidates"},
-        {"candidates", nlohmann::json::array()},
-        {"anchor", nlohmann::json::object()},
-        {"uiLabel", "unresolved element on " + body_id},
-    };
-}
-
 namespace {
 BOPAlgo_Operation bop_of(app::BooleanMode mode) {
     switch (mode) {

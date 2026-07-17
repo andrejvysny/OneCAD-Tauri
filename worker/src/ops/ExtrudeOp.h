@@ -3,14 +3,16 @@
 // Ports OneCAD-CPP RegenerationEngine.cpp buildExtrude (:774-1059):
 //   * sketch region → LoopDetector/FaceBuilder → planar profile face;
 //   * profile normal → BRepPrimAPI_MakePrism;
-//   * end conditions Blind / ThroughAll / Symmetric / two-direction (:816-969);
+//   * end conditions Blind / ThroughAll / Symmetric / two-direction (:816-969),
+//     plus ToFace (typed targetFace ref resolved via the ladder → projection
+//     distance, :858-876) and ToNext (nearest planar face of the target body,
+//     :877-894 / distanceToNextPlanarFace :223-241) — W-WP6;
+//   * draft angle via BRepOffsetAPI_DraftAngle on the side faces (:977-1013) — W-WP6;
 //   * booleanMode NewBody / Add / Cut / Intersect with target resolution per the
 //     C++ priority chain (explicit targetBodyId → input body ref) (:1015-1049).
 //
-// DEFERRED this WP (documented — they need ladder resolution of a typed target
-// face/body, which is W-WP6): ExtrudeMode `ToFace` and `ToNext` → UNSUPPORTED
-// (recoverable §8, session intact). Draft angle is also deferred (rare; not in the
-// corpus numbers) → UNSUPPORTED when a non-zero draft is requested.
+// A `ToFace` targetFace ref that does not resolve on the predecessor snapshot ⇒
+// NeedsRepair STATE (SCHEMA §7.3 / Invariants 2/3) — never a wrong bind, never Err.
 #pragma once
 
 #include <string>

@@ -1,11 +1,24 @@
 // ElementMapPartition.cpp — see ElementMapPartition.h.
 #include "elementmap/ElementMapPartition.h"
 
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <vector>
+
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
 #include <TopAbs_ShapeEnum.hxx>
+#include <gp_Dir.hxx>
+#include <gp_XYZ.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopTools_ListIteratorOfListOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
+
+#include "elementmap/Scoring.h"
 
 namespace onecad::elementmap {
 
@@ -158,6 +171,46 @@ nlohmann::json ElementMapPartition::descriptor_to_json(const km::ElementDescript
     };
 }
 
+km::ElementDescriptor ElementMapPartition::descriptor_from_json(const nlohmann::json& j) {
+    km::ElementDescriptor d;
+    if (!j.is_object()) return d;
+    auto num = [](const nlohmann::json& v, double dflt) {
+        return v.is_number() ? v.get<double>() : dflt;
+    };
+    auto vec3 = [&](const char* key, double dx, double dy, double dz) -> gp_XYZ {
+        if (j.contains(key) && j[key].is_array() && j[key].size() >= 3) {
+            const nlohmann::json& a = j[key];
+            return gp_XYZ(num(a[0], dx), num(a[1], dy), num(a[2], dz));
+        }
+        return gp_XYZ(dx, dy, dz);
+    };
+    if (j.contains("shapeType") && j["shapeType"].is_number())
+        d.shapeType = static_cast<TopAbs_ShapeEnum>(j["shapeType"].get<int>());
+    if (j.contains("surfaceType") && j["surfaceType"].is_number())
+        d.surfaceType = static_cast<GeomAbs_SurfaceType>(j["surfaceType"].get<int>());
+    if (j.contains("curveType") && j["curveType"].is_number())
+        d.curveType = static_cast<GeomAbs_CurveType>(j["curveType"].get<int>());
+    const gp_XYZ c = vec3("center", 0, 0, 0);
+    d.center = gp_Pnt(c.X(), c.Y(), c.Z());
+    if (j.contains("size")) d.size = num(j["size"], 0.0);
+    if (j.contains("magnitude")) d.magnitude = num(j["magnitude"], 0.0);
+    d.hasNormal = j.value("hasNormal", false);
+    d.hasTangent = j.value("hasTangent", false);
+    if (d.hasNormal) {
+        const gp_XYZ n = vec3("normal", 0, 0, 1);
+        if (n.Modulus() > 1e-12) d.normal = gp_Dir(n);
+    }
+    if (d.hasTangent) {
+        const gp_XYZ t = vec3("tangent", 1, 0, 0);
+        if (t.Modulus() > 1e-12) d.tangent = gp_Dir(t);
+    }
+    if (j.contains("adjacencyHash") && j["adjacencyHash"].is_string()) {
+        d.adjacencyHash =
+            std::strtoull(j["adjacencyHash"].get<std::string>().c_str(), nullptr, 16);
+    }
+    return d;
+}
+
 // --- queries ---------------------------------------------------------------
 
 const PartitionEntry* ElementMapPartition::find(const std::string& element_id) const {
@@ -196,15 +249,61 @@ DeltaEntry ElementMapPartition::mint(const std::string& body_id, const std::stri
 
 // --- history application ---------------------------------------------------
 
+namespace {
+
+double body_diag_of(const TopoDS_Shape& shape) {
+    if (shape.IsNull()) return 1.0;
+    Bnd_Box box;
+    BRepBndLib::Add(shape, box);
+    if (box.IsVoid()) return 1.0;
+    Standard_Real xmin, ymin, zmin, xmax, ymax, zmax;
+    box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+    const double dx = xmax - xmin, dy = ymax - ymin, dz = zmax - zmin;
+    const double diag = std::sqrt(dx * dx + dy * dy + dz * dz);
+    return diag > 1e-9 ? diag : 1.0;
+}
+
+// A world-point AnchorEvidence parsed from an entry's stored anchor echo (if any).
+AnchorEvidence anchor_of(const nlohmann::json& anchor) {
+    AnchorEvidence a;
+    if (anchor.is_object() && anchor.contains("worldPoint") && anchor["worldPoint"].is_array() &&
+        anchor["worldPoint"].size() >= 3) {
+        const nlohmann::json& wp = anchor["worldPoint"];
+        if (wp[0].is_number() && wp[1].is_number() && wp[2].is_number()) {
+            a.has_world_point = true;
+            a.world_point = gp_Pnt(wp[0].get<double>(), wp[1].get<double>(), wp[2].get<double>());
+        }
+    }
+    return a;
+}
+
+}  // namespace
+
 void ElementMapPartition::apply_history(const std::string& body_id,
                                         const TopoDS_Shape& new_body_shape,
                                         BRepBuilderAPI_MakeShape& hist, ElementMapDelta& delta,
-                                        std::vector<std::string>* unresolved_out) {
+                                        std::vector<nlohmann::json>* needs_repair_out) {
+    const double body_diag = body_diag_of(new_body_shape);
+
     // Collect the entries of this body up front (we mutate the map below).
     std::vector<std::string> ids;
     for (const auto& [id, e] : entries_) {
         if (e.body_id == body_id) ids.push_back(id);
     }
+
+    auto emit_no_candidates = [&](const std::string& id) {
+        if (needs_repair_out) {
+            needs_repair_out->push_back(nlohmann::json{
+                {"refId", id},
+                {"elementId", id},
+                {"ladderFailed", "history"},
+                {"reason", "no-candidates"},
+                {"scoringVersion", kResolverVersion},
+                {"candidates", nlohmann::json::array()},
+                {"anchor", nlohmann::json::object()},
+                {"uiLabel", "unresolved element on " + body_id}});
+        }
+    };
 
     for (const std::string& id : ids) {
         PartitionEntry& e = entries_[id];
@@ -217,33 +316,87 @@ void ElementMapPartition::apply_history(const std::string& body_id,
             continue;
         }
 
-        // Determine the element's image in the new body (SCHEMA §10 ladder level 1):
-        // OCCT Modified() first. A UNIQUE image auto-binds; a SPLIT (many images) is
-        // valid lineage (no forced 1:1) → bind best-effort to the first image (W-WP6
-        // scores which successor). If Modified is empty, the old shape may survive.
+        // Ladder level 1 (SCHEMA §10): consult OCCT Modified().
+        TopTools_ListOfShape modified;
+        if (!old.IsNull()) modified = hist.Modified(old);
+
         TopoDS_Shape image;
-        if (!old.IsNull()) {
-            const TopTools_ListOfShape& modified = hist.Modified(old);
-            if (!modified.IsEmpty()) image = modified.First();
-        }
-        bool from_modified = !image.IsNull();
-
-        std::string new_key;
-        if (from_modified) {
-            new_key = topokey_for_shape(new_body_shape, image, e.kind);
-        } else {
+        if (modified.IsEmpty()) {
             // Not deleted, not modified: does the old shape survive verbatim?
-            new_key = topokey_for_shape(new_body_shape, old, e.kind);
             image = old;
+        } else if (modified.Extent() == 1) {
+            // UNIQUE image → auto-bind (the fillet-survives-edit path).
+            image = modified.First();
+        } else {
+            // SPLIT: >1 images. EXPLICIT LINEAGE — score every image candidate
+            // against the entry's frozen descriptor + anchor and gate on confidence
+            // (W-WP6, closes review finding 2 — no forced Modified().First()).
+            const AnchorEvidence anchor = anchor_of(e.anchor);
+            std::vector<TopoDS_Shape> imgs;
+            std::vector<double> scores;
+            std::vector<km::ElementDescriptor> descs;
+            for (TopTools_ListIteratorOfListOfShape it(modified); it.More(); it.Next()) {
+                const km::ElementDescriptor cd = describe(it.Value());
+                imgs.push_back(it.Value());
+                descs.push_back(cd);
+                scores.push_back(
+                    score_candidate(e.descriptor, /*has_intent_descriptor=*/true, anchor, cd, body_diag)
+                        .score);
+            }
+            // best / runner-up (deterministic tie-break by list order).
+            int best = 0;
+            for (int i = 1; i < static_cast<int>(scores.size()); ++i)
+                if (scores[i] > scores[best]) best = i;
+            double runner_up = 0.0;
+            for (int i = 0; i < static_cast<int>(scores.size()); ++i)
+                if (i != best) runner_up = std::max(runner_up, scores[i]);
+            const double margin = scores[best] - runner_up;
+
+            if (scores[best] >= kAutoBindMinScore && margin >= kAutoBindMinMargin) {
+                image = imgs[best];  // confident unique successor
+            } else {
+                // Ambiguous / symmetric split ⇒ NeedsRepair (never a guess).
+                if (needs_repair_out) {
+                    nlohmann::json cands = nlohmann::json::array();
+                    // Rank images desc by score for the evidence payload.
+                    std::vector<int> order(imgs.size());
+                    for (int i = 0; i < static_cast<int>(order.size()); ++i) order[i] = i;
+                    std::sort(order.begin(), order.end(), [&](int a, int b) {
+                        if (scores[a] != scores[b]) return scores[a] > scores[b];
+                        return a < b;
+                    });
+                    for (int k = 0; k < static_cast<int>(order.size()); ++k) {
+                        const int i = order[k];
+                        const std::string tk = topokey_for_shape(new_body_shape, imgs[i], e.kind);
+                        const double next = (k + 1 < static_cast<int>(order.size()))
+                                                ? scores[order[k + 1]]
+                                                : scores[i];
+                        cands.push_back(nlohmann::json{
+                            {"topoKey", tk},
+                            {"score", scores[i]},
+                            {"margin", scores[i] - next},
+                            {"worldPos", {descs[i].center.X(), descs[i].center.Y(), descs[i].center.Z()}},
+                            {"summary", "split image of " + id}});
+                    }
+                    needs_repair_out->push_back(nlohmann::json{
+                        {"refId", id},
+                        {"elementId", id},
+                        {"ladderFailed", "history"},
+                        {"reason", "ambiguous"},
+                        {"scoringVersion", kResolverVersion},
+                        {"candidates", std::move(cands)},
+                        {"anchor", e.anchor.is_null() ? nlohmann::json::object() : e.anchor},
+                        {"uiLabel", "ambiguous split of element on " + body_id}});
+                }
+                entries_.erase(id);  // cannot confidently rebind
+                continue;
+            }
         }
 
+        const std::string new_key = topokey_for_shape(new_body_shape, image, e.kind);
         if (new_key.empty()) {
-            // History gave no usable image and the old shape is not in the new body:
-            // the element vanished with no identifiable successor. This is the
-            // genuinely-ambiguous case (ladderFailed "history") → NeedsRepair
-            // "no-candidates" (W-WP5 placeholder; W-WP6 scores candidates). The
-            // entry is dropped from this snapshot's partition.
-            if (unresolved_out) unresolved_out->push_back(id);
+            // No identifiable successor in the new body → NeedsRepair "no-candidates".
+            emit_no_candidates(id);
             entries_.erase(id);
             continue;
         }

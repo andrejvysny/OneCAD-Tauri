@@ -7,6 +7,7 @@
 #include <TopoDS_Shape.hxx>
 
 #include "elementmap/ElementMapPartition.h"
+#include "elementmap/Ladder.h"
 
 namespace onecad::session {
 
@@ -178,26 +179,11 @@ Envelope handle_resolve_refs(Session& session, const Envelope& req) {
                     continue;
                 }
             }
-            // Try to resolve against the referenced body's current shape.
+            // Dry-run the descriptor+anchor ladder (SCHEMA §10) against the
+            // referenced body's current shape — full typed evidence + real scores.
             const std::string body_id = get_str(pr, "bodyId");
             const BodyRecord* rec = bodies.get(body_id);
-            em::km::ElementKind kind = em::km::ElementKind::Unknown;
-            std::string topo;
-            TopoDS_Shape sub = rec ? resolve_pick(rec->geom, pr, kind, topo) : TopoDS_Shape();
-            if (rec && sub.IsNull() && ref.contains("anchor")) {
-                json pick = pr;
-                pick["anchor"] = ref["anchor"];
-                sub = resolve_pick(rec->geom, pick, kind, topo);
-            }
-            if (!sub.IsNull()) {
-                // History/topoKey resolved uniquely → autoBind. Scoring is W-WP6;
-                // W-WP5 reports a definitive unique resolution as full confidence.
-                resolutions.push_back(json{{"refId", ref_id},
-                                           {"outcome", "autoBind"},
-                                           {"topoKey", topo},
-                                           {"score", 1.0},
-                                           {"margin", 1.0}});
-            } else {
+            if (!rec) {
                 resolutions.push_back(json{
                     {"refId", ref_id},
                     {"outcome", "needsRepair"},
@@ -206,9 +192,28 @@ Envelope handle_resolve_refs(Session& session, const Envelope& req) {
                           {"elementId", eid},
                           {"ladderFailed", "descriptor"},
                           {"reason", "no-candidates"},
+                          {"scoringVersion", em::kResolverVersion},
                           {"candidates", json::array()},
                           {"anchor", ref.contains("anchor") ? ref["anchor"] : json::object()},
-                          {"uiLabel", "unresolved ref " + ref_id}}}});
+                          {"uiLabel", "referenced body not found: " + body_id}}}});
+                continue;
+            }
+            em::LadderRef lref = em::ladder_ref_from_input(ref, ref_id);
+            if (lref.element_id.empty()) lref.element_id = eid;
+            std::vector<em::LadderRef> refs{lref};
+            const std::vector<em::LadderResolution> res =
+                em::resolve_descriptor_stage(rec->geom, body_id, refs);
+            if (!res.empty() && res[0].outcome == em::LadderOutcome::AutoBind) {
+                resolutions.push_back(json{{"refId", ref_id},
+                                           {"outcome", "autoBind"},
+                                           {"topoKey", res[0].bound_topo_key},
+                                           {"score", res[0].score},
+                                           {"margin", res[0].margin}});
+            } else {
+                resolutions.push_back(json{{"refId", ref_id},
+                                           {"outcome", "needsRepair"},
+                                           {"needsRepair", res.empty() ? json::object()
+                                                                       : res[0].to_needs_repair_json()}});
             }
         }
     }

@@ -186,10 +186,18 @@ void test_standalone_boolean_and_delta_bodyid() {
               {"params", {{"sketchId", "b"}, {"distance", 20.0}, {"booleanMode", "NewBody"}}}},
          json{{"opType", "Boolean"}, {"opId", "op4"}, {"stepIndex", 4},
               // A face ref on the target (mints an entry — delta.added carries bodyId).
+              // W-WP6: the face ref resolves via the ladder (anchor.worldPoint), not a
+              // primary.topoKey (D3 removed it). It anchors the body_op1 side face at
+              // x=-20 — a face body_op3 does NOT touch, so the union rebinds it via a
+              // UNIQUE OCCT-history image (no split). (Anchoring the z=0 bottom face —
+              // which body_op3 shares — instead exercises the finding-2 scored-split
+              // path: the union splits it, the best image scores 0.81 < 0.85, so it
+              // correctly yields NeedsRepair; see test_wp6_ladder split coverage.)
               {"inputs", json::array(
                              {json{{"primary", {{"bodyId", "body_op1"}, {"elementId", "body_op1"}, {"kind", "body"}}}},
                               json{{"primary", {{"bodyId", "body_op3"}, {"elementId", "body_op3"}, {"kind", "body"}}}},
-                              json{{"primary", {{"bodyId", "body_op1"}, {"elementId", "el_tf"}, {"kind", "face"}, {"topoKey", "f:1"}}}}})},
+                              json{{"primary", {{"bodyId", "body_op1"}, {"elementId", "el_tf"}, {"kind", "face"}}},
+                                   {"anchor", {{"worldPoint", {-20.0, 10.0, 5.0}}}}}})},
               {"params", {{"operation", "Union"}, {"targetBodyId", "body_op1"}, {"toolBodyId", "body_op3"}}}}});
     PlanRun r = run_plan(s, 1, ops, json::array({"a", "b", "c", "d", "e"}));
     check(r.resp.result.value("stoppedReason", "") == "completed", "standalone boolean completed");
