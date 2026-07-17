@@ -81,6 +81,9 @@ pub struct RepairItem {
     /// Ranked candidates (sorted by `score` descending; SCHEMA §9).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub candidates: Vec<RepairCandidate>,
+    /// The `resolverVersion` the candidate scores were computed under (SCHEMA §9 `scoringVersion`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scoring_version: Option<u32>,
     /// Selection intent captured when the ref was authored (SCHEMA §9 `anchor`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor: Option<AnchorIntent>,
@@ -191,6 +194,7 @@ mod tests {
             }],
             anchor: None,
             ui_label: "Fillet edge".into(),
+            scoring_version: None,
         }
     }
 
@@ -235,5 +239,24 @@ mod tests {
         assert!(v.is_array());
         let back: RepairState = serde_json::from_value(v).unwrap();
         assert_eq!(r, back);
+    }
+
+    #[test]
+    fn scoring_version_round_trips_and_is_absent_when_none() {
+        // None: field is dropped from the wire (byte-stable for old documents).
+        let none_item = item(1, "op_1.input0");
+        let v = serde_json::to_value(&none_item).unwrap();
+        assert!(v.get("scoringVersion").is_none());
+        let back: RepairItem = serde_json::from_value(v).unwrap();
+        assert_eq!(back, none_item);
+
+        // Some(1): preserved verbatim through a round trip (SCHEMA §9 `scoringVersion`).
+        let mut some_item = item(1, "op_1.input0");
+        some_item.scoring_version = Some(1);
+        let v = serde_json::to_value(&some_item).unwrap();
+        assert_eq!(v["scoringVersion"], serde_json::json!(1));
+        let back: RepairItem = serde_json::from_value(v).unwrap();
+        assert_eq!(back, some_item);
+        assert_eq!(back.scoring_version, Some(1));
     }
 }

@@ -371,6 +371,7 @@ mod tests {
                 candidates: vec![],
                 anchor: None,
                 ui_label: String::new(),
+                scoring_version: None,
             }],
         );
 
