@@ -130,9 +130,26 @@ FenceOutcome Session::fence_and_clone(std::uint64_t job_id,
         return out;
     }
 
-    // Fencing: expectedBaseHash must equal the head's historyPrefixHash. Detail
-    // carries {expected, actual} for Rust reconciliation (SCHEMA §7.2).
-    if (expected_base_hash != history_prefix_hash_) {
+    // Fencing: expectedBaseHash must equal the head's historyPrefixHash — EXCEPT for
+    // a from-0 plan (D5). A from-0 plan is one with NO base checkpoint AND
+    // expectedBaseHash == the empty-prefix anchor (kEmptyPrefixHash). V1 has no
+    // checkpoint plumbing (SaveCheckpoint/RestoreCheckpoint UNSUPPORTED — the worker
+    // never reads baseCheckpoint), so "no base checkpoint" holds trivially and a
+    // from-0 plan is exactly one whose expectedBaseHash is the empty anchor.
+    //
+    // D5: a from-0 plan is ALWAYS base-valid — its base IS empty by definition, so
+    // the precondition is satisfiable regardless of the head. The RegenPlanner always
+    // emits full-replay-from-0 plans; after the first AcceptPrepared the head token is
+    // nonzero, so the strict head-hash fence would reject every subsequent regen (the
+    // sequential-regen blocker). For a from-0 plan the worker SKIPS the head-hash
+    // comparison and clones an EMPTY base below (discarding the prior head's bodies /
+    // partition from the scratch's starting state); accept then REPLACES the head
+    // wholesale. Incremental plans (expectedBaseHash != empty anchor) keep the strict
+    // head-hash fence exactly as before. workerEpoch fencing (above) and all
+    // AcceptPrepared/DiscardPrepared fencing are unchanged. Detail carries
+    // {expected, actual} for Rust reconciliation (SCHEMA §7.2).
+    const bool from_zero = (expected_base_hash == kEmptyPrefixHash);
+    if (!from_zero && expected_base_hash != history_prefix_hash_) {
         out.status = FenceOutcome::Status::Error;
         out.error = protocol_error(
             "ExecutePlan: expectedBaseHash mismatch",
@@ -140,11 +157,19 @@ FenceOutcome Session::fence_and_clone(std::uint64_t job_id,
         return out;
     }
 
-    // Clone the base state for lock-free execution on the kernel lane. Both the
-    // BodyStore and the partition are value-copied (TopoDS_Shape/handle copies).
+    // Clone the base state for lock-free execution on the kernel lane. A from-0 plan
+    // (D5) starts from a GENUINELY EMPTY base — full replay + wholesale publish — so
+    // no prior-head body survives into the scratch's starting state. An incremental
+    // plan clones the live head (BodyStore + partition value-copied — TopoDS_Shape /
+    // handle copies).
     out.status = FenceOutcome::Status::Ok;
-    out.cloned_bodies = bodies_;        // value copy
-    out.cloned_partition = partition_;  // value copy
+    if (from_zero) {
+        out.cloned_bodies = BodyStore{};                          // empty base (D5)
+        out.cloned_partition = elementmap::ElementMapPartition{};  // empty base (D5)
+    } else {
+        out.cloned_bodies = bodies_;        // value copy of the live head
+        out.cloned_partition = partition_;  // value copy of the live head
+    }
     out.prepared_snapshot_id = ++snapshot_counter_;
     return out;
 }
@@ -180,9 +205,13 @@ AcceptOutcome Session::accept_prepared(std::uint64_t job_id,
         return out;
     }
 
-    // Atomic publish: swap scratch bodies + partition in, adopt the opaque head
-    // token. (Sketches materialized by the plan are intra-plan only — the solver
-    // lane owns sketch authoring; they are not republished here.)
+    // Atomic publish: REPLACE the head wholesale (D4/D5). Move-assigning the scratch
+    // BodyStore + partition swaps the whole containers in, so NO stale body from the
+    // previous head survives — for a from-0 plan (D5) the scratch was built from an
+    // empty base, so the published set is exactly this plan's output; for an
+    // incremental plan it is the cloned head mutated by the plan. Then adopt the
+    // opaque head token + bump the snapshotId. (Sketches materialized by the plan are
+    // intra-plan only — the solver lane owns sketch authoring; not republished here.)
     bodies_ = std::move(scratch_->bodies);
     partition_ = std::move(scratch_->partition);
     history_prefix_hash_ = scratch_->history_prefix_hash;  // opaque; never recomputed

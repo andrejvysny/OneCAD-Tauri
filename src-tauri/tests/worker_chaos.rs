@@ -215,6 +215,57 @@ async fn executor_publishes_over_wm_stub() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// D5: sequential replay-from-0 regens (edit → regen → edit → regen). Every regen
+// the RegenPlanner emits is a from-0 plan (empty-anchor base); after cycle 1's
+// accept the stub head token is nonzero, so a strict head-hash fence would reject
+// cycle 2. D5 makes a from-0 plan always base-valid, so both cycles publish and the
+// second REPLACES the head wholesale (both bodies, no stale from cycle 1).
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sequential_from_zero_regens_both_publish_wholesale() {
+    let Some(bin) = stub_binary() else {
+        return;
+    };
+    let wm = WorkerManager::spawn(fast_config(bin, vec![]));
+    assert!(wm.wait_ready(Duration::from_secs(3)).await);
+
+    // Cycle 1 — one extrude, from-0 plan (empty anchor), revision 0. Publishes and
+    // advances the stub head hash past the empty anchor on accept.
+    let mut tl = one_extrude_timeline(); // op 0x10
+    let out1 = drive(&wm, &tl, 0, 1).await;
+    let snap1 = match out1 {
+        Outcome::Published(s) => s,
+        other => panic!("cycle 1 must publish: {other:?}"),
+    };
+    assert_eq!(snap1.bodies.len(), 1, "cycle 1 publishes one body");
+
+    // "Edit": append a second extrude, bump the revision. The planner STILL emits a
+    // from-0 plan (empty anchor) — but the stub head hash is now nonzero. Pre-D5 this
+    // fence-rejected (EngineFailed); D5 makes it base-valid, so cycle 2 publishes.
+    tl.insert_at_cursor(extrude_record(0x11, 10.0)); // op 0x11
+    let out2 = drive(&wm, &tl, 1, 1).await;
+    let snap2 = match out2 {
+        Outcome::Published(s) => s,
+        other => panic!("cycle 2 (from-0 after head advanced) must publish (D5): {other:?}"),
+    };
+    // Wholesale replace: the published set is plan 2's output (both extrudes) — the
+    // D1 uniqueness check re-created body_<op 0x10> (present in the cycle-1 head)
+    // WITHOUT a false-positive collision (from-0 base is empty, so `existing` is
+    // empty; only in-plan duplicates are rejected).
+    assert_eq!(
+        snap2.bodies.len(),
+        2,
+        "cycle 2 publishes both bodies (wholesale)"
+    );
+    let ids: HashSet<Uuid> = snap2.bodies.iter().map(|b| b.body.as_uuid()).collect();
+    assert!(
+        ids.contains(&Uuid::from_u128(0x10)) && ids.contains(&Uuid::from_u128(0x11)),
+        "cycle 2 head = {{body_0x10, body_0x11}}, got {ids:?}"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Mesh bulk assembly (inline + chunked) + MESH1 validation + credit
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -545,16 +596,21 @@ async fn stub_fences_epoch_and_hash_but_not_revision() {
         "a wrong workerEpoch must be fenced (F4)"
     );
 
-    // F4 negative: a wrong expectedBaseHash is FENCED.
+    // F4 negative: a wrong INCREMENTAL expectedBaseHash is FENCED. The wrong value
+    // must be NONZERO (not the empty anchor) — under D5 an empty-anchor plan is a
+    // from-0 plan and is always base-valid (the from-0 exemption), so only a nonzero
+    // hash that differs from the head exercises the strict head-hash fence.
     let mut bad_hash = incremental(1, 1);
     bad_hash.job_id = JobId(Uuid::from_u128(91));
-    bad_hash.expected_base_hash = onecad_core::regen::HistoryPrefixHash::empty(); // != head h0
+    bad_hash.expected_base_hash = onecad_core::regen::HistoryPrefixHash::new(
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef0",
+    ); // nonzero, != head h0 and != the empty anchor
     assert!(
         matches!(
             run_execute(&wm, bad_hash).await,
             Err(EngineError::Protocol { .. })
         ),
-        "a wrong expectedBaseHash must be fenced (F4)"
+        "a wrong (nonzero) incremental expectedBaseHash must be fenced (F4/D5)"
     );
 
     // F1 positive: documentRevision 1 (> head 0) is NOT fenced — it prepares +

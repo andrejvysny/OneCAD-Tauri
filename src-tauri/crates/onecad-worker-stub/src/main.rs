@@ -36,13 +36,16 @@
 //! `ResetSession`, and `Tessellate` (a header-only valid MESH1 blob) — enough to
 //! drive the real regen/mesh path end-to-end without OCCT.
 //!
-//! Fencing (D4): the stub mirrors the real worker — `ExecutePlan` fences on
+//! Fencing (D4/D5): the stub mirrors the real worker — `ExecutePlan` fences on
 //! `workerEpoch` + `expectedBaseHash` ONLY (same PROTOCOL_ERROR shapes), never on
 //! `documentRevision`; the head ADOPTS the plan's `documentRevision` + echoed
-//! `historyPrefixHash` at `AcceptPrepared`. The one divergence from the real worker
-//! (which requires `OpenSession`): when a plan arrives before any `OpenSession`
-//! (the chaos drills), the stub adopts that first plan's epoch + base hash as the
-//! fencing baseline and fences every plan thereafter.
+//! `historyPrefixHash` at `AcceptPrepared`. Per D5 a from-0 plan (no `baseCheckpoint`
+//! AND `expectedBaseHash` == the empty anchor) is ALWAYS base-valid — the head-hash
+//! comparison is skipped so sequential replay-from-0 regens keep preparing after the
+//! head token advances (the epoch fence still applies). The one divergence from the
+//! real worker (which requires `OpenSession`): when a plan arrives before any
+//! `OpenSession` (the chaos drills), the stub adopts that first plan's epoch + base
+//! hash as the fencing baseline and fences every plan thereafter.
 //!
 //! Logs go to stderr only; stdout carries frames exclusively (SCHEMA §1).
 
@@ -415,7 +418,16 @@ fn handle_execute_plan<W: Write>(
             },
         );
     }
-    if expected_base != state.history_prefix_hash {
+    // D5: a from-0 plan — no `baseCheckpoint` AND expectedBaseHash == the empty anchor
+    // — is ALWAYS base-valid: SKIP the head-hash comparison so a full-replay regen
+    // still prepares after the head token advanced past the empty anchor (the
+    // RegenPlanner always replays from 0; after the first accept the head is nonzero,
+    // and the strict fence would reject every subsequent regen). workerEpoch fencing
+    // (above) is unchanged; on accept the head is replaced wholesale. Incremental
+    // plans (nonzero expectedBaseHash) keep the strict head-hash fence. Mirrors the
+    // real worker's Session::fence_and_clone.
+    let from_zero = expected_base == EMPTY_PREFIX_HASH && args.get("baseCheckpoint").is_none();
+    if !from_zero && expected_base != state.history_prefix_hash {
         let stamp = state.stamp_job(job_id);
         return write_resp_err(
             writer,

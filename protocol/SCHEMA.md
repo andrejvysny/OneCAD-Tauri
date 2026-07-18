@@ -495,6 +495,22 @@ failure/NeedsRepair preparing snapshot `m−1`, and ends with a terminal
   incrementing a worker-owned accept counter). A post-edit regen legitimately carries
   a `documentRevision` ahead of the worker's last-accepted head, so rejecting on it
   would break every such regen.
+- **From-0 plans are always base-valid (D5).** A **from-0 plan** — one with **no
+  `baseCheckpoint`** AND `expectedBaseHash` == the empty-prefix anchor (`e3b0c442…`)
+  — is ALWAYS base-valid: the worker **SKIPS the `expectedBaseHash` head-hash
+  comparison**, builds the scratch from a **genuinely empty base** (no bodies, no
+  partitions — discarding any prior head state), and on `AcceptPrepared` **REPLACES
+  the head wholesale** (bodies, partitions, `historyPrefixHash` = the echoed last
+  prefix token, adopted `documentRevision`, bumped `snapshotId`). Rationale:
+  `expectedBaseHash` pins the base state a plan builds on; a from-0 plan's base IS
+  empty by definition, so the precondition is satisfiable regardless of the head. V1
+  is full-replay + wholesale-publish (the `RegenPlanner` always emits from-0 plans,
+  and checkpoints are UNSUPPORTED — [§7.7](#77-checkpoints)); after the first
+  `AcceptPrepared` the head token is nonzero, so without this rule every subsequent
+  regen would fail the `expectedBaseHash` precondition. `workerEpoch` fencing and all
+  `AcceptPrepared`/`DiscardPrepared` fencing are **unchanged**. **Incremental plans**
+  (`expectedBaseHash` != the empty anchor, e.g. a checkpoint-accelerated regen) keep
+  the **strict head-hash fence** exactly as above.
 - **Hash provenance — Rust is the sole hash authority.** `expectedBaseHash` and
   every entry of `prefixHashes` are **opaque tokens minted by Rust**. Rust computes
   them from the **geometry-relevant canonical wire-op form** of each op — the
@@ -1283,6 +1299,29 @@ contract refinements (no worker has shipped against the prior text), so they are
 edits to version 1 rather than a version bump. They still fall under the
 [§13](#13-versioningchange-policy) change policy (fixture bump + cross-track
 sign-off) once fixtures exist.
+
+- **2026-07-18 — a from-0 plan is always base-valid; accept replaces the head
+  wholesale** (D5, orchestrator-approved; R-WP11.2). [§7.2](#72-regen--executeplan).
+  A **from-0 plan** — no `baseCheckpoint` AND `expectedBaseHash` == the empty-prefix
+  anchor (`e3b0c442…`) — is now ALWAYS base-valid: the worker **skips the
+  `expectedBaseHash` head-hash comparison**, builds the scratch from a **genuinely
+  empty base**, and on `AcceptPrepared` **replaces the head wholesale** (bodies,
+  partitions, `historyPrefixHash` = echoed last prefix token, adopted
+  `documentRevision`, bumped `snapshotId`). `workerEpoch` fencing and all
+  `AcceptPrepared`/`DiscardPrepared` fencing are unchanged; **incremental** plans
+  (nonzero `expectedBaseHash`) keep the strict head-hash fence. *Reason:*
+  `expectedBaseHash` pins the base a plan builds on, and a from-0 plan's base IS empty
+  by definition, so its precondition is satisfiable regardless of the head. V1 is
+  full-replay + wholesale-publish (the `RegenPlanner` always emits from-0 plans;
+  checkpoints are UNSUPPORTED, [§7.7](#77-checkpoints)); once the head token advanced
+  past the empty anchor at the first `AcceptPrepared`, the strict head-hash fence
+  rejected every subsequent regen (the sequential-regen blocker before the M2 gate).
+  No canonical `protocol/fixtures/` file embeds the old from-0 fencing rule (they
+  carry no post-accept sequential-regen flow), so no canonical fixture bump is
+  required; the worker's local `test_wp5_plan` + the Rust `worker_chaos` /
+  `document_runtime` / `real_worker_smoke` tests cover the D5 sequence, and the
+  `worker_chaos` F4 negative was retargeted from the empty anchor (now the from-0
+  exemption) to a nonzero wrong hash.
 
 - **2026-07-18 — `documentRevision` is a Rust-owned advisory stamp, not a fencing
   token; fencing = `expectedBaseHash` + `workerEpoch`** (D4, orchestrator-approved;

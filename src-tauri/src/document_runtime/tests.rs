@@ -460,6 +460,51 @@ async fn save_then_reopen_round_trips_the_document() {
 }
 
 #[tokio::test]
+async fn sequential_from_zero_regens_wholesale_replace_no_d1_false_positive() {
+    // D5 / D1-vs-from-0: two sequential regen cycles where cycle 1 PUBLISHES a body,
+    // then cycle 2 (a full replay-from-0 plan) re-creates that SAME `body_<opId>` id
+    // plus a new one. The D1 uniqueness check must NOT false-positive against the
+    // previous cycle's published body — `begin_regen` seeds the AdoptingEngine's
+    // `existing` set EMPTY because a from-0 replay's base is empty, so only in-plan
+    // duplicates are rejected. Cycle 2 must publish and REPLACE the head wholesale.
+    let mut rt = runtime_with(Arc::new(FakeBackend::new()));
+
+    // Cycle 1 — publish body 0x10 (sets latest_snapshot, the source of `prior`).
+    rt.apply(add_extrude(0x10, 25.0)).unwrap();
+    let r1 = rt
+        .run_regen(RegenRequest::ToEnd { from: 0 }, CancelToken::new())
+        .await;
+    assert!(
+        matches!(r1.outcome, Outcome::Published(_)),
+        "{:?}",
+        r1.outcome
+    );
+    assert_eq!(
+        rt.projection().bodies.len(),
+        1,
+        "cycle 1 published one body"
+    );
+
+    // "Edit": append op 0x11. Cycle 2 is a from-0 replay of BOTH ops → it re-creates
+    // body_<0x10> (already in the published head) and mints body_<0x11>.
+    rt.apply(add_extrude(0x11, 10.0)).unwrap();
+    let r2 = rt
+        .run_regen(RegenRequest::ToEnd { from: 0 }, CancelToken::new())
+        .await;
+    assert!(
+        matches!(r2.outcome, Outcome::Published(_)),
+        "cycle 2 must publish — re-creating the prior cycle's body_<opId> must NOT \
+         trip the D1 uniqueness check (from-0 base is empty), got {:?}",
+        r2.outcome
+    );
+    // Wholesale replace: head = {body_0x10, body_0x11}, no duplication of body_0x10.
+    let bodies = rt.projection().bodies;
+    assert_eq!(bodies.len(), 2, "cycle 2 head has exactly two bodies");
+    assert!(bodies.contains_key(&BodyId(Uuid::from_u128(0x10)).to_string()));
+    assert!(bodies.contains_key(&BodyId(Uuid::from_u128(0x11)).to_string()));
+}
+
+#[tokio::test]
 async fn edit_during_regen_supersedes_via_live_fencing() {
     // R-WP11 fencing-live: begin_regen captures the tokens; an edit that lands
     // before the (lock-free) drive commits bumps the shared FencingCell, so the

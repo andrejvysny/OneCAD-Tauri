@@ -298,6 +298,112 @@ void test_post_edit_revision_adoption_and_fencing() {
     }
 }
 
+// --- D5: sequential replay-from-0 regens. The RegenPlanner always emits from-0
+// plans (empty-anchor base). After the first AcceptPrepared the head token is
+// nonzero, so a strict head-hash fence would reject every subsequent regen (the
+// sequential-regen blocker). D5: a from-0 plan (expectedBaseHash == empty anchor) is
+// ALWAYS base-valid — the head-hash comparison is skipped, the scratch starts EMPTY,
+// and accept REPLACES the head wholesale (no stale body from the prior head). The
+// M2-shaped sequence: from-0 plan 1 → accept → head hash nonzero → from-0 plan 2
+// (empty anchor again, a DIFFERENT body set) → must prepare + accept, publishing
+// plan 2's bodies ONLY. Also: an incremental plan (nonzero expectedBaseHash != head)
+// still rejects, and an epoch mismatch still rejects. ---
+void test_d5_from_zero_sequential_regen() {
+    constexpr const char* kBad =
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef0";
+    // A from-0 ExecutePlan at a chosen documentRevision, returning the terminal resp.
+    auto exec_from_zero = [](Session& s, std::uint64_t job, std::uint64_t rev, const json& ops,
+                             const json& prefix_hashes) {
+        CancelToken tok;
+        HandlerContext ctx{tok, [](int) {}, [](Envelope&) {}};
+        json args = {{"jobId", job},          {"documentRevision", rev},
+                     {"workerEpoch", 3},       {"expectedBaseHash", kEmpty},
+                     {"prefixHashes", prefix_hashes}, {"targetStep", ops.size()},
+                     {"ops", ops}};
+        return onecad::session::handle_execute_plan(s, Envelope::request(job, "ExecutePlan", args), ctx);
+    };
+    auto accept_rev = [](Session& s, std::uint64_t job, std::uint64_t rev) {
+        return onecad::session::handle_accept_prepared(
+            s, Envelope::request(job, "AcceptPrepared",
+                                 json{{"jobId", job}, {"documentRevision", rev}, {"workerEpoch", 3}}));
+    };
+
+    Session s; open_fresh(s);  // head: rev 0, epoch 3, hash kEmpty
+
+    // Plan 1 (from-0, rev 4): two NewBody extrudes → {body_op1, body_op9}.
+    json ops1 = json::array(
+        {rect_sketch("op0", "s1", 10, 10),
+         json{{"opType", "Extrude"}, {"opId", "op1"}, {"stepIndex", 1},
+              {"params", {{"sketchId", "s1"}, {"distance", 20.0}, {"extrudeMode", "Blind"}, {"booleanMode", "NewBody"}}}},
+         rect_sketch("op2", "s9", 8, 8),
+         json{{"opType", "Extrude"}, {"opId", "op9"}, {"stepIndex", 3},
+              {"params", {{"sketchId", "s9"}, {"distance", 5.0}, {"extrudeMode", "Blind"}, {"booleanMode", "NewBody"}}}}});
+    Envelope r1 = exec_from_zero(s, 1, 4, ops1, json::array({"a1", "b1", "c1", "d1"}));
+    check(r1.ok.value_or(false) && r1.result.value("stoppedReason", "") == "completed",
+          "D5 plan 1: from-0 prepares");
+    Envelope a1 = accept_rev(s, 1, 4);
+    check(a1.ok.value_or(false), "D5 plan 1: accept succeeds");
+    check(s.head().document_revision == 4, "D5 plan 1: head adopts revision 4");
+    check(s.head().history_prefix_hash == "d1", "D5 plan 1: head hash is nonzero (last prefix token)");
+    check(s.bodies_copy().size() == 2 && s.bodies_copy().contains("body_op1") &&
+              s.bodies_copy().contains("body_op9"),
+          "D5 plan 1: head has {body_op1, body_op9}");
+
+    // Plan 2 (from-0, empty anchor AGAIN, rev 9): a DIFFERENT body set —
+    // {body_op1, body_op3}. Under a strict head-hash fence this rejects (head is now
+    // "d1", not kEmpty); D5 makes it base-valid.
+    json ops2 = json::array(
+        {rect_sketch("op0", "s1", 10, 10),
+         json{{"opType", "Extrude"}, {"opId", "op1"}, {"stepIndex", 1},
+              {"params", {{"sketchId", "s1"}, {"distance", 20.0}, {"extrudeMode", "Blind"}, {"booleanMode", "NewBody"}}}},
+         rect_sketch("op2", "s3", 6, 6),
+         json{{"opType", "Extrude"}, {"opId", "op3"}, {"stepIndex", 3},
+              {"params", {{"sketchId", "s3"}, {"distance", 7.0}, {"extrudeMode", "Blind"}, {"booleanMode", "NewBody"}}}}});
+    Envelope r2 = exec_from_zero(s, 2, 9, ops2, json::array({"a2", "b2", "c2", "d2"}));
+    check(r2.ok.value_or(false) && r2.result.value("stoppedReason", "") == "completed",
+          "D5 plan 2: from-0 prepares AFTER head advanced (sequential regen unblocked)");
+    Envelope a2 = accept_rev(s, 2, 9);
+    check(a2.ok.value_or(false), "D5 plan 2: accept succeeds");
+    check(s.head().document_revision == 9, "D5 plan 2: head adopts revision 9");
+    // Wholesale replace: published set is plan 2's output ONLY — body_op9 (plan 1
+    // only) is GONE, body_op3 (plan 2 only) is present, body_op1 kept without a dupe.
+    check(s.bodies_copy().size() == 2, "D5 plan 2: exactly 2 bodies (wholesale replace, no dupes)");
+    check(s.bodies_copy().contains("body_op1"), "D5 plan 2: body_op1 present");
+    check(s.bodies_copy().contains("body_op3"), "D5 plan 2: body_op3 (new) present");
+    check(!s.bodies_copy().contains("body_op9"), "D5 plan 2: stale body_op9 dropped");
+
+    // Incremental plan (nonzero expectedBaseHash != head "d2") STILL rejects — the
+    // strict head-hash fence is unchanged for non-from-0 plans.
+    {
+        CancelToken tok;
+        HandlerContext ctx{tok, [](int) {}, [](Envelope&) {}};
+        json ops = json::array({rect_sketch("opX", "sx", 4, 4)});
+        json args = {{"jobId", 3}, {"documentRevision", 10}, {"workerEpoch", 3},
+                     {"expectedBaseHash", kBad}, {"prefixHashes", json::array({"z"})},
+                     {"targetStep", 1}, {"ops", ops}};
+        Envelope r = onecad::session::handle_execute_plan(s, Envelope::request(3, "ExecutePlan", args), ctx);
+        check(r.error.has_value() && r.error->code == "PROTOCOL_ERROR",
+              "D5: incremental plan (nonzero base != head) still rejects");
+        check(!s.head().has_scratch, "D5: incremental reject leaves session intact");
+    }
+    // Epoch mismatch STILL rejects (even for a from-0/empty-anchor plan).
+    {
+        CancelToken tok;
+        HandlerContext ctx{tok, [](int) {}, [](Envelope&) {}};
+        json ops = json::array({rect_sketch("opY", "sy", 4, 4)});
+        json args = {{"jobId", 4}, {"documentRevision", 11}, {"workerEpoch", 99},
+                     {"expectedBaseHash", kEmpty}, {"prefixHashes", json::array({"z"})},
+                     {"targetStep", 1}, {"ops", ops}};
+        Envelope r = onecad::session::handle_execute_plan(s, Envelope::request(4, "ExecutePlan", args), ctx);
+        check(r.error.has_value() && r.error->code == "PROTOCOL_ERROR",
+              "D5: epoch mismatch still rejects (fence order: epoch before from-0 exemption)");
+        check(!s.head().has_scratch, "D5: epoch reject leaves session intact");
+    }
+    // Head unchanged after the two rejects: still plan 2's published state.
+    check(s.head().document_revision == 9 && s.bodies_copy().size() == 2,
+          "D5: head intact after rejects");
+}
+
 // --- Standard_Failure at the Dispatcher::execute boundary -> recoverable
 // OP_FAILED, not std::terminate (SCHEMA §8; OCCT throws derive from
 // Standard_Transient, not std::exception, so they need their own catch). ---
@@ -327,6 +433,7 @@ int main() {
     test_standalone_boolean_and_delta_bodyid();
     test_cancellation_session_intact();
     test_post_edit_revision_adoption_and_fencing();
+    test_d5_from_zero_sequential_regen();
     test_dispatcher_occt_exception_recoverable();
     if (g_failures == 0) std::fprintf(stderr, "wp5_plan: OK\n");
     return g_failures;

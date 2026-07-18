@@ -175,6 +175,125 @@ async fn real_worker_handshake_execute_tessellate_shutdown() {
     wm.shutdown().await;
 }
 
+/// R-WP11.2 D5 reproduction against the REAL worker: two sequential *replay-from-0*
+/// ExecutePlan/AcceptPrepared cycles — exactly the shape the `RegenPlanner` emits
+/// (V1 has no checkpoint plumbing, so EVERY regen is a full replay with an
+/// empty-anchor `expectedBaseHash`). After cycle 1's accept the worker head token is
+/// nonzero, so a strict head-hash fence would reject cycle 2's empty-anchor plan (the
+/// sequential-regen blocker). Under D5 a from-0 plan is ALWAYS base-valid, so cycle 2
+/// (MORE ops + a HIGHER `documentRevision` + the empty anchor AGAIN) must prepare +
+/// accept, and the worker head adopts the new revision.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn real_worker_sequential_from_zero_regen_two_cycles() {
+    let Some(bin) = real_worker() else {
+        eprintln!("skip: real worker binary not found (set ONECAD_WORKER_PATH)");
+        return;
+    };
+    let wm = WorkerManager::spawn(SupervisorConfig::production(bin));
+    assert!(
+        wm.wait_ready(Duration::from_secs(10)).await,
+        "real worker must connect + OpenSession"
+    );
+
+    let ctx = PlanContext {
+        policy_versions: PolicyVersions::default(),
+        occt_fingerprint: String::new(),
+    };
+    // Build the RAW planner output — a from-0 plan with the empty-anchor base (no
+    // manual draining/override, unlike the incremental F1 test above).
+    let mk = |tl: &Timeline, rev: u64, job: u128| {
+        RegenPlanner::plan(
+            tl,
+            &DependencyGraph::new(),
+            &[],
+            RegenRequest::ToEnd { from: 0 },
+            &ctx,
+        )
+        .into_request(
+            JobId(Uuid::from_u128(job)),
+            DocumentRevision(rev),
+            WorkerEpoch(1),
+            PolicyVersions::default(),
+            PlanArtifacts { tessellate: None },
+        )
+    };
+
+    // Cycle 1 — from-0, one Sketch op, revision 0. Prepare + accept advances the
+    // worker head hash past the empty anchor.
+    let mut tl1 = Timeline::new();
+    tl1.insert_at_cursor(sketch_record(0xf1));
+    let plan1 = mk(&tl1, 0, 1);
+    assert_eq!(
+        plan1.expected_base_hash,
+        onecad_core::regen::HistoryPrefixHash::empty(),
+        "cycle 1 is a from-0 plan (empty anchor)"
+    );
+    let p1 = run_plan(&wm, plan1).await.expect("cycle 1 prepares");
+    assert_eq!(
+        p1.stopped_reason,
+        onecad_core::regen::StoppedReason::Completed
+    );
+    wm.accept_prepared(
+        JobId(Uuid::from_u128(1)),
+        Fencing {
+            document_revision: DocumentRevision(0),
+            worker_epoch: WorkerEpoch(1),
+        },
+    )
+    .await
+    .expect("accept cycle 1");
+
+    // Cycle 2 — the "edit": append a second Sketch op (MORE ops), bump the revision
+    // to 1 (HIGHER), and replay from 0 AGAIN (empty anchor). This is the raw executor
+    // shape that the pre-D5 worker rejected once the head had advanced.
+    let mut tl2 = Timeline::new();
+    tl2.insert_at_cursor(sketch_record(0xf1));
+    tl2.insert_at_cursor(sketch_record(0xf2));
+    let plan2 = mk(&tl2, 1, 2);
+    assert_eq!(
+        plan2.expected_base_hash,
+        onecad_core::regen::HistoryPrefixHash::empty(),
+        "cycle 2 is ALSO a from-0 plan (empty anchor) despite the advanced head"
+    );
+    assert_eq!(plan2.ops.len(), 2, "cycle 2 carries more ops than cycle 1");
+    let p2 = run_plan(&wm, plan2).await.unwrap_or_else(|e| {
+        panic!("sequential from-0 regen (cycle 2) must prepare, not be fenced (D5): {e}")
+    });
+    assert_eq!(
+        p2.stopped_reason,
+        onecad_core::regen::StoppedReason::Completed
+    );
+    let accept = wm
+        .accept_prepared(
+            JobId(Uuid::from_u128(2)),
+            Fencing {
+                document_revision: DocumentRevision(1),
+                worker_epoch: WorkerEpoch(1),
+            },
+        )
+        .await
+        .expect("accept cycle 2 (from-0, worker adopts documentRevision 1)");
+    assert_eq!(
+        accept.document_revision,
+        DocumentRevision(1),
+        "cycle 2 accept adopts the plan's documentRevision (D4/D5)"
+    );
+
+    // Final head reflects cycle 2: revision 1, head hash = cycle 2's last prefix token.
+    let head = wm.get_worker_head().await.expect("worker head");
+    assert_eq!(
+        head.document_revision,
+        DocumentRevision(1),
+        "final worker head adopts revision 1"
+    );
+    assert_eq!(
+        head.history_prefix_hash, p2.history_prefix_hash,
+        "final head hash = cycle 2's echoed history-prefix token"
+    );
+
+    wm.shutdown().await;
+}
+
 /// A minimal Sketch op — the real worker materializes it into the plan and returns
 /// `ok` (advancing the head hash) without any OCCT geometry, so a Sketch-only plan
 /// deterministically prepares. Used to advance the worker head across two cycles.

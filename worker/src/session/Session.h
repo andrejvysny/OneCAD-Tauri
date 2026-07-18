@@ -93,10 +93,15 @@ public:
     SketchStore& sketches() { return sketches_; }
 
     // --- ExecutePlan transaction machinery ---
-    // Validate fencing + reserve a prepared snapshot id + clone the live bodies /
+    // Validate fencing + reserve a prepared snapshot id + clone the base bodies /
     // committed prefix. Called at ExecutePlan entry (kernel lane) BEFORE the
     // lock-free op execution. Fencing is workerEpoch + expectedBaseHash ONLY (D4):
     // documentRevision is a Rust-owned advisory stamp and never rejects a plan.
+    // D5: a from-0 plan (no base checkpoint AND expectedBaseHash == kEmptyPrefixHash)
+    // is ALWAYS base-valid — the head-hash comparison is SKIPPED and the scratch is
+    // cloned from an EMPTY base (full replay + wholesale publish at accept), so
+    // sequential regens keep working after the head token advances. Incremental plans
+    // (expectedBaseHash != the empty anchor) keep the strict head-hash fence.
     FenceOutcome fence_and_clone(std::uint64_t job_id, std::uint64_t document_revision,
                                  std::uint64_t worker_epoch,
                                  const std::string& expected_base_hash);
