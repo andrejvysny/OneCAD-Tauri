@@ -238,6 +238,66 @@ void test_cancellation_session_intact() {
     check(h.history_prefix_hash == kEmpty, "cancel: head token unchanged");
 }
 
+// --- D4 / F1: post-edit revision adoption + workerEpoch/expectedBaseHash still
+// fence. Rust bumps its documentRevision (edit counter) AHEAD of the worker's
+// last-accepted head; ExecutePlan(documentRevision > head) must prepare+accept and
+// the head must ECHO the new revision (the pre-D4 worker rejected this — F1). ---
+void test_post_edit_revision_adoption_and_fencing() {
+    constexpr const char* kBad =
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef0";
+    // (1) documentRevision 7 > head 0 prepares, accepts, and the head adopts 7.
+    {
+        Session s; open_fresh(s);  // head: rev 0, epoch 3, hash kEmpty
+        json ops = json::array(
+            {rect_sketch("op0", "sk1", 10, 10),
+             json{{"opType", "Extrude"}, {"opId", "op1"}, {"stepIndex", 1},
+                  {"params", {{"sketchId", "sk1"}, {"distance", 20.0}, {"extrudeMode", "Blind"}, {"booleanMode", "NewBody"}}}}});
+        CancelToken tok;
+        HandlerContext ctx{tok, [](int) {}, [](Envelope&) {}};
+        json args = {{"jobId", 1}, {"documentRevision", 7}, {"workerEpoch", 3},
+                     {"expectedBaseHash", kEmpty}, {"prefixHashes", json::array({"h0", "h1"})},
+                     {"targetStep", 2}, {"ops", ops}};
+        Envelope r = onecad::session::handle_execute_plan(s, Envelope::request(1, "ExecutePlan", args), ctx);
+        check(r.ok.value_or(false) && r.result.value("stoppedReason", "") == "completed",
+              "post-edit: ExecutePlan(rev 7 > head 0) prepares (not rejected)");
+        Envelope acc = onecad::session::handle_accept_prepared(
+            s, Envelope::request(1, "AcceptPrepared",
+                                 json{{"jobId", 1}, {"documentRevision", 7}, {"workerEpoch", 3}}));
+        check(acc.ok.value_or(false), "post-edit: AcceptPrepared succeeds");
+        check(acc.result.value("documentRevision", static_cast<std::uint64_t>(0)) == 7,
+              "post-edit: accept returns the adopted revision 7");
+        check(s.head().document_revision == 7, "post-edit: head echoes adopted documentRevision 7");
+    }
+    // (2) workerEpoch mismatch STILL rejects (D4 keeps epoch fencing); session intact.
+    {
+        Session s; open_fresh(s);  // epoch 3
+        json ops = json::array({rect_sketch("op0", "sk1", 10, 10)});
+        CancelToken tok;
+        HandlerContext ctx{tok, [](int) {}, [](Envelope&) {}};
+        json args = {{"jobId", 2}, {"documentRevision", 0}, {"workerEpoch", 99},
+                     {"expectedBaseHash", kEmpty}, {"prefixHashes", json::array({"h0"})},
+                     {"targetStep", 1}, {"ops", ops}};
+        Envelope r = onecad::session::handle_execute_plan(s, Envelope::request(2, "ExecutePlan", args), ctx);
+        check(r.error.has_value() && r.error->code == "PROTOCOL_ERROR",
+              "epoch mismatch still rejects (PROTOCOL_ERROR)");
+        check(!s.head().has_scratch, "epoch mismatch: session intact (no scratch)");
+    }
+    // (3) expectedBaseHash mismatch STILL rejects.
+    {
+        Session s; open_fresh(s);  // head hash kEmpty
+        json ops = json::array({rect_sketch("op0", "sk1", 10, 10)});
+        CancelToken tok;
+        HandlerContext ctx{tok, [](int) {}, [](Envelope&) {}};
+        json args = {{"jobId", 3}, {"documentRevision", 0}, {"workerEpoch", 3},
+                     {"expectedBaseHash", kBad}, {"prefixHashes", json::array({"h0"})},
+                     {"targetStep", 1}, {"ops", ops}};
+        Envelope r = onecad::session::handle_execute_plan(s, Envelope::request(3, "ExecutePlan", args), ctx);
+        check(r.error.has_value() && r.error->code == "PROTOCOL_ERROR",
+              "expectedBaseHash mismatch still rejects (PROTOCOL_ERROR)");
+        check(!s.head().has_scratch, "hash mismatch: session intact (no scratch)");
+    }
+}
+
 // --- Standard_Failure at the Dispatcher::execute boundary -> recoverable
 // OP_FAILED, not std::terminate (SCHEMA §8; OCCT throws derive from
 // Standard_Transient, not std::exception, so they need their own catch). ---
@@ -266,6 +326,7 @@ int main() {
     test_boolean_grow_shrink_bodyid();
     test_standalone_boolean_and_delta_bodyid();
     test_cancellation_session_intact();
+    test_post_edit_revision_adoption_and_fencing();
     test_dispatcher_occt_exception_recoverable();
     if (g_failures == 0) std::fprintf(stderr, "wp5_plan: OK\n");
     return g_failures;

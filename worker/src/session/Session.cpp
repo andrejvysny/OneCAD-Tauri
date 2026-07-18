@@ -87,7 +87,8 @@ bool Session::has_scratch() const {
     return scratch_.has_value();
 }
 
-FenceOutcome Session::fence_and_clone(std::uint64_t job_id, std::uint64_t document_revision,
+FenceOutcome Session::fence_and_clone(std::uint64_t job_id,
+                                      std::uint64_t /*document_revision*/,  // D4: advisory, not fenced
                                       std::uint64_t worker_epoch,
                                       const std::string& expected_base_hash) {
     std::lock_guard<std::mutex> lk(mu_);
@@ -115,15 +116,17 @@ FenceOutcome Session::fence_and_clone(std::uint64_t job_id, std::uint64_t docume
         return out;
     }
 
-    // Fencing: revision + epoch must match the head (SCHEMA §7.2).
-    if (document_revision != document_revision_ || worker_epoch != worker_epoch_) {
+    // Fencing: ONLY workerEpoch gates a plan (D4). documentRevision is a Rust-owned
+    // advisory stamp (an edit counter) — the worker MUST NOT reject on it, because a
+    // post-edit regen legitimately carries a documentRevision ahead of the worker's
+    // last-accepted head. The plan's documentRevision is stored in the scratch and
+    // adopted as the head at AcceptPrepared. Epoch mismatch ⇒ PROTOCOL_ERROR (Rust
+    // reconciles via GetWorkerHead / restart).
+    if (worker_epoch != worker_epoch_) {
         out.status = FenceOutcome::Status::Error;
         out.error = protocol_error(
-            "ExecutePlan: revision/epoch fencing mismatch",
-            nlohmann::json{{"headRevision", document_revision_},
-                           {"planRevision", document_revision},
-                           {"headEpoch", worker_epoch_},
-                           {"planEpoch", worker_epoch}});
+            "ExecutePlan: workerEpoch fencing mismatch",
+            nlohmann::json{{"headEpoch", worker_epoch_}, {"planEpoch", worker_epoch}});
         return out;
     }
 
@@ -151,7 +154,8 @@ void Session::store_prepared(ScratchJob job) {
     scratch_ = std::move(job);
 }
 
-AcceptOutcome Session::accept_prepared(std::uint64_t job_id, std::uint64_t document_revision,
+AcceptOutcome Session::accept_prepared(std::uint64_t job_id,
+                                       std::uint64_t /*document_revision*/,  // D4: advisory
                                        std::uint64_t worker_epoch) {
     std::lock_guard<std::mutex> lk(mu_);
     AcceptOutcome out;
@@ -166,15 +170,13 @@ AcceptOutcome Session::accept_prepared(std::uint64_t job_id, std::uint64_t docum
             nlohmann::json{{"preparedJobId", scratch_->job_id}, {"requestedJobId", job_id}});
         return out;
     }
-    // Re-fence at accept time: the tokens must still be current (SCHEMA §7.2 — Rust
-    // validates documentRevision/workerEpoch still current before publishing).
-    if (document_revision != document_revision_ || worker_epoch != worker_epoch_) {
+    // Re-fence at accept time on workerEpoch ONLY (D4): documentRevision is advisory
+    // and never fences (a restart between prepare and accept bumps the epoch — that
+    // Rust catches here; a Rust-owned revision bump does not invalidate the publish).
+    if (worker_epoch != worker_epoch_) {
         out.error = protocol_error(
-            "AcceptPrepared: stale fencing tokens",
-            nlohmann::json{{"headRevision", document_revision_},
-                           {"acceptRevision", document_revision},
-                           {"headEpoch", worker_epoch_},
-                           {"acceptEpoch", worker_epoch}});
+            "AcceptPrepared: stale workerEpoch",
+            nlohmann::json{{"headEpoch", worker_epoch_}, {"acceptEpoch", worker_epoch}});
         return out;
     }
 
@@ -185,7 +187,10 @@ AcceptOutcome Session::accept_prepared(std::uint64_t job_id, std::uint64_t docum
     partition_ = std::move(scratch_->partition);
     history_prefix_hash_ = scratch_->history_prefix_hash;  // opaque; never recomputed
     snapshot_id_ = scratch_->prepared_snapshot_id;
-    document_revision_ = document_revision + 1;  // accept bumps the revision (SCHEMA 17→18)
+    // D4: ADOPT the accepted plan's documentRevision as the head (Rust-owned edit
+    // counter), instead of incrementing a worker-owned accept counter. Head stamps
+    // thereafter echo this revision.
+    document_revision_ = scratch_->plan_document_revision;
 
     out.ok = true;
     out.snapshot_id = snapshot_id_;

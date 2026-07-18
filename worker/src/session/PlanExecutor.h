@@ -4,8 +4,10 @@
 // token (prefixHashes[]), and an inline tessellate artifact (src/tess/*).
 //
 // The transaction machinery this proves (SCHEMA §7.2):
-//   * fence the plan (revision/epoch match head; expectedBaseHash == head
-//     historyPrefixHash) → else PROTOCOL_ERROR with reconciliation detail;
+//   * fence the plan (D4: workerEpoch matches head AND expectedBaseHash == head
+//     historyPrefixHash) → else PROTOCOL_ERROR with reconciliation detail. The
+//     plan's documentRevision is a Rust-owned advisory stamp (an edit counter) —
+//     NEVER fenced; it is adopted as the head documentRevision at AcceptPrepared;
 //   * execute ops sequentially into a SCRATCH clone (never the live session),
 //     streaming one `planStep` event per executed step (bodyEvents,
 //     elementMapDelta, needsRepair, three §12 signatures, diagnostics);

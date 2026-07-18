@@ -100,8 +100,8 @@ A frame with no binary payload sets `binLen = 0` and omits `bin` (or sets `bin:
 |------|-----------|-------|
 | `id` | JSON integer (`u64`) | Correlation id. **Rust-assigned, strictly monotonic** per connection. One request → one terminal `resp` with the same `id`. |
 | `seq` | JSON integer (`u64`) | Worker's global output sequence number. Monotonic across **every** frame the worker emits on the connection. Lets Rust detect drops/reordering. |
-| `documentRevision` | JSON integer (`u64`) | Rust-owned document revision the worker state derives from. Fencing token. |
-| `workerEpoch` | JSON integer (`u64`) | Incremented by Rust on every worker (re)start / `ResetSession`. Fencing token. |
+| `documentRevision` | JSON integer (`u64`) | **Rust-owned document revision (an edit counter); ADVISORY stamp, NOT a fencing token (D4).** The worker MUST NOT reject a request on `documentRevision` (a post-edit regen legitimately runs ahead of the worker's last-accepted head). It is carried in `ExecutePlan.args`, stored in the prepared scratch, and **adopted** as the worker head's `documentRevision` at `AcceptPrepared` (worker frame stamps thereafter echo it). See [§7.2](#72-regen--executeplan). |
+| `workerEpoch` | JSON integer (`u64`) | Incremented by Rust on every worker (re)start / `ResetSession`. **Fencing token.** |
 | `snapshotId` | JSON integer (`u64`) | Identifies one published geometry snapshot. Bodies/maps/signatures/meshes of one publish share it (Invariant 4). |
 | `jobId` | JSON integer (`u64`) | Rust-assigned id for one `ExecutePlan` job. Idempotent: re-sending the same `jobId` is a no-op if already prepared. |
 | `sketchRevision` | JSON integer (`u64`) | Rust-owned sketch revision. |
@@ -113,10 +113,15 @@ A frame with no binary payload sets `binLen = 0` and omits `bin` (or sets `bin:
 | hash | JSON string, lowercase hex, no `0x` | 64-bit hash → 16 hex chars (e.g. `"cbf29ce484222325"`). SHA-256 → 64 hex chars. Applies to `expectedBaseHash`, `historyPrefixHash`, all signatures, `brepContentHash`, `contentHash`, `tolerancePolicyHash`, `solverPolicyHash`, `occtFingerprint`, chunk `sha256`. |
 | coordinate / scalar geometry | JSON number (`f64`) | Subject to [§4](#4-json-encoding-rules) float rules. |
 
-`documentRevision` + `workerEpoch` together **fence** every mutation: the worker
-rejects a request whose `(documentRevision, workerEpoch)` does not match its
-current session head with `PROTOCOL_ERROR` (Rust then reconciles via
-`GetWorkerHead`).
+**Fencing (D4).** A session-mutating request is fenced on **`workerEpoch` +
+`expectedBaseHash` ONLY**: the worker rejects with `PROTOCOL_ERROR` (Rust reconciles
+via `GetWorkerHead`) when the request's `workerEpoch` does not match the head epoch,
+or its `expectedBaseHash` does not equal the head `historyPrefixHash`.
+`documentRevision` is **NOT** a fencing token — it is a Rust-owned advisory stamp
+(an edit counter) that the worker stores and **adopts** as its head at
+`AcceptPrepared` (see [§7.2](#72-regen--executeplan)). Fencing on it would reject
+every legitimate post-edit regen, whose `documentRevision` runs ahead of the
+worker's last-accepted head.
 
 ---
 
@@ -480,6 +485,16 @@ failure/NeedsRepair preparing snapshot `m−1`, and ends with a terminal
 }
 ```
 
+- **Fencing (D4) — `workerEpoch` + `expectedBaseHash` ONLY.** The worker fences an
+  `ExecutePlan` on its `workerEpoch` (must match the head epoch) and its
+  `expectedBaseHash` (must equal the head `historyPrefixHash`); either mismatch ⇒
+  `error.code = "PROTOCOL_ERROR"` (Rust reconciles via `GetWorkerHead`).
+  `documentRevision` is a **Rust-owned advisory stamp (an edit counter) and is NEVER
+  fenced** — the worker stores the plan's `documentRevision` in the prepared scratch
+  and **adopts** it as its head `documentRevision` at `AcceptPrepared` (rather than
+  incrementing a worker-owned accept counter). A post-edit regen legitimately carries
+  a `documentRevision` ahead of the worker's last-accepted head, so rejecting on it
+  would break every such regen.
 - **Hash provenance — Rust is the sole hash authority.** `expectedBaseHash` and
   every entry of `prefixHashes` are **opaque tokens minted by Rust**. Rust computes
   them from the **geometry-relevant canonical wire-op form** of each op — the
@@ -567,14 +582,19 @@ The prepared snapshot is held in scratch, NOT published. `preparedSnapshotId`
 becomes live only after `AcceptPrepared`.
 
 #### AcceptPrepared
-Publishes the prepared scratch snapshot into the active session atomically. Rust
-first validates `documentRevision`/`workerEpoch` still current.
+Publishes the prepared scratch snapshot into the active session atomically. The
+worker re-fences **`workerEpoch` ONLY** (a restart between prepare and accept bumps
+the epoch — Rust catches that here); `documentRevision` is not fenced. On publish the
+worker **adopts the accepted plan's `documentRevision`** (the value carried in the
+originating `ExecutePlan`, held in the scratch) as its head `documentRevision` —
+**not** a worker-owned `+1` accept counter (D4). The result echoes the adopted head
+revision.
 
 ```json
-// req.args
+// req.args  (documentRevision = the plan's Rust-owned edit counter)
 { "jobId": 88, "documentRevision": 17, "workerEpoch": 3 }
-// result
-{ "accepted": true, "snapshotId": 5013, "documentRevision": 18 }
+// result  (head ADOPTS the plan's documentRevision — echoes 17, not 18)
+{ "accepted": true, "snapshotId": 5013, "documentRevision": 17 }
 ```
 
 #### DiscardPrepared
@@ -1083,10 +1103,11 @@ Errors are returned in a terminal `resp` with `ok:false` and an `error` object:
   `NaN`/`Inf`, duplicate keys, chunk SHA-256 mismatch): the frame stream is
   unparseable — the reader tears down without resync; a terminal frame may not be
   produced.
-- **Well-framed but protocol-illegal request** (**unknown verb**, stale/mismatched
-  `documentRevision`/`workerEpoch`, malformed `args`): the frame parsed, so the
-  worker replies with a terminal `resp` `ok:false` `error.code:"PROTOCOL_ERROR"`.
-  Rust reconciles (`GetWorkerHead`) or restarts per severity.
+- **Well-framed but protocol-illegal request** (**unknown verb**, mismatched
+  `workerEpoch` or `expectedBaseHash` — the D4 fencing tokens; a stale
+  `documentRevision` is **not** an error, [§2](#2-identifier--scalar-types)/[§7.2](#72-regen--executeplan) — malformed `args`): the frame parsed, so the worker
+  replies with a terminal `resp` `ok:false` `error.code:"PROTOCOL_ERROR"`. Rust
+  reconciles (`GetWorkerHead`) or restarts per severity.
 
 **Timeouts** are enforced by **Rust**, not the worker:
 - `SolveDrag`: **250 ms**. On timeout Rust drops the stale drag (latest-wins) and
@@ -1262,6 +1283,26 @@ contract refinements (no worker has shipped against the prior text), so they are
 edits to version 1 rather than a version bump. They still fall under the
 [§13](#13-versioningchange-policy) change policy (fixture bump + cross-track
 sign-off) once fixtures exist.
+
+- **2026-07-18 — `documentRevision` is a Rust-owned advisory stamp, not a fencing
+  token; fencing = `expectedBaseHash` + `workerEpoch`** (D4, orchestrator-approved;
+  R-WP11.1). [§2](#2-identifier--scalar-types), [§7.2](#72-regen--executeplan),
+  [§8](#8-error-taxonomy). `ExecutePlan` and `AcceptPrepared` fencing drops the
+  `documentRevision` equality check: a session-mutating request is fenced on
+  `workerEpoch` (must match the head) **and** `expectedBaseHash` (must equal the head
+  `historyPrefixHash`) only. `documentRevision` is a Rust-owned edit counter carried
+  as an advisory stamp; the worker stores the plan's `documentRevision` in the
+  prepared scratch and **adopts** it as its head `documentRevision` at
+  `AcceptPrepared` (worker frame stamps thereafter echo it), instead of incrementing a
+  worker-owned accept counter. *Reason:* the pre-D4 worker advanced `documentRevision`
+  as its own accept counter, which diverged from Rust's edit counter; every post-edit
+  regen (whose `documentRevision` runs ahead of the worker's last-accepted head) was
+  then rejected with `PROTOCOL_ERROR`. Making `documentRevision` advisory + adopted
+  fixes that while keeping the real precondition guards (`workerEpoch` +
+  `expectedBaseHash`). No canonical `protocol/fixtures/` file embeds the old
+  `documentRevision` fencing (they carry no `ExecutePlan` fencing flow), so no
+  canonical fixture bump is required; the worker's local `executeplan_*` harness
+  fixtures were updated to the D4 rule.
 
 - **2026-07-17 — NeedsRepair evidence carries `scoringVersion`** (W-WP6,
   orchestrator sign-off pending). [§9](#9-needsrepair-payload) every NeedsRepair

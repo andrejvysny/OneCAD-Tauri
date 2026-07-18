@@ -7,12 +7,17 @@
 //! * **liveness** — ping (`GetWorkerHead`) every 5 s; 2 missed → `SIGKILL`
 //!   (SCHEMA §8 hung-worker rule);
 //! * **restart** — on exit/crash/kill, bump the [`WorkerEpoch`], invoke the
-//!   restart hook (**mark dirty + replay** via the regen path), and reconnect
-//!   with backoff `0.5 / 1 / 2 s ×3` → [`WorkerState::Failed`];
+//!   restart hook (**mark dirty + replay** via the regen path), and reconnect with
+//!   backoff `0.5 / 1 / 2 s ×3`. A failed *start* OR a **rapid death** (a worker
+//!   that dies within `healthy_threshold` of becoming Ready — a connect-then-die
+//!   flap) both count toward one strike budget (`max_rapid_deaths`); exhausting it
+//!   ⇒ [`WorkerState::Failed`] (F2). A death after a healthy period resets it;
 //! * **poison / circuit breaker** — a plan that crashes the worker on the same
-//!   `(historyPrefixHash, op, fingerprint)` key `poison_threshold` times stops
-//!   being retried and surfaces [`WorkerState::Failed`] (plan crash circuit
-//!   breaker), so a repeatedly-crashing plan converges instead of flapping.
+//!   `(historyPrefixHash, crashing-op, fingerprint)` key `poison_threshold` times
+//!   opens that plan-key's circuit: it then **fails fast without dispatch** (so it
+//!   stops killing the worker) but the worker stays alive/restarting so **other
+//!   plans still run** (F3). The circuit never sets [`WorkerState::Failed`] — only
+//!   the F2 flap budget does.
 //!
 //! It implements [`GeometryEngine`] + [`MeshProvider`] by translating core types
 //! to the OCW1 wire via [`wire`](super::wire) over the current
@@ -52,7 +57,8 @@ pub enum WorkerState {
     Ready,
     /// Died; reconnecting under backoff.
     Restarting,
-    /// Backoff exhausted or a poison circuit tripped — no worker.
+    /// The flap budget was exhausted (too many failed starts / rapid deaths) — no
+    /// worker. A poison circuit does NOT reach this state (F3).
     Failed,
 }
 
@@ -65,7 +71,8 @@ pub enum WorkerLifecycle {
     Restarting { epoch: u64, reason: String },
     /// Terminal: backoff exhausted (cannot start).
     Failed { reason: String },
-    /// A plan's crash circuit tripped (poison) — that plan is abandoned.
+    /// A plan-key's crash circuit tripped (poison): that plan now fails fast without
+    /// dispatch, but the worker stays alive so other plans still run (F3).
     CircuitOpen { key: String },
 }
 
@@ -83,8 +90,17 @@ pub struct SupervisorConfig {
     pub ping_interval: Duration,
     pub ping_timeout: Duration,
     pub max_missed_pings: u32,
-    /// Backoff delays between failed *start* attempts; length = strikes → Failed.
+    /// Backoff delays between failed *start* attempts.
     pub backoff: Vec<Duration>,
+    /// Strike budget for the unified flap counter (failed *starts* + **rapid
+    /// deaths**); exceeding it ⇒ [`WorkerState::Failed`] (F2). Defaults to
+    /// `backoff.len()` so the start-failure cadence is unchanged.
+    pub max_rapid_deaths: u32,
+    /// A worker that dies within this window of reaching [`WorkerState::Ready`] is a
+    /// **flap** (counts toward `max_rapid_deaths`); a death after living at least
+    /// this long resets the flap counter (F2 — a connect-then-die loop can no longer
+    /// restart forever).
+    pub healthy_threshold: Duration,
     /// Consecutive same-key crashes before the plan's circuit opens (poison).
     pub poison_threshold: u32,
     /// Auto-`OpenSession` after connect (production true; smoke test opens itself).
@@ -106,6 +122,8 @@ impl SupervisorConfig {
                 Duration::from_secs(1),
                 Duration::from_secs(2),
             ],
+            max_rapid_deaths: 3,
+            healthy_threshold: Duration::from_secs(5),
             poison_threshold: 3,
             auto_open_session: true,
         }
@@ -172,18 +190,21 @@ impl Shared {
         }
     }
 
-    fn record_success(&self, key: &str) {
+    /// Clears the crash count + open flag for every one of a plan's candidate op
+    /// keys (a successful prepare heals the plan — F3).
+    fn record_success(&self, keys: &[String]) {
         let mut p = self.poison.lock().unwrap();
-        p.counts.remove(key);
-        p.open.remove(key);
+        for key in keys {
+            p.counts.remove(key);
+            p.open.remove(key);
+        }
     }
 
-    fn is_circuit_open(&self, key: &str) -> bool {
-        self.poison.lock().unwrap().open.contains(key)
-    }
-
-    fn any_circuit_open(&self) -> bool {
-        !self.poison.lock().unwrap().open.is_empty()
+    /// Whether ANY of a plan's candidate op keys has an open circuit — the fail-fast
+    /// gate (the crashing op is one of them, so a poisoned plan is caught up front).
+    fn plan_circuit_open(&self, keys: &[String]) -> bool {
+        let p = self.poison.lock().unwrap();
+        keys.iter().any(|k| p.open.contains(k))
     }
 }
 
@@ -314,14 +335,21 @@ enum Death {
     PingTimeout,
 }
 
-/// The supervision loop: (re)connect, run until death, restart with backoff /
-/// poison-aware stop.
+/// The supervision loop: (re)connect, run until death, restart with backoff. A
+/// unified `flap_strikes` counter spans failed *starts* and **rapid deaths**
+/// (connect-then-die within `healthy_threshold`); exhausting `max_rapid_deaths` ⇒
+/// Failed (F2). A poisoned plan-key never stops the supervisor (F3) — the worker
+/// keeps restarting so other plans run.
 async fn supervise(shared: Arc<Shared>) {
-    let mut consecutive_start_failures = 0u32;
+    let mut flap_strikes = 0u32;
+    // F6: the restart hook (mark-dirty + enqueue replay) fires on the post-restart
+    // READY transition, not at death — so the replay it enqueues dispatches over a
+    // live connection instead of racing `conn == None`. `Some(epoch)` between a
+    // death and the next Ready.
+    let mut pending_restart_epoch: Option<u64> = None;
     loop {
         match spawn_and_connect(&shared).await {
             Ok((child, client)) => {
-                consecutive_start_failures = 0;
                 *shared.conn.write().unwrap() = Some(client.clone());
                 *shared.hello.lock().unwrap() = Some(client.hello().clone());
                 if shared.config.auto_open_session {
@@ -332,8 +360,15 @@ async fn supervise(shared: Arc<Shared>) {
                     epoch: shared.epoch.load(Ordering::SeqCst),
                     fingerprint: client.hello().occt.fingerprint.clone(),
                 });
+                // Fire the deferred restart hook now that the worker is Ready + the
+                // connection is live (F6).
+                if let Some(epoch) = pending_restart_epoch.take() {
+                    fire_restart_hook(&shared, WorkerEpoch(epoch));
+                }
+                let ready_at = tokio::time::Instant::now();
 
                 let death = run_until_death(&shared, &client, child).await;
+                let alive = ready_at.elapsed();
 
                 // Torn down: drop the connection and bump the epoch (fencing).
                 *shared.conn.write().unwrap() = None;
@@ -347,38 +382,55 @@ async fn supervise(shared: Arc<Shared>) {
                     epoch: new_epoch,
                     reason: reason.into(),
                 });
-                fire_restart_hook(&shared, WorkerEpoch(new_epoch));
+                // Defer the restart hook to the NEXT Ready (F6): a replay enqueued now
+                // would race `conn == None`. If the flap budget is exhausted below we
+                // never reach that Ready — correct, there is no worker to replay on.
+                pending_restart_epoch = Some(new_epoch);
 
-                // Poison: a tripped plan means we stop chasing a crash loop.
-                if shared.any_circuit_open() {
-                    shared.set_state(WorkerState::Failed);
-                    shared.emit(WorkerLifecycle::Failed {
-                        reason: "crash circuit breaker open (poison)".into(),
-                    });
-                    return;
+                // F2: a death within `healthy_threshold` of becoming Ready is a flap
+                // (counts toward the strike budget); a longer-lived worker resets it.
+                if alive < shared.config.healthy_threshold {
+                    flap_strikes += 1;
+                    if flap_strikes > shared.config.max_rapid_deaths {
+                        shared.set_state(WorkerState::Failed);
+                        shared.emit(WorkerLifecycle::Failed {
+                            reason: format!(
+                                "rapid-death budget exhausted after {flap_strikes} flaps ({reason})"
+                            ),
+                        });
+                        return;
+                    }
+                    // Back off like a start failure so a connect-die loop can't spin.
+                    let idx = (flap_strikes as usize - 1)
+                        .min(shared.config.backoff.len().saturating_sub(1));
+                    let delay = shared
+                        .config
+                        .backoff
+                        .get(idx)
+                        .copied()
+                        .unwrap_or_else(|| first_delay(&shared));
+                    tokio::time::sleep(delay).await;
+                } else {
+                    flap_strikes = 0;
+                    // Restart cadence: reuse the first backoff delay for runtime deaths.
+                    tokio::time::sleep(first_delay(&shared)).await;
                 }
-                // Restart cadence: reuse the first backoff delay for runtime deaths.
-                tokio::time::sleep(first_delay(&shared)).await;
             }
             Err(reason) => {
-                consecutive_start_failures += 1;
+                flap_strikes += 1;
                 shared.set_state(WorkerState::Restarting);
                 shared.emit(WorkerLifecycle::Restarting {
                     epoch: shared.epoch.load(Ordering::SeqCst),
                     reason: format!("start failed: {reason}"),
                 });
-                let strikes = shared.config.backoff.len() as u32;
-                if consecutive_start_failures > strikes {
+                if flap_strikes > shared.config.max_rapid_deaths {
                     shared.set_state(WorkerState::Failed);
                     shared.emit(WorkerLifecycle::Failed {
-                        reason: format!(
-                            "backoff exhausted after {consecutive_start_failures} tries: {reason}"
-                        ),
+                        reason: format!("backoff exhausted after {flap_strikes} tries: {reason}"),
                     });
                     return;
                 }
-                let idx =
-                    (consecutive_start_failures as usize - 1).min(shared.config.backoff.len() - 1);
+                let idx = (flap_strikes as usize - 1).min(shared.config.backoff.len() - 1);
                 tokio::time::sleep(shared.config.backoff[idx]).await;
             }
         }
@@ -609,12 +661,15 @@ impl GeometryEngine for WorkerManager {
 
 /// Drives one `ExecutePlan`: send it, forward each `planStep` `event` as
 /// [`PlanEvent::Step`], then the terminal `PlanPrepared`/error/crash. Records
-/// crashes against the poison key and fast-fails an open circuit (SCHEMA §8).
+/// crashes against the **crashing op's** poison key and fast-fails an open circuit
+/// (SCHEMA §8 / F3).
 async fn stream_plan(shared: Arc<Shared>, request: PlanRequest, tx: mpsc::Sender<PlanEvent>) {
     let job = request.job_id;
-    let key = poison_key(&request, &shared.fingerprint());
+    // One candidate poison key per op (`base | opRecordId | fingerprint`); the
+    // crashing op is one of them, so a poisoned plan is caught up front (F3).
+    let op_keys = plan_op_keys(&request, &shared.fingerprint());
 
-    if shared.is_circuit_open(&key) {
+    if shared.plan_circuit_open(&op_keys) {
         let _ = tx
             .send(PlanEvent::Failed(EngineError::Crashed {
                 message: "crash circuit breaker open (poison) — plan abandoned".into(),
@@ -650,6 +705,9 @@ async fn stream_plan(shared: Arc<Shared>, request: PlanRequest, tx: mpsc::Sender
     shared.inflight.lock().unwrap().insert(job, id);
     let mut resp_fut = Box::pin(inflight.response());
 
+    // Count executed steps so a transport loss can be attributed to the crashing op
+    // (= the op at `steps_received`, clamped) rather than the plan's last op (F3).
+    let mut steps_received = 0usize;
     let terminal = loop {
         tokio::select! {
             biased;
@@ -658,6 +716,7 @@ async fn stream_plan(shared: Arc<Shared>, request: PlanRequest, tx: mpsc::Sender
                     let step = e.step_index.map_or(0, |s| s as usize);
                     match wire::parse_plan_step(&e.payload, step) {
                         Ok(s) => {
+                            steps_received += 1;
                             if tx.send(PlanEvent::Step(s)).await.is_err() {
                                 shared.inflight.lock().unwrap().remove(&job);
                                 return;
@@ -679,7 +738,7 @@ async fn stream_plan(shared: Arc<Shared>, request: PlanRequest, tx: mpsc::Sender
     };
 
     shared.inflight.lock().unwrap().remove(&job);
-    let event = finish_plan(&shared, &key, job, terminal);
+    let event = finish_plan(&shared, &op_keys, steps_received, job, terminal);
     let _ = tx.send(event).await;
 }
 
@@ -690,14 +749,22 @@ enum StreamEnd {
 }
 
 /// Maps a stream terminal to the final [`PlanEvent`], updating poison state.
-fn finish_plan(shared: &Shared, key: &str, job: JobId, terminal: StreamEnd) -> PlanEvent {
+/// `op_keys` is the plan's per-op candidate keys (execution order); `steps_received`
+/// is how many `planStep`s arrived, so a crash is attributed to the crashing op.
+fn finish_plan(
+    shared: &Shared,
+    op_keys: &[String],
+    steps_received: usize,
+    job: JobId,
+    terminal: StreamEnd,
+) -> PlanEvent {
     match terminal {
         StreamEnd::Local(err) => PlanEvent::Failed(err),
         StreamEnd::Resp(Ok(resp)) if resp.ok => {
             let result = resp.result.unwrap_or(Value::Null);
             match wire::parse_plan_prepared(job, &result) {
                 Ok(p) => {
-                    shared.record_success(key);
+                    shared.record_success(op_keys);
                     PlanEvent::Prepared(p)
                 }
                 Err(msg) => PlanEvent::Failed(EngineError::Protocol { message: msg }),
@@ -715,12 +782,15 @@ fn finish_plan(shared: &Shared, key: &str, job: JobId, terminal: StreamEnd) -> P
             PlanEvent::Failed(err)
         }
         StreamEnd::Resp(Err(proto)) => {
-            // Transport died mid-plan ⇒ crash. Feed the circuit breaker.
-            if shared.record_crash(key) {
-                shared.set_state(WorkerState::Failed);
-                shared.emit(WorkerLifecycle::CircuitOpen {
-                    key: key.to_string(),
-                });
+            // Transport died mid-plan ⇒ crash. Key the poison entry on the CRASHING
+            // op (the op at `steps_received`, clamped to the last), not the plan's
+            // last op (F3). Opening the circuit FAILS FAST that plan-key next time,
+            // but does NOT kill the worker (the supervisor keeps it alive so other
+            // plans still run) — only the F2 flap budget reaches Failed.
+            if let Some(key) = op_keys.get(steps_received.min(op_keys.len().saturating_sub(1))) {
+                if shared.record_crash(key) {
+                    shared.emit(WorkerLifecycle::CircuitOpen { key: key.clone() });
+                }
             }
             PlanEvent::Failed(EngineError::Crashed {
                 message: format!("worker crashed mid-plan: {proto}"),
@@ -729,32 +799,41 @@ fn finish_plan(shared: &Shared, key: &str, job: JobId, terminal: StreamEnd) -> P
     }
 }
 
-/// The poison key: `historyPrefixHash | last-op | fingerprint` (SCHEMA §8 crash
-/// circuit breaker keys on the same `(history hash, op, fingerprint)`).
-fn poison_key(req: &PlanRequest, fingerprint: &str) -> String {
-    let last_op = req
-        .ops
-        .last()
-        .map(|o| o.record_id.to_string())
-        .unwrap_or_default();
-    format!(
-        "{}|{}|{}",
-        req.expected_base_hash.as_str(),
-        last_op,
-        fingerprint
-    )
+/// A plan's candidate poison keys — one per op, `historyPrefixHash | opRecordId |
+/// fingerprint` in execution order (SCHEMA §8 keys on `(history hash, op,
+/// fingerprint)`; the crashing op is one of these — F3).
+fn plan_op_keys(req: &PlanRequest, fingerprint: &str) -> Vec<String> {
+    req.ops
+        .iter()
+        .map(|o| {
+            format!(
+                "{}|{}|{}",
+                req.expected_base_hash.as_str(),
+                o.record_id,
+                fingerprint
+            )
+        })
+        .collect()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MeshProvider (Tessellate + MESH1 bulk assembly, SCHEMA §5.2 / §7.6)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// A bulk MESH1 stream being reassembled from chunk frames.
+/// A finalized bulk payload: `(bytes, manifest totalBytes, manifest sha256)`.
+type MeshPayload = (Vec<u8>, Option<u64>, Option<String>);
+
+/// A bulk MESH1 stream being reassembled from chunk frames. Records the manifest's
+/// integrity fields + every received byte segment so [`finalize`](Self::finalize)
+/// can verify the payload tiles `[0, totalBytes)` EXACTLY — a gap or overlap is a
+/// PROTOCOL_ERROR, never zero-fill-and-hope (F5).
 #[derive(Default)]
 struct StreamAcc {
     buf: Vec<u8>,
     total_bytes: Option<u64>,
     sha256: Option<String>,
+    /// Received `(start, end)` byte ranges, in arrival order.
+    segments: Vec<(u64, u64)>,
 }
 
 impl StreamAcc {
@@ -765,14 +844,42 @@ impl StreamAcc {
                 self.sha256 = c.sha256.clone();
             }
             onecad_protocol::messages::ChunkKind::Data => {
-                let off = c.byte_offset.unwrap_or(0) as usize;
-                let end = off + bin.len();
-                if self.buf.len() < end {
-                    self.buf.resize(end, 0);
+                let off = c.byte_offset.unwrap_or(0);
+                let end = off + bin.len() as u64;
+                let (start_us, end_us) = (off as usize, end as usize);
+                if self.buf.len() < end_us {
+                    self.buf.resize(end_us, 0);
                 }
-                self.buf[off..end].copy_from_slice(bin);
+                self.buf[start_us..end_us].copy_from_slice(bin);
+                self.segments.push((off, end));
             }
         }
+    }
+
+    /// Verifies the received segments tile `[0, totalBytes)` with no gap and no
+    /// overlap, then returns `(payload, manifest totalBytes, manifest sha256)`.
+    fn finalize(mut self) -> Result<MeshPayload, EngineError> {
+        let mut segs = self.segments.clone();
+        segs.sort_by_key(|&(start, _)| start);
+        let mut cursor = 0u64;
+        for &(start, end) in &segs {
+            match start.cmp(&cursor) {
+                std::cmp::Ordering::Greater => {
+                    return Err(protocol("MESH1 stream has a gap between chunks"));
+                }
+                std::cmp::Ordering::Less => {
+                    return Err(protocol("MESH1 stream has overlapping chunks"));
+                }
+                std::cmp::Ordering::Equal => cursor = end,
+            }
+        }
+        if let Some(t) = self.total_bytes {
+            if cursor != t {
+                return Err(protocol("MESH1 stream chunks do not cover [0, totalBytes)"));
+            }
+            self.buf.truncate(t as usize);
+        }
+        Ok((self.buf, self.total_bytes, self.sha256))
     }
 }
 
@@ -832,8 +939,13 @@ impl MeshProvider for WorkerManager {
 }
 
 /// Extracts + verifies one MESH1 blob from a `Tessellate` result: inline (`bin`
-/// section in the resp tail) or a bulk stream (`streamId`). Verifies size +
-/// SHA-256 and validates the MESH1 header (Invariant 5 forward-verbatim).
+/// section in the resp tail) or a bulk stream (`streamId`). A streamed payload's
+/// chunks must tile `[0, totalBytes)` exactly (F5 gap-detection). The integrity
+/// fields (`totalBytes`/`sha256`) are cross-checked between the manifest and the
+/// resp handle when both are present (mismatch = error); when the resp handle omits
+/// them the manifest's are used (a worker omitting resp fields never skips
+/// verification); when BOTH are absent only the MESH1 header is validated. Verifies
+/// size + SHA-256 and validates the header (Invariant 5 forward-verbatim).
 fn assemble_mesh(
     result: &Value,
     resp: &onecad_protocol::messages::RespFrame,
@@ -846,32 +958,68 @@ fn assemble_mesh(
         .and_then(|a| a.first())
         .ok_or_else(|| protocol("Tessellate result carried no meshes"))?;
 
-    let blob = if let Some(name) = mesh.get("bin").and_then(Value::as_str) {
-        let section = resp
-            .bin
-            .as_ref()
-            .and_then(|secs| secs.iter().find(|s| s.name == name))
-            .ok_or_else(|| protocol("inline mesh bin section missing"))?;
-        let start = section.off as usize;
-        let end = start + section.len as usize;
-        tail.get(start..end)
-            .ok_or_else(|| protocol("inline mesh bin section out of range"))?
-            .to_vec()
-    } else if let Some(stream_id) = mesh.get("streamId").and_then(Value::as_u64) {
-        let acc = streams
-            .remove(&stream_id)
-            .ok_or_else(|| protocol("mesh stream frames never arrived"))?;
-        acc.buf
-    } else {
-        return Err(protocol("mesh handle has neither inline bin nor streamId"));
-    };
+    let resp_total = mesh.get("totalBytes").and_then(Value::as_u64);
+    let resp_sha = mesh
+        .get("sha256")
+        .and_then(Value::as_str)
+        .map(str::to_string);
 
-    verify_mesh(
-        &blob,
-        mesh.get("totalBytes").and_then(Value::as_u64),
-        mesh.get("sha256").and_then(Value::as_str),
-    )?;
+    // (blob, manifest totalBytes, manifest sha256). Inline handles carry no manifest.
+    let (blob, manifest_total, manifest_sha) =
+        if let Some(name) = mesh.get("bin").and_then(Value::as_str) {
+            let section = resp
+                .bin
+                .as_ref()
+                .and_then(|secs| secs.iter().find(|s| s.name == name))
+                .ok_or_else(|| protocol("inline mesh bin section missing"))?;
+            let start = section.off as usize;
+            let end = start + section.len as usize;
+            let bytes = tail
+                .get(start..end)
+                .ok_or_else(|| protocol("inline mesh bin section out of range"))?
+                .to_vec();
+            (bytes, None, None)
+        } else if let Some(stream_id) = mesh.get("streamId").and_then(Value::as_u64) {
+            let acc = streams
+                .remove(&stream_id)
+                .ok_or_else(|| protocol("mesh stream frames never arrived"))?;
+            acc.finalize()? // gap/overlap detection (F5)
+        } else {
+            return Err(protocol("mesh handle has neither inline bin nor streamId"));
+        };
+
+    let total = reconcile_field(manifest_total, resp_total, "totalBytes")?;
+    let sha = reconcile_field(manifest_sha, resp_sha, "sha256")?;
+    if total.is_none() && sha.is_none() {
+        eprintln!(
+            "worker: mesh handle carried no totalBytes/sha256 (manifest or resp) — \
+             validating MESH1 header only"
+        );
+    }
+    verify_mesh(&blob, total, sha.as_deref())?;
     Ok(blob)
+}
+
+/// Reconciles a manifest-level and a resp-level copy of an integrity field: both
+/// present and unequal ⇒ error; otherwise the present value (manifest preferred),
+/// or `None` when neither carries it (F5).
+fn reconcile_field<T: PartialEq + std::fmt::Display>(
+    manifest: Option<T>,
+    resp: Option<T>,
+    field: &str,
+) -> Result<Option<T>, EngineError> {
+    match (manifest, resp) {
+        (Some(m), Some(r)) => {
+            if m != r {
+                return Err(EngineError::Protocol {
+                    message: format!("mesh {field} mismatch: manifest {m} != resp {r}"),
+                });
+            }
+            Ok(Some(m))
+        }
+        (Some(m), None) => Ok(Some(m)),
+        (None, r) => Ok(r),
+    }
 }
 
 fn verify_mesh(blob: &[u8], total: Option<u64>, sha: Option<&str>) -> Result<(), EngineError> {

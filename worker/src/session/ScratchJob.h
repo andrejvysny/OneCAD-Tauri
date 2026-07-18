@@ -47,6 +47,12 @@ struct StepResult {
 struct ScratchJob {
     std::uint64_t job_id = 0;
 
+    // The plan's documentRevision (D4): Rust-owned advisory edit counter carried in
+    // the ExecutePlan args. The worker NEVER fences on it (only workerEpoch +
+    // expectedBaseHash gate a plan); it is stored here and ADOPTED as the session
+    // head documentRevision at AcceptPrepared (head stamps thereafter echo it).
+    std::uint64_t plan_document_revision = 0;
+
     // The scratch body state (clone of live at fence time, mutated by ops).
     BodyStore bodies;
 

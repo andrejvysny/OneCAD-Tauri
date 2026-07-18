@@ -67,10 +67,23 @@ pub fn parse_body_id(s: &str) -> Result<BodyId, String> {
         .map_err(|e| format!("bodyId {s:?} opId is not a uuid: {e}"))
 }
 
-/// The wire `jobId` (SCHEMA §2 `u64`) for a core [`JobId`] (a uuid carrying the
-/// app's small job counter in its low bits — see `DocumentRuntime::next_job_id`).
+/// The wire `jobId` (SCHEMA §2 `u64`) for a core [`JobId`].
+///
+/// **Collision-safety invariant:** a `JobId` is minted from a strictly-monotonic
+/// per-document `u64` counter via `Uuid::from_u128(u128::from(counter))` (see
+/// `DocumentRuntime::next_job_id`), so the uuid's full 128-bit value equals the
+/// counter and always fits in the low 64 bits. Truncating to `u64` here is
+/// therefore lossless and collision-free per connection — two distinct jobs never
+/// map to the same wire id. The `debug_assert` pins that invariant at the
+/// truncation site: a `JobId` with any high bits set would be a mis-minted id.
 #[must_use]
 pub fn job_id_wire(job: JobId) -> u64 {
+    debug_assert_eq!(
+        job.0.as_u128() >> 64,
+        0,
+        "JobId must be minted from a monotonic u64 counter (no high bits) so the wire \
+         truncation is collision-free"
+    );
     job.0.as_u128() as u64
 }
 
@@ -505,6 +518,20 @@ mod tests {
         let wire = body_id_wire(b);
         assert!(wire.starts_with("body_"));
         assert_eq!(parse_body_id(&wire).unwrap(), b);
+    }
+
+    #[test]
+    fn job_id_wire_is_lossless_for_counter_minted_ids() {
+        // JobId collision-safety invariant: counter-minted ids (u128::from(u64))
+        // truncate to u64 losslessly, so distinct counters ⇒ distinct wire ids.
+        for counter in [0u64, 1, 2, 88, u32::MAX as u64, u64::MAX] {
+            let job = JobId(Uuid::from_u128(u128::from(counter)));
+            assert_eq!(job_id_wire(job), counter, "wire id must equal the counter");
+        }
+        // A large counter and its successor never collide on the wire.
+        let a = JobId(Uuid::from_u128(u128::from(u64::MAX - 1)));
+        let b = JobId(Uuid::from_u128(u128::from(u64::MAX)));
+        assert_ne!(job_id_wire(a), job_id_wire(b));
     }
 
     #[test]

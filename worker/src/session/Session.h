@@ -95,7 +95,8 @@ public:
     // --- ExecutePlan transaction machinery ---
     // Validate fencing + reserve a prepared snapshot id + clone the live bodies /
     // committed prefix. Called at ExecutePlan entry (kernel lane) BEFORE the
-    // lock-free op execution.
+    // lock-free op execution. Fencing is workerEpoch + expectedBaseHash ONLY (D4):
+    // documentRevision is a Rust-owned advisory stamp and never rejects a plan.
     FenceOutcome fence_and_clone(std::uint64_t job_id, std::uint64_t document_revision,
                                  std::uint64_t worker_epoch,
                                  const std::string& expected_base_hash);
@@ -104,10 +105,11 @@ public:
     void store_prepared(ScratchJob job);
 
     // AcceptPrepared: publish the prepared scratch atomically (swap bodies +
-    // partition in, advance head + snapshotId + revision, adopt the opaque head
-    // token). Re-fences the tokens. (Sketches materialized by the plan are
-    // intra-plan only — the solver lane owns sketch authoring — so they are not
-    // republished here.)
+    // partition in, advance snapshotId, adopt the opaque head token, and ADOPT the
+    // plan's documentRevision as the head — D4). Re-fences workerEpoch ONLY (a
+    // restart between prepare/accept bumps the epoch). (Sketches materialized by the
+    // plan are intra-plan only — the solver lane owns sketch authoring — so they are
+    // not republished here.)
     AcceptOutcome accept_prepared(std::uint64_t job_id, std::uint64_t document_revision,
                                   std::uint64_t worker_epoch);
 

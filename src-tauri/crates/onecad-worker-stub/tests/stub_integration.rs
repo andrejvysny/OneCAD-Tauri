@@ -335,10 +335,13 @@ fn match_placeholder(
         return Ok(());
     }
     if token == "$hex64" {
-        return check_hex(actual, 16);
+        // A 64-bit (16 char) OR SHA-256 (64 char) lowercase-hex hash — matching the
+        // C++ harness's `$hex64` leniency. The canonical hello fixture uses it for
+        // both the 16-char occt fingerprint and the 64-char empty-prefix hash.
+        return check_hex(actual, &[16, 64]);
     }
     if token == "$hex256" {
-        return check_hex(actual, 64);
+        return check_hex(actual, &[64]);
     }
     if let Some(name) = token.strip_prefix("$capture:") {
         caps.insert(name.to_string(), actual.clone());
@@ -359,16 +362,18 @@ fn match_placeholder(
     }
 }
 
-fn check_hex(actual: &Value, len: usize) -> Result<(), String> {
+fn check_hex(actual: &Value, lens: &[usize]) -> Result<(), String> {
     match actual.as_str() {
         Some(s)
-            if s.len() == len
+            if lens.contains(&s.len())
                 && s.bytes()
                     .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()) =>
         {
             Ok(())
         }
-        Some(s) => Err(format!("expected {len}-char lowercase hex, got {s:?}")),
+        Some(s) => Err(format!(
+            "expected lowercase hex of length {lens:?}, got {s:?}"
+        )),
         None => Err(format!("expected hex string, got {actual}")),
     }
 }

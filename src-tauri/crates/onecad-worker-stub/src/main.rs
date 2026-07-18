@@ -20,12 +20,29 @@
 //! - `ONECAD_STUB_CHUNKED_MESH=1` — `Tessellate` streams its MESH1 blob as a bulk
 //!   chunk manifest + data frames (SCHEMA §5.2) instead of inlining it, exercising
 //!   the client's chunk-assembly + credit path.
+//! - `ONECAD_STUB_CHUNKED_MESH_GAP=<mode>` — with `ONECAD_STUB_CHUNKED_MESH=1`,
+//!   corrupts the tiling of the streamed chunks (`gap` = leave a hole; `overlap` =
+//!   overlap two chunks) so the client's StreamAcc gap-detection fires (F5).
+//! - `ONECAD_STUB_EXIT_AFTER_HELLO=1` — exit 0 immediately after the unsolicited
+//!   `hello` (connect-then-die), driving the supervisor's rapid-death restart cap
+//!   (F2). No session/plan is ever served.
+//! - `ONECAD_STUB_CRASH_ON_OP=<substr>` — `abort()` mid-plan when an op's `opId`
+//!   contains `<substr>` (the F3 poison test: crash one specific plan's op so its
+//!   crashing-op key poisons while a different plan still runs).
 //!
 //! Beyond the lifecycle verbs, the stub speaks a minimal `ExecutePlan`
 //! (one `planStep` per op minting `body_<opId>`, terminal `PlanPrepared` echoing
 //! the plan's opaque history-prefix token), `AcceptPrepared`/`DiscardPrepared`,
 //! `ResetSession`, and `Tessellate` (a header-only valid MESH1 blob) — enough to
 //! drive the real regen/mesh path end-to-end without OCCT.
+//!
+//! Fencing (D4): the stub mirrors the real worker — `ExecutePlan` fences on
+//! `workerEpoch` + `expectedBaseHash` ONLY (same PROTOCOL_ERROR shapes), never on
+//! `documentRevision`; the head ADOPTS the plan's `documentRevision` + echoed
+//! `historyPrefixHash` at `AcceptPrepared`. The one divergence from the real worker
+//! (which requires `OpenSession`): when a plan arrives before any `OpenSession`
+//! (the chaos drills), the stub adopts that first plan's epoch + base hash as the
+//! fencing baseline and fences every plan thereafter.
 //!
 //! Logs go to stderr only; stdout carries frames exclusively (SCHEMA §1).
 
@@ -42,6 +59,22 @@ use onecad_protocol::messages::{
 };
 use onecad_protocol::ProtocolError;
 
+/// The SHA-256 of zero bytes — the empty-prefix `historyPrefixHash` anchor (the
+/// base of a replay-from-0 plan). Mirrors the real worker's `kEmptyPrefixHash` and
+/// onecad-core `HistoryPrefixHash::empty()`.
+const EMPTY_PREFIX_HASH: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+/// One prepared-but-not-published scratch job (D4: carries the head token it would
+/// adopt on accept + the plan's advisory documentRevision).
+struct Prepared {
+    job_id: u64,
+    prepared_snapshot_id: u64,
+    /// The `historyPrefixHash` this job would adopt as the head on accept.
+    history_prefix_hash: String,
+    /// The plan's Rust-owned documentRevision, ADOPTED as the head on accept (D4).
+    plan_document_revision: u64,
+}
+
 /// Mutable stub state across the request loop.
 struct StubState {
     /// Worker output sequence number (SCHEMA §2: monotonic across every frame).
@@ -50,8 +83,15 @@ struct StubState {
     document_revision: u64,
     worker_epoch: u64,
     snapshot_id: u64,
-    /// Prepared-but-not-published scratch jobs: `(jobId, preparedSnapshotId)`.
-    prepared: Vec<(u64, u64)>,
+    /// The head `historyPrefixHash` (fencing token; adopted from a plan's echo on
+    /// accept). Mirrors the real worker's session head.
+    history_prefix_hash: String,
+    /// Whether the fencing baseline (epoch + head hash) has been established — set
+    /// by OpenSession, or lazily by the first ExecutePlan when no session was
+    /// opened (the chaos drills drive ExecutePlan directly, without OpenSession).
+    fencing_baseline_set: bool,
+    /// Prepared-but-not-published scratch jobs (D4-aware).
+    prepared: Vec<Prepared>,
     /// Monotonic bulk-stream id allocator (SCHEMA §2 `streamId`).
     stream_id: u64,
 }
@@ -64,6 +104,8 @@ impl StubState {
             document_revision: 0,
             worker_epoch: 0,
             snapshot_id: 0,
+            history_prefix_hash: EMPTY_PREFIX_HASH.to_string(),
+            fencing_baseline_set: false,
             prepared: Vec::new(),
             stream_id: 700,
         }
@@ -117,6 +159,12 @@ fn run() -> i32 {
     if let Err(err) = write_hello(&mut writer, hello_seq) {
         eprintln!("stub: failed to write hello: {err}");
         return 1;
+    }
+
+    // Chaos: connect-then-die immediately after the hello (F2 rapid-death cap).
+    if env_flag("ONECAD_STUB_EXIT_AFTER_HELLO") {
+        eprintln!("stub: EXIT_AFTER_HELLO -> exit 0 right after hello");
+        return 0;
     }
 
     loop {
@@ -214,7 +262,7 @@ fn handle_req<W: Write>(writer: &mut W, state: &mut StubState, req: ReqFrame) ->
                     document_revision: state.document_revision,
                     worker_epoch: state.worker_epoch,
                     snapshot_id: state.snapshot_id,
-                    history_prefix_hash: "0000000000000000".into(),
+                    history_prefix_hash: state.history_prefix_hash.clone(),
                     has_scratch: !state.prepared.is_empty(),
                 },
             )
@@ -272,6 +320,10 @@ fn handle_open_session<W: Write>(
             state.document_revision = args.document_revision;
             state.worker_epoch = args.worker_epoch;
             state.snapshot_id = 0;
+            // Fresh document ⇒ empty-prefix head hash; the fencing baseline is now set
+            // (SCHEMA §7.1 / D4).
+            state.history_prefix_hash = EMPTY_PREFIX_HASH.to_string();
+            state.fencing_baseline_set = true;
             let stamp = state.stamp();
             write_resp_ok(
                 writer,
@@ -332,14 +384,53 @@ fn handle_execute_plan<W: Write>(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    state.document_revision = args
+    let plan_revision = args
         .get("documentRevision")
         .and_then(Value::as_u64)
         .unwrap_or(state.document_revision);
-    state.worker_epoch = args
+    let plan_epoch = args
         .get("workerEpoch")
         .and_then(Value::as_u64)
         .unwrap_or(state.worker_epoch);
+
+    // D4 fencing — mirror the real worker: workerEpoch + expectedBaseHash ONLY,
+    // never documentRevision (an advisory Rust-owned edit counter). Lazily adopt the
+    // baseline from the first plan when no OpenSession established it (chaos drills).
+    if !state.fencing_baseline_set {
+        state.worker_epoch = plan_epoch;
+        state.history_prefix_hash = expected_base.clone();
+        state.fencing_baseline_set = true;
+    }
+    if plan_epoch != state.worker_epoch {
+        let stamp = state.stamp_job(job_id);
+        return write_resp_err(
+            writer,
+            req.id,
+            stamp,
+            ErrorObject {
+                code: ErrorCode::ProtocolError,
+                message: "ExecutePlan: workerEpoch fencing mismatch".into(),
+                detail: Some(json!({ "headEpoch": state.worker_epoch, "planEpoch": plan_epoch })),
+                retriable: false,
+            },
+        );
+    }
+    if expected_base != state.history_prefix_hash {
+        let stamp = state.stamp_job(job_id);
+        return write_resp_err(
+            writer,
+            req.id,
+            stamp,
+            ErrorObject {
+                code: ErrorCode::ProtocolError,
+                message: "ExecutePlan: expectedBaseHash mismatch".into(),
+                detail: Some(
+                    json!({ "expected": expected_base, "actual": state.history_prefix_hash }),
+                ),
+                retriable: false,
+            },
+        );
+    }
 
     let mut per_step: Vec<Value> = Vec::new();
     let mut last_valid: Option<u64> = None;
@@ -353,6 +444,13 @@ fn handle_execute_plan<W: Write>(
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
+        // F3 poison test: crash (transport loss) when a specific op executes, so the
+        // crash is attributed to THAT op's poison key (not the plan's last op). The
+        // crash is before the planStep, so `steps_received` points at this op.
+        if crash_on_op_matches(&op_id) {
+            eprintln!("stub: CRASH_ON_OP {op_id} -> abort() mid-plan");
+            std::process::abort();
+        }
         let body_id = format!("body_{op_id}");
         let payload = json!({
             "stepIndex": step_index,
@@ -377,14 +475,21 @@ fn handle_execute_plan<W: Write>(
     }
 
     let prepared_snapshot = state.snapshot_id + 1;
-    if let Some(j) = job_id {
-        state.prepared.push((j, prepared_snapshot));
-    }
+    // The head token this job would adopt on accept: prefixHashes[last] (or the base
+    // hash for a base-only prepare) — the same opaque token the real worker echoes.
     let echo = prefix_hashes
         .last()
         .and_then(Value::as_str)
         .unwrap_or(&expected_base)
         .to_string();
+    if let Some(j) = job_id {
+        state.prepared.push(Prepared {
+            job_id: j,
+            prepared_snapshot_id: prepared_snapshot,
+            history_prefix_hash: echo.clone(),
+            plan_document_revision: plan_revision,
+        });
+    }
     let result = json!({
         "planPrepared": true,
         "preparedSnapshotId": prepared_snapshot,
@@ -397,27 +502,30 @@ fn handle_execute_plan<W: Write>(
     write_resp_value(writer, req.id, stamp, result, &[], &[])
 }
 
-/// `AcceptPrepared` (SCHEMA §7.2): publish the scratch snapshot, bump the revision.
+/// `AcceptPrepared` (SCHEMA §7.2 / D4): publish the scratch snapshot; ADOPT the
+/// plan's advisory `documentRevision` + echoed `historyPrefixHash` as the head.
 fn handle_accept_prepared<W: Write>(
     writer: &mut W,
     state: &mut StubState,
     req: &ReqFrame,
 ) -> Result<(), ProtocolError> {
     let job_id = req.args.get("jobId").and_then(Value::as_u64);
-    let snapshot = job_id.and_then(|j| {
-        let pos = state.prepared.iter().position(|(pj, _)| *pj == j)?;
-        Some(state.prepared.remove(pos).1)
+    let prepared = job_id.and_then(|j| {
+        let pos = state.prepared.iter().position(|p| p.job_id == j)?;
+        Some(state.prepared.remove(pos))
     });
-    match snapshot {
-        Some(snap) => {
-            state.snapshot_id = snap;
-            state.document_revision += 1;
+    match prepared {
+        Some(p) => {
+            state.snapshot_id = p.prepared_snapshot_id;
+            // D4: adopt the plan's revision (not a worker-owned +1) + the head token.
+            state.document_revision = p.plan_document_revision;
+            state.history_prefix_hash = p.history_prefix_hash;
             let stamp = state.stamp_job(job_id);
             write_resp_value(
                 writer,
                 req.id,
                 stamp,
-                json!({ "accepted": true, "snapshotId": snap, "documentRevision": state.document_revision }),
+                json!({ "accepted": true, "snapshotId": p.prepared_snapshot_id, "documentRevision": state.document_revision }),
                 &[],
                 &[],
             )
@@ -446,7 +554,7 @@ fn handle_discard_prepared<W: Write>(
     req: &ReqFrame,
 ) -> Result<(), ProtocolError> {
     if let Some(j) = req.args.get("jobId").and_then(Value::as_u64) {
-        state.prepared.retain(|(pj, _)| *pj != j);
+        state.prepared.retain(|p| p.job_id != j);
     }
     let stamp = state.stamp();
     write_resp_value(
@@ -534,12 +642,24 @@ fn stream_mesh<W: Write>(
     blob: &[u8],
     sha: &str,
 ) -> Result<(), ProtocolError> {
-    // Split into 2 data frames to prove multi-frame assembly by byteOffset.
+    // Split into 2 data frames to prove multi-frame assembly by byteOffset. Each
+    // frame is `(byteOffset, slice)`. The F5 gap hook perturbs the tiling so the
+    // client's StreamAcc gap-detection must fire (a hole or an overlap in
+    // [0, totalBytes)); `mode` ∈ "gap" (hole) | "overlap".
     let mid = blob.len().div_ceil(2);
-    let parts: Vec<&[u8]> = if mid == 0 || mid >= blob.len() {
-        vec![blob]
+    let gap_mode = std::env::var("ONECAD_STUB_CHUNKED_MESH_GAP").ok();
+    let frames: Vec<(u64, &[u8])> = if mid == 0 || mid >= blob.len() {
+        vec![(0, blob)]
     } else {
-        vec![&blob[..mid], &blob[mid..]]
+        match gap_mode.as_deref() {
+            // Hole: the 2nd chunk starts 4 bytes past `mid`, leaving [mid, mid+4)
+            // uncovered.
+            Some("gap") => vec![(0, &blob[..mid]), (mid as u64 + 4, &blob[mid..])],
+            // Overlap: the 2nd chunk starts 4 bytes before `mid`, re-covering
+            // [mid-4, mid).
+            Some("overlap") => vec![(0, &blob[..mid]), (mid as u64 - 4, &blob[mid - 4..])],
+            _ => vec![(0, &blob[..mid]), (mid as u64, &blob[mid..])],
+        }
     };
     let manifest = ChunkFrame {
         v: PROTOCOL_VERSION,
@@ -547,7 +667,7 @@ fn stream_mesh<W: Write>(
         stream_id,
         kind: ChunkKind::Manifest,
         purpose: Some("mesh".into()),
-        count: Some(parts.len() as u32),
+        count: Some(frames.len() as u32),
         total_bytes: Some(blob.len() as u64),
         sha256: Some(sha.to_string()),
         meta: Some(json!({ "bodyId": body, "lod": lod, "format": "MESH1" })),
@@ -561,8 +681,7 @@ fn stream_mesh<W: Write>(
         seq: state.next_seq(),
     };
     write_frame(writer, &Frame::Chunk(manifest))?;
-    let mut offset = 0u64;
-    for (index, part) in parts.iter().enumerate() {
+    for (index, (offset, part)) in frames.iter().enumerate() {
         let data = ChunkFrame {
             v: PROTOCOL_VERSION,
             id,
@@ -574,7 +693,7 @@ fn stream_mesh<W: Write>(
             sha256: None,
             meta: None,
             index: Some(index as u32),
-            byte_offset: Some(offset),
+            byte_offset: Some(*offset),
             bin: Some(vec![BinSection {
                 name: "chunk".into(),
                 off: 0,
@@ -588,7 +707,6 @@ fn stream_mesh<W: Write>(
         };
         let json = Frame::Chunk(data).to_json_vec()?;
         write_frame_blocking(writer, &json, part)?;
-        offset += part.len() as u64;
     }
     Ok(())
 }
@@ -791,4 +909,13 @@ fn env_flag(key: &str) -> bool {
 /// Whether env var `key` equals `verb`.
 fn env_matches(key: &str, verb: &str) -> bool {
     std::env::var(key).map(|v| v == verb).unwrap_or(false)
+}
+
+/// Whether `ONECAD_STUB_CRASH_ON_OP` names a (non-empty) substring of `op_id` — the
+/// F3 hook that crashes the worker only on a specific plan's op.
+fn crash_on_op_matches(op_id: &str) -> bool {
+    std::env::var("ONECAD_STUB_CRASH_ON_OP")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .is_some_and(|v| op_id.contains(&v))
 }

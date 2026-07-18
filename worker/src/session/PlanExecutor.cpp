@@ -428,6 +428,7 @@ Envelope handle_execute_plan(Session& session, const Envelope& req, HandlerConte
 
     ScratchJob job;
     job.job_id = job_id;
+    job.plan_document_revision = doc_rev;  // D4: adopted as head documentRevision at accept
     job.bodies = std::move(fence.cloned_bodies);
     job.partition = std::move(fence.cloned_partition);
     job.prepared_snapshot_id = fence.prepared_snapshot_id;
