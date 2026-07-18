@@ -23,8 +23,8 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use onecad_core::document::body::BodyLifecycleEvent;
-use onecad_core::document::record::Operation;
-use onecad_core::document::refs::{AnchorIntent, ElementKind};
+use onecad_core::document::record::{ExtrudeMode, KnownOperation, Operation};
+use onecad_core::document::refs::{AnchorIntent, ElementKind, ElementRef};
 use onecad_core::document::repair::RepairItem;
 use onecad_core::ids::{
     BodyId, DocumentRevision, ElementId, EntityId, JobId, SnapshotId, TopoKey, WorkerEpoch,
@@ -155,10 +155,100 @@ fn wire_op(op: &PlannedOp) -> Value {
     json!({
         "opType": op_type,
         "opId": op.record_id.to_string(),
-        "inputs": serde_json::to_value(&op.inputs).unwrap_or(Value::Null),
+        "inputs": wire_op_inputs(&op.operation),
         "params": params,
         "determinism": serde_json::to_value(&op.determinism).unwrap_or(Value::Null),
     })
+}
+
+/// The SCHEMA §7.3 `inputs[]` semantic-ref ARRAY for an op, built from its typed
+/// params. (The derived [`OperationInputs`](onecad_core::document::record::OperationInputs)
+/// `{bodies,sketches,elements}` id-view drives the Rust dependency graph; the WIRE
+/// must carry per-op semantic refs `{primary:{bodyId,elementId,kind}, anchor, intent}`
+/// the worker's ops resolve through the ladder — §7.3, e.g. Fillet edges / Boolean
+/// bodies / Extrude ToFace targets.)
+///
+/// `bodyId` is rendered in the worker's `body_<uuid>` wire form (SCHEMA §2). The
+/// extrude *profile* rides in `params` (`sketchId`/first region) — the worker reads
+/// it there — so a Blind/NewBody extrude carries no `inputs`.
+fn wire_op_inputs(op: &Operation) -> Value {
+    let refs: Vec<Value> = match op {
+        Operation::Known(KnownOperation::Fillet(p)) => edge_input_refs(&p.edges, &p.edge_ids),
+        Operation::Known(KnownOperation::Chamfer(p)) => edge_input_refs(&p.edges, &p.edge_ids),
+        Operation::Known(KnownOperation::Boolean(p)) => {
+            vec![body_input_ref(p.target_body), body_input_ref(p.tool_body)]
+        }
+        Operation::Known(KnownOperation::Extrude(p)) => {
+            let mut v = Vec::new();
+            if p.mode == ExtrudeMode::ToFace {
+                if let Some(f) = &p.target_face {
+                    v.push(element_ref_wire(f));
+                }
+            }
+            if p.two_directions && p.mode2 == ExtrudeMode::ToFace {
+                if let Some(f) = &p.target_face2 {
+                    v.push(element_ref_wire(f));
+                }
+            }
+            v
+        }
+        _ => Vec::new(),
+    };
+    Value::Array(refs)
+}
+
+/// Fillet/Chamfer edge refs: prefer the typed per-edge [`ElementRef`]s (they carry
+/// the operated body + anchor/descriptor evidence); fall back to bare `edge_ids`
+/// (element-only, no body — the operated body is bound at regen time).
+fn edge_input_refs(edges: &[ElementRef], edge_ids: &[ElementId]) -> Vec<Value> {
+    if !edges.is_empty() {
+        return edges.iter().map(element_ref_wire).collect();
+    }
+    edge_ids
+        .iter()
+        .map(|id| json!({ "primary": { "elementId": id.as_str(), "kind": "edge" } }))
+        .collect()
+}
+
+/// A whole-body semantic ref (boolean target/tool). `elementId` == the body id, as
+/// the worker keys its body records by the `body_<uuid>` id (D1).
+fn body_input_ref(b: BodyId) -> Value {
+    json!({ "primary": { "bodyId": body_id_wire(b), "elementId": body_id_wire(b), "kind": "body" } })
+}
+
+/// Render an [`ElementRef`] to the SCHEMA §7.3 semantic-ref JSON, with `bodyId` in
+/// the worker's `body_<uuid>` wire form (the default serde emits the bare uuid).
+fn element_ref_wire(r: &ElementRef) -> Value {
+    let mut o = serde_json::Map::new();
+    if let Some(pr) = &r.primary {
+        o.insert(
+            "primary".into(),
+            json!({
+                "bodyId": body_id_wire(pr.body),
+                "elementId": pr.element.as_str(),
+                "kind": element_kind_str(pr.kind),
+            }),
+        );
+    }
+    if let Some(anchor) = &r.anchor {
+        o.insert("anchor".into(), anchor_to_wire(anchor));
+    }
+    if let Some(intent) = &r.intent {
+        o.insert(
+            "intent".into(),
+            serde_json::to_value(intent).unwrap_or(Value::Null),
+        );
+    }
+    Value::Object(o)
+}
+
+/// The SCHEMA §2 wire kind char-word for an [`ElementKind`].
+fn element_kind_str(kind: ElementKind) -> &'static str {
+    match kind {
+        ElementKind::Face => "face",
+        ElementKind::Edge => "edge",
+        ElementKind::Vertex => "vertex",
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

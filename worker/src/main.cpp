@@ -177,7 +177,10 @@ Envelope handle_tessellate(Session& session, const Envelope& req) {
         meshes.push_back(nlohmann::json{
             {"bodyId", bid},
             {"format", "MESH1"},
-            {"section", section},
+            // SCHEMA §5.2/§7.6: the inline handle references the resp-tail section by
+            // the normative key "bin" (matches SolverLane's region handle + the Rust
+            // `assemble_mesh` reader). Was "section" (M2 gate fix — SCHEMA violation).
+            {"bin", section},
             {"lod", lod},
             {"totalBytes", bm.blob.size()},
             {"triangleCount", bm.triangle_count},

@@ -205,8 +205,9 @@ export function createTauriClient(): CadClient {
   const projectionListeners = new Set<(p: DocumentProjectionWire) => void>();
   // Latest authoritative revision (cached from any event).
   let latestRevision = 0;
-  // Latest snapshot id for promote_selection. No frontend-facing event carries it
-  // today (SEAM → M2 gate: the events must publish snapshotId, or add a query).
+  // Latest published snapshot id for promote_selection — carried by every
+  // `document-changed` event (SCHEMA §7.5). Picks resolve against the snapshot the
+  // fetched mesh was tessellated at (Invariant 4). Starts at 0 (nothing published).
   let currentSnapshotId = 0;
 
   // Correlation awaiters: resolved by the next document-changed / regen-finished
@@ -235,6 +236,8 @@ export function createTauriClient(): CadClient {
 
   function onDocumentChangedEvent(change: DocumentChange): void {
     latestRevision = Math.max(latestRevision, change.revision);
+    // Adopt the published snapshot id so promoteSelection scopes picks correctly.
+    if (change.snapshotId && change.snapshotId > 0) currentSnapshotId = change.snapshotId;
     for (const cb of [...docChangeListeners]) cb(change);
     resolveAwaiters({ change, revision: change.revision });
   }

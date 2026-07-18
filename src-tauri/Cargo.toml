@@ -71,6 +71,9 @@ sha2 = { workspace = true }
 # Save/reopen round-trip tests for the open/save command path; chaos drills spawn
 # the built stub bin from a scratch dir.
 tempfile = "3"
+# M2 gate: byte-compare `document.json` inside two saved v2 containers (byte-stable
+# save proof) — the same reader onecad-core uses.
+zip = { workspace = true }
 # R-WP11 chaos/convergence/smoke integration tests drive the WorkerManager over
 # the real stub/worker with core plan types, and validate MESH1 headers.
 onecad-core = { workspace = true }

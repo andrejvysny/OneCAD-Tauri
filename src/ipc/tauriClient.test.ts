@@ -504,8 +504,35 @@ describe("tauriClient promoteSelection", () => {
     ]);
     expect(out[0].elementId).toBe("el_abc");
     expect(args?.bodyId).toBe("body_uuid-1"); // bare uuid prefixed to the wire form
-    expect(args?.snapshotId).toBe(0); // SEAM: no frontend snapshot source yet (M2)
+    expect(args?.snapshotId).toBe(0); // no regen published yet ⇒ default snapshot 0
     expect(args?.picks?.[0].topoKey).toBe("f:2");
+  });
+
+  it("forwards the published snapshotId from document-changed (not 0)", async () => {
+    let args: { snapshotId?: number } | undefined;
+    mockIPC((cmd, payload) => {
+      if (cmd === "promote_selection") {
+        args = payload as typeof args;
+        return [{ topoKey: "f:2", elementId: "el_abc", kind: "face", bodyId: "body_uuid-1" }];
+      }
+    }, { shouldMockEvents: true });
+    const client = createTauriClient();
+    // Subscribing starts the lazy event listeners so document-changed is observed.
+    const unsub = client.onDocumentChanged(() => {});
+    await tick();
+
+    // A regen publishes snapshot 5012 (the mesh the pick is scoped to).
+    await emit("document-changed", {
+      revision: 3,
+      snapshotId: 5012,
+      changedBodies: [{ bodyId: "b1", meshKey: "b1:coarse:3" }],
+      removedBodies: [],
+    });
+    await tick();
+
+    await client.promoteSelection("uuid-1", [{ topoKey: "f:2" }]);
+    expect(args?.snapshotId).toBe(5012); // the REAL published snapshot, not 0
+    unsub();
   });
 });
 

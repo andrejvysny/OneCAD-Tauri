@@ -129,6 +129,10 @@ pub struct RegenReport {
     pub outcome: Outcome,
     /// The document revision the regen was fenced against.
     pub revision: u64,
+    /// The published snapshot id (`0` when nothing was published). Shared by all
+    /// bodies/maps/meshes of this regen (Invariant 4); the frontend forwards it to
+    /// `promoteSelection` so picks resolve against the exact snapshot.
+    pub snapshot_id: u64,
     /// Bodies present after the regen, with their generation-pinned mesh keys.
     pub changed: Vec<(BodyId, MeshKey)>,
     /// Bodies that were present before but are gone now.
@@ -157,6 +161,7 @@ impl RegenReport {
         }
         Some(DocumentChange {
             revision: self.revision,
+            snapshot_id: self.snapshot_id,
             changed_bodies: self
                 .changed
                 .iter()
@@ -445,6 +450,7 @@ impl DocumentRuntime {
             return RegenReport {
                 outcome: Outcome::NoOp,
                 revision: self.fencing.revision().0,
+                snapshot_id: 0,
                 changed: Vec::new(),
                 removed: Vec::new(),
             };
@@ -515,10 +521,12 @@ impl DocumentRuntime {
         } = driven;
         if let Outcome::Published(snap) = &outcome {
             if self.fencing.get() == expected {
+                let snapshot_id = snap.id.0;
                 let (changed, removed) = self.commit_snapshot(scratch, snap, lod, &prior);
                 return RegenReport {
                     outcome,
                     revision: self.fencing.revision().0,
+                    snapshot_id,
                     changed,
                     removed,
                 };
@@ -527,6 +535,7 @@ impl DocumentRuntime {
             return RegenReport {
                 outcome: Outcome::Superseded,
                 revision: self.fencing.revision().0,
+                snapshot_id: 0,
                 changed: Vec::new(),
                 removed: Vec::new(),
             };
@@ -534,6 +543,7 @@ impl DocumentRuntime {
         RegenReport {
             outcome,
             revision: self.fencing.revision().0,
+            snapshot_id: 0,
             changed: Vec::new(),
             removed: Vec::new(),
         }

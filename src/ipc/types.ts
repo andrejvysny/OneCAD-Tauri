@@ -58,6 +58,13 @@ export interface BodyMeshRef {
  */
 export interface DocumentChange {
   revision: number;
+  /**
+   * The published snapshot id this geometry belongs to (SCHEMA §7.5). Forwarded
+   * to `promoteSelection` so a picked TopoKey resolves against the exact snapshot
+   * the mesh was tessellated at (Invariant 4). The Rust backend always emits it;
+   * optional here so the mock lane / tests can omit it (then it stays `0`).
+   */
+  snapshotId?: number;
   changedBodies: BodyMeshRef[];
   removedBodies: string[];
 }

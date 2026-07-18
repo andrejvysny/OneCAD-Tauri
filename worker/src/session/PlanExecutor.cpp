@@ -388,7 +388,9 @@ json attach_tessellate(const ScratchJob& job, const json& artifacts, Envelope& r
         meshes.push_back(json{
             {"bodyId", bid},
             {"format", "MESH1"},
-            {"section", section},
+            // SCHEMA §5.2/§7.6 normative inline-handle key is "bin" (see main.cpp
+            // handle_tessellate + SolverLane region handle). Was "section" (M2 fix).
+            {"bin", section},
             {"lod", lod},
             {"totalBytes", bm.blob.size()},
             {"triangleCount", bm.triangle_count},

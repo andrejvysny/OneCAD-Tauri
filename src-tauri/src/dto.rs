@@ -159,6 +159,11 @@ pub struct BodyMeshRef {
 #[serde(rename_all = "camelCase")]
 pub struct DocumentChange {
     pub revision: u64,
+    /// The published [`ModelSnapshot`](onecad_core::regen::ModelSnapshot) id this
+    /// geometry belongs to (SCHEMA §7.5). The frontend forwards it to
+    /// `promoteSelection` so a picked TopoKey resolves against the exact snapshot
+    /// the mesh was tessellated at (Invariant 4 — bodies/maps/meshes share one id).
+    pub snapshot_id: u64,
     pub changed_bodies: Vec<BodyMeshRef>,
     pub removed_bodies: Vec<String>,
 }
