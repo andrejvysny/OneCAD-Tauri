@@ -36,33 +36,43 @@
 //! `Arc<dyn `[`MeshProvider`]`>`; production wires the real `WorkerManager`, with
 //! [`PendingBackend`](crate::worker::PendingBackend) the no-worker fallback.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use uuid::Uuid;
 
+use onecad_core::document::element_index::ElementEntry;
 use onecad_core::document::record::OperationRecord;
+use onecad_core::document::refs::AnchorIntent;
 use onecad_core::document::Document;
-use onecad_core::edit::{CommandOutcome, DocumentSession, EditCommand};
+use onecad_core::edit::{CommandOutcome, DocumentSession, EditCommand, SketchEditOp};
 use onecad_core::error::DomainError;
 use onecad_core::history::{DependencyGraph, StepState, Timeline};
-use onecad_core::ids::{BodyId, DocumentId, DocumentRevision, JobId, WorkerEpoch};
+use onecad_core::ids::{
+    BodyId, DocumentId, DocumentRevision, ElementId, EntityId, JobId, SketchId, SnapshotId,
+    TopoKey, WorkerEpoch,
+};
 use onecad_core::io::container::{ContainerCaches, ContainerReader, ContainerWriter, SaveMeta};
 use onecad_core::io::IoError;
+use onecad_core::math::Vec2;
 use onecad_core::regen::{
-    CancelToken, GeometryEngine, Lod, MeshKey, ModelSnapshot, Outcome, PlanArtifacts, PlanContext,
-    PlanRequest, PolicyVersions, RegenExecutor, RegenPlanner, RegenRequest, RegenSession,
+    mint_element_ids, AcquireRequest, CancelToken, EngineError, GeometryEngine, Lod, MeshKey,
+    ModelSnapshot, Outcome, Pick, PlanArtifacts, PlanContext, PlanRequest, PolicyVersions,
+    RefResolution, RegenExecutor, RegenPlanner, RegenRequest, RegenSession, ResolveRequest,
     SnapshotPublisher, TessellateSpec,
 };
+use onecad_core::sketch::Sketch;
 
 use crate::dto::{
     default_label, feature_kind, feature_status, feature_value_text, BodyDto, BodyMeshRef,
-    DocStatus, DocumentChange, DocumentProjection, FeatureDto, SketchDto, SketchStatus,
+    DocStatus, DocumentChange, DocumentProjection, FeatureDto, FinishSketchDto, PromotedElementDto,
+    SketchDto, SketchSessionDto, SketchSolveStatus, SketchStatus, SketchUpsertDto,
 };
 use crate::mesh_cache::MeshCache;
-use crate::worker::{lod_str, AdoptingEngine, MeshProvider};
+use crate::worker::{lod_str, AdoptingEngine, MeshProvider, SolverEngine};
 
 /// The `(documentRevision, workerEpoch)` fencing tokens behind an `Arc` so the
 /// regen driver's [`RevisionGate`](onecad_core::regen::RevisionGate) can read them
@@ -126,6 +136,19 @@ pub struct RegenReport {
 }
 
 impl RegenReport {
+    /// The regen terminal as the `regen-finished` `outcome` token (`published` |
+    /// `superseded` | `failed` | `cancelled` | `noop`).
+    #[must_use]
+    pub fn outcome_str(&self) -> &'static str {
+        match self.outcome {
+            Outcome::Published(_) => "published",
+            Outcome::Superseded => "superseded",
+            Outcome::EngineFailed(_) => "failed",
+            Outcome::Cancelled => "cancelled",
+            Outcome::NoOp => "noop",
+        }
+    }
+
     /// The `document-changed` payload, or `None` when nothing was published.
     #[must_use]
     pub fn document_change(&self) -> Option<DocumentChange> {
@@ -147,6 +170,18 @@ impl RegenReport {
     }
 }
 
+/// An in-flight sketch drag gesture (SCHEMA §7.4). The `before` sketch is the
+/// pre-gesture memento; pointer-up commits **one** [`EditCommand::SketchDragGesture`]
+/// so the whole drag is a single undo step (plan "Solver lane in V1").
+struct ActiveGesture {
+    gesture_id: u64,
+    sketch_id: SketchId,
+    drag_point: EntityId,
+    before: Sketch,
+    /// Next `SolveDrag` seq (monotonic; latest-wins).
+    next_seq: u64,
+}
+
 /// The per-document runtime (V1 single writer).
 pub struct DocumentRuntime {
     session: DocumentSession,
@@ -162,16 +197,41 @@ pub struct DocumentRuntime {
     publisher: Arc<SnapshotPublisher>,
     engine: Arc<dyn GeometryEngine>,
     meshes: Arc<dyn MeshProvider>,
+    solver: Arc<dyn SolverEngine>,
     occt_fingerprint: String,
     job_seq: u64,
+    /// Last solver-lane `(dof, status)` per sketch — real projection dof/status
+    /// (replaces the `dof:0`/`Ok` placeholders). Empty until a sketch is solved.
+    sketch_solve: BTreeMap<SketchId, (u32, SketchSolveStatus)>,
+    /// The active drag gesture, if the pointer is down mid-drag.
+    active_gesture: Option<ActiveGesture>,
+    /// Monotonic gesture id allocator (SCHEMA §7.4 `gestureId`).
+    gesture_seq: u64,
+    /// Rust-owned promotion cache `(body, topoKey) → ElementId` so re-picking the
+    /// same element in a snapshot returns the **same** id (Invariant 1). The worker
+    /// only echoes ids it already holds; Rust owns id identity, so this map upholds
+    /// the invariant across `AcquireElementIds` calls.
+    promoted: HashMap<(BodyId, TopoKey), ElementId>,
 }
 
 impl DocumentRuntime {
     /// A fresh blank document ("Untitled").
     #[must_use]
-    pub fn new_blank(engine: Arc<dyn GeometryEngine>, meshes: Arc<dyn MeshProvider>) -> Self {
+    pub fn new_blank(
+        engine: Arc<dyn GeometryEngine>,
+        meshes: Arc<dyn MeshProvider>,
+        solver: Arc<dyn SolverEngine>,
+    ) -> Self {
         let doc = Document::new(DocumentId::new());
-        Self::from_document(doc, "Untitled".to_string(), None, false, engine, meshes)
+        Self::from_document(
+            doc,
+            "Untitled".to_string(),
+            None,
+            false,
+            engine,
+            meshes,
+            solver,
+        )
     }
 
     /// Opens an existing `.onecad` container at `path`.
@@ -185,6 +245,7 @@ impl DocumentRuntime {
         path: &Path,
         engine: Arc<dyn GeometryEngine>,
         meshes: Arc<dyn MeshProvider>,
+        solver: Arc<dyn SolverEngine>,
     ) -> Result<Self, IoError> {
         let loaded = ContainerReader::open(path)?;
         let read_only = loaded.outcome.read_only;
@@ -200,6 +261,7 @@ impl DocumentRuntime {
             read_only,
             engine,
             meshes,
+            solver,
         ))
     }
 
@@ -210,6 +272,7 @@ impl DocumentRuntime {
         read_only: bool,
         engine: Arc<dyn GeometryEngine>,
         meshes: Arc<dyn MeshProvider>,
+        solver: Arc<dyn SolverEngine>,
     ) -> Self {
         // Seed the regen mirror from the (possibly persisted) geometry outputs so
         // the tree renders saved bodies immediately, before the first regen.
@@ -232,8 +295,13 @@ impl DocumentRuntime {
             publisher: Arc::new(SnapshotPublisher::new()),
             engine,
             meshes,
+            solver,
             occt_fingerprint: "pending-r-wp11".to_string(),
             job_seq: 0,
+            sketch_solve: BTreeMap::new(),
+            active_gesture: None,
+            gesture_seq: 0,
+            promoted: HashMap::new(),
         }
     }
 
@@ -599,18 +667,23 @@ impl DocumentRuntime {
             });
         }
 
-        // Sketches: dof/status are solver-lane outputs (R-WP11); a placeholder
-        // keeps the tree faithful until the solver is wired.
+        // Sketches: real dof/status come from the last solver-lane solve
+        // (`sketch_solve`, updated by enter/upsert/end-gesture, SCHEMA §7.4);
+        // an unsolved sketch reads `dof:0`/`Ok` until first solved.
         let mut sketches = BTreeMap::new();
         for (id, sk) in &doc.sketches {
+            let (dof, status) = self
+                .sketch_solve
+                .get(id)
+                .map_or((0, SketchStatus::Ok), |(dof, st)| (*dof, st.tree_status()));
             sketches.insert(
                 id.to_string(),
                 SketchDto {
                     id: id.to_string(),
                     name: sk.name.clone(),
                     visible: doc.sketch_visible(*id),
-                    dof: 0,
-                    status: SketchStatus::Ok,
+                    dof,
+                    status,
                 },
             );
         }
@@ -654,6 +727,281 @@ impl DocumentRuntime {
             value_text: feature_value_text(&rec.op),
             status: feature_status(&state),
         }
+    }
+
+    // ── Sketch solver lane (SCHEMA §7.4) ─────────────────────────────────────
+
+    /// Enters sketch mode: syncs the authoritative sketch to the worker solver lane
+    /// (`SketchUpsert`) and returns the live session (entities/constraints wire form
+    /// plus real dof/status). The sketch must already exist (a new sketch is created
+    /// via [`EditCommand::AddSketch`] through [`apply`](Self::apply) first).
+    ///
+    /// # Errors
+    /// [`EngineError`] on an unknown sketch or a worker-side failure.
+    pub async fn enter_sketch(
+        &mut self,
+        sketch_id: SketchId,
+    ) -> Result<SketchSessionDto, EngineError> {
+        let sketch = self.sketch_or_err(sketch_id, "enterSketch")?;
+        let (plane, entities, constraints) = crate::worker::wire::sketch_wire(&sketch);
+        let solved = self.solver.sketch_upsert(&sketch).await?;
+        self.record_solve(sketch_id, &solved);
+        Ok(SketchSessionDto {
+            sketch_id: sketch_id.to_string(),
+            plane,
+            entities,
+            constraints,
+            dof: solved.dof,
+            status: solved.status,
+        })
+    }
+
+    /// Applies a batch of sketch edits authoritatively (one undoable
+    /// [`EditCommand::SketchEdit`]) then re-solves on the worker for live dof/status
+    /// (SCHEMA §7.4). A non-drag upsert is an identity solve (no coordinate
+    /// write-back — the worker's `SketchUpsert` reports no positions).
+    ///
+    /// # Errors
+    /// [`EngineError`] on a read-only document, an invalid edit, or a worker failure.
+    pub async fn sketch_upsert(
+        &mut self,
+        sketch_id: SketchId,
+        ops: Vec<SketchEditOp>,
+    ) -> Result<SketchUpsertDto, EngineError> {
+        if self.read_only {
+            return Err(op_failed("sketchUpsert: read-only document"));
+        }
+        if !ops.is_empty() {
+            self.apply(EditCommand::SketchEdit {
+                sketch: sketch_id,
+                ops,
+            })
+            .map_err(|e| op_failed(format!("sketchUpsert edit: {e}")))?;
+        }
+        let sketch = self.sketch_or_err(sketch_id, "sketchUpsert")?;
+        let solved = self.solver.sketch_upsert(&sketch).await?;
+        self.record_solve(sketch_id, &solved);
+        Ok(solved)
+    }
+
+    /// Opens a drag gesture on `drag_point` (SCHEMA §7.4 `BeginGesture`). Snapshots
+    /// the pre-gesture sketch (the `before` memento) so pointer-up can commit **one**
+    /// undo command for the whole drag.
+    ///
+    /// # Errors
+    /// [`EngineError`] on a read-only document, an unknown sketch, or a worker failure.
+    pub async fn begin_gesture(
+        &mut self,
+        sketch_id: SketchId,
+        drag_point: EntityId,
+    ) -> Result<crate::dto::BeginGestureDto, EngineError> {
+        if self.read_only {
+            return Err(op_failed("beginGesture: read-only document"));
+        }
+        let sketch = self.sketch_or_err(sketch_id, "beginGesture")?;
+        // Ensure the worker holds the current sketch (its BeginGesture reads it).
+        let solved = self.solver.sketch_upsert(&sketch).await?;
+        self.record_solve(sketch_id, &solved);
+        let gesture_id = self.next_gesture_id();
+        let ready = self
+            .solver
+            .begin_gesture(
+                &sketch_id.to_string(),
+                solved.sketch_revision,
+                gesture_id,
+                drag_point,
+                "",
+            )
+            .await?;
+        self.active_gesture = Some(ActiveGesture {
+            gesture_id,
+            sketch_id,
+            drag_point,
+            before: sketch,
+            next_seq: 1,
+        });
+        Ok(ready)
+    }
+
+    /// One incremental drag solve (SCHEMA §7.4 `SolveDrag`). Fired latest-wins: the
+    /// caller sends the newest `target` without awaiting each serially. The returned
+    /// positions are a **preview** (not committed) — only [`end_gesture`](Self::end_gesture)
+    /// mutates the document.
+    ///
+    /// # Errors
+    /// [`EngineError`] when no gesture is active or the worker fails.
+    pub async fn solve_drag(
+        &mut self,
+        target: [f64; 2],
+    ) -> Result<crate::dto::DragSolveDto, EngineError> {
+        let (gesture_id, drag_point, seq) = {
+            let g = self
+                .active_gesture
+                .as_mut()
+                .ok_or_else(|| op_failed("solveDrag: no active gesture"))?;
+            let seq = g.next_seq;
+            g.next_seq += 1;
+            (g.gesture_id, g.drag_point, seq)
+        };
+        self.solver
+            .solve_drag(gesture_id, seq, drag_point, target)
+            .await
+    }
+
+    /// Pointer-up final exact solve (SCHEMA §7.4 `EndGesture`): applies the solved
+    /// positions to the `before` memento and commits **one** [`EditCommand::SketchDragGesture`]
+    /// (single undo step for the whole drag). Returns the final dof/status/positions.
+    ///
+    /// # Errors
+    /// [`EngineError`] when no gesture is active, the commit is invalid, or the
+    /// worker fails.
+    pub async fn end_gesture(
+        &mut self,
+        final_target: Option<[f64; 2]>,
+    ) -> Result<SketchUpsertDto, EngineError> {
+        let gesture = self
+            .active_gesture
+            .take()
+            .ok_or_else(|| op_failed("endGesture: no active gesture"))?;
+        let solved = self
+            .solver
+            .end_gesture(
+                &gesture.sketch_id.to_string(),
+                gesture.gesture_id,
+                final_target,
+            )
+            .await?;
+        let mut after = gesture.before.clone();
+        after.apply_solved_positions(&typed_positions(&solved.solved_positions));
+        self.apply(EditCommand::SketchDragGesture {
+            sketch: gesture.sketch_id,
+            before: gesture.before,
+            after,
+        })
+        .map_err(|e| op_failed(format!("endGesture commit: {e}")))?;
+        self.record_solve(gesture.sketch_id, &solved);
+        Ok(solved)
+    }
+
+    /// Exits sketch mode / cancels an in-flight gesture without committing (SCHEMA
+    /// §7.4 — discard scratch). The document is unchanged.
+    ///
+    /// # Errors
+    /// Never fails hard; a best-effort worker `EndGesture` (no commit) is ignored.
+    pub async fn cancel_sketch(&mut self, _sketch_id: SketchId) -> Result<(), EngineError> {
+        if let Some(g) = self.active_gesture.take() {
+            // Best-effort: end the worker gesture so it does not leak (no commit).
+            let _ = self
+                .solver
+                .end_gesture(&g.sketch_id.to_string(), g.gesture_id, None)
+                .await;
+        }
+        Ok(())
+    }
+
+    /// Computes the closed profile regions for a sketch (SCHEMA §7.4 `SketchRegions`)
+    /// — the extrude/revolve profile source. Syncs the sketch first so the regions
+    /// reflect the latest geometry. Regions are a rebuildable cache, so they are
+    /// returned but not persisted (the worker re-derives the same normative
+    /// `regionId` during regen).
+    ///
+    /// # Errors
+    /// [`EngineError`] on an unknown sketch or a worker failure.
+    pub async fn finish_sketch(
+        &mut self,
+        sketch_id: SketchId,
+    ) -> Result<FinishSketchDto, EngineError> {
+        let sketch = self.sketch_or_err(sketch_id, "finishSketch")?;
+        let solved = self.solver.sketch_upsert(&sketch).await?;
+        self.record_solve(sketch_id, &solved);
+        let regions = self.solver.sketch_regions(&sketch_id.to_string()).await?;
+        Ok(FinishSketchDto { regions })
+    }
+
+    // ── Element identity (SCHEMA §7.5) ───────────────────────────────────────
+
+    /// Promotes snapshot-scoped TopoKey picks to persistent, globally-unique
+    /// `ElementId`s (SCHEMA §7.5 `AcquireElementIds`): the worker returns the
+    /// resolved `topoKey → (kind, descriptor, anchor)` evidence and **Rust mints /
+    /// owns the ids** ([`mint_element_ids`]). The promotion cache upholds Invariant 1
+    /// (re-picking the same `(body, topoKey)` returns the same id) and the binding is
+    /// recorded in the document element partition index.
+    ///
+    /// # Errors
+    /// [`EngineError`] on a worker failure.
+    pub async fn promote_selection(
+        &mut self,
+        snapshot: SnapshotId,
+        body: BodyId,
+        picks: Vec<(TopoKey, Option<AnchorIntent>)>,
+    ) -> Result<Vec<PromotedElementDto>, EngineError> {
+        let req = AcquireRequest {
+            snapshot_id: snapshot,
+            body,
+            picks: picks
+                .into_iter()
+                .map(|(topo_key, anchor)| Pick { topo_key, anchor })
+                .collect(),
+        };
+        let mut evidence = self.engine.acquire_element_ids(req).await?;
+        // Rust owns id identity: seed `existing` from the promotion cache so a
+        // re-pick of the same (body, topoKey) reuses the id (Invariant 1).
+        for e in &mut evidence {
+            if e.existing.is_none() {
+                if let Some(id) = self.promoted.get(&(e.body, e.topo_key.clone())) {
+                    e.existing = Some(id.clone());
+                }
+            }
+        }
+        let minted = mint_element_ids(evidence);
+        let mut out = Vec::with_capacity(minted.len());
+        for (id, ev) in minted {
+            self.promoted
+                .insert((ev.body, ev.topo_key.clone()), id.clone());
+            // Record the partition binding into the (regen-mirror) element index.
+            self.regen
+                .elements
+                .insert(id.clone(), ElementEntry::new(ev.body, ev.kind));
+            out.push(PromotedElementDto {
+                topo_key: ev.topo_key.as_str().to_string(),
+                element_id: id.as_str().to_string(),
+                kind: kind_str(ev.kind).to_string(),
+                body_id: crate::worker::wire::body_id_wire(ev.body),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Dry-run ladder resolution for repair dialogs (SCHEMA §7.5 `ResolveRefs`) —
+    /// binds nothing. Thin passthrough to the engine.
+    ///
+    /// # Errors
+    /// [`EngineError`] on a worker failure.
+    pub async fn resolve_refs(
+        &self,
+        req: ResolveRequest,
+    ) -> Result<Vec<RefResolution>, EngineError> {
+        self.engine.resolve_refs(req).await
+    }
+
+    // ── Sketch-flow helpers ──────────────────────────────────────────────────
+
+    fn sketch_or_err(&self, id: SketchId, verb: &str) -> Result<Sketch, EngineError> {
+        self.session
+            .document()
+            .sketch(id)
+            .cloned()
+            .ok_or_else(|| op_failed(format!("{verb}: unknown sketch {id}")))
+    }
+
+    fn record_solve(&mut self, sketch: SketchId, solved: &SketchUpsertDto) {
+        self.sketch_solve
+            .insert(sketch, (solved.dof, solved.status));
+    }
+
+    fn next_gesture_id(&mut self) -> u64 {
+        self.gesture_seq += 1;
+        self.gesture_seq
     }
 }
 
@@ -724,6 +1072,40 @@ pub struct DrivenRegen {
 #[must_use]
 pub fn mesh_key_string(key: MeshKey) -> String {
     format!("{}:{}:{}", key.body, lod_str(key.lod), key.generation)
+}
+
+/// A sketch-flow domain issue as a recoverable [`EngineError`] (the session stays
+/// editable) — surfaced to the command as [`ApiError::OpFailed`](crate::error::ApiError).
+fn op_failed(message: impl Into<String>) -> onecad_core::regen::EngineError {
+    onecad_core::regen::EngineError::OpFailed {
+        code: onecad_core::regen::OpFailureCode::OpFailed,
+        recoverable: true,
+        message: message.into(),
+    }
+}
+
+/// Converts a solver `positions` map (point-entity-id string → `[x, y]`) into the
+/// typed `(EntityId, Vec2)` pairs [`Sketch::apply_solved_positions`] consumes.
+/// Non-uuid keys / non-finite coords are skipped.
+fn typed_positions(positions: &BTreeMap<String, [f64; 2]>) -> Vec<(EntityId, Vec2)> {
+    positions
+        .iter()
+        .filter_map(|(k, xy)| {
+            let id = EntityId::from_str(k).ok()?;
+            let v = Vec2::new(xy[0], xy[1])?; // rejects non-finite
+            Some((id, v))
+        })
+        .collect()
+}
+
+/// The wire kind string for an element (SCHEMA §7.5).
+fn kind_str(kind: onecad_core::document::refs::ElementKind) -> &'static str {
+    use onecad_core::document::refs::ElementKind;
+    match kind {
+        ElementKind::Face => "face",
+        ElementKind::Edge => "edge",
+        ElementKind::Vertex => "vertex",
+    }
 }
 
 #[cfg(test)]

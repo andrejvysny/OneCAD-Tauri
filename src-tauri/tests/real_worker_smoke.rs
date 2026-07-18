@@ -34,7 +34,7 @@ use onecad_core::regen::{
 };
 
 use onecad_lib::worker::manager::SupervisorConfig;
-use onecad_lib::worker::{resolve_worker_path, MeshProvider, WorkerManager};
+use onecad_lib::worker::{resolve_worker_path, MeshProvider, SolverEngine, WorkerManager};
 
 fn real_worker() -> Option<PathBuf> {
     // `resolve_worker_path` honors ONECAD_WORKER_PATH → dev fallback.
@@ -465,6 +465,210 @@ async fn real_worker_post_edit_revision_fencing_two_cycles() {
         accept.document_revision,
         DocumentRevision(1),
         "the worker head adopts the plan's documentRevision (D4)"
+    );
+
+    wm.shutdown().await;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R-WP12 — solver lane + element identity vs the REAL C++ worker (skip-if-missing)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A constrained rectangle sketch (4 points + 4 lines + H/V + a pinned corner);
+/// returns the sketch and the corner point to drag (`p2`).
+fn rectangle_sketch() -> (onecad_core::sketch::Sketch, onecad_core::ids::EntityId) {
+    use onecad_core::ids::{ConstraintId, EntityId, SketchId};
+    use onecad_core::math::Vec2;
+    use onecad_core::sketch::{Constraint, Sketch, SketchEntity, WorldPlane};
+
+    let eid = |n: u128| EntityId(Uuid::from_u128(n));
+    let cid = |n: u128| ConstraintId(Uuid::from_u128(n));
+    let (p0, p1, p2, p3) = (eid(0x10), eid(0x11), eid(0x12), eid(0x13));
+    let (l0, l1, l2, l3) = (eid(0x20), eid(0x21), eid(0x22), eid(0x23));
+
+    let mut sk = Sketch::on_world_plane(SketchId(Uuid::from_u128(0x5c)), "Rect", WorldPlane::XY);
+    for (id, x, y) in [
+        (p0, 0.0, 0.0),
+        (p1, 40.0, 0.0),
+        (p2, 40.0, 20.0),
+        (p3, 0.0, 20.0),
+    ] {
+        sk.add_entity(SketchEntity::point(
+            id,
+            Vec2::new_unchecked(x, y),
+            false,
+            false,
+        ))
+        .unwrap();
+    }
+    sk.add_entity(SketchEntity::line(l0, p0, p1, false))
+        .unwrap();
+    sk.add_entity(SketchEntity::line(l1, p1, p2, false))
+        .unwrap();
+    sk.add_entity(SketchEntity::line(l2, p2, p3, false))
+        .unwrap();
+    sk.add_entity(SketchEntity::line(l3, p3, p0, false))
+        .unwrap();
+    sk.add_constraint(Constraint::Horizontal {
+        id: cid(1),
+        line: l0,
+    })
+    .unwrap();
+    sk.add_constraint(Constraint::Horizontal {
+        id: cid(2),
+        line: l2,
+    })
+    .unwrap();
+    sk.add_constraint(Constraint::Vertical {
+        id: cid(3),
+        line: l1,
+    })
+    .unwrap();
+    sk.add_constraint(Constraint::Vertical {
+        id: cid(4),
+        line: l3,
+    })
+    .unwrap();
+    sk.add_constraint(Constraint::Fixed {
+        id: cid(5),
+        point: p0,
+        at: Vec2::new_unchecked(0.0, 0.0),
+    })
+    .unwrap();
+    (sk, p2)
+}
+
+/// Drives the real PlaneGCS solver lane: upsert a constrained rectangle, open a
+/// gesture, drag a corner, assert the solve is sane, end the gesture.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn real_worker_solver_lane_rectangle_gesture() {
+    let Some(bin) = real_worker() else {
+        eprintln!("skip: real worker binary not found (set ONECAD_WORKER_PATH)");
+        return;
+    };
+    let wm = WorkerManager::spawn(SupervisorConfig::production(bin));
+    assert!(
+        wm.wait_ready(Duration::from_secs(10)).await,
+        "real worker must connect + OpenSession"
+    );
+
+    let (sketch, drag) = rectangle_sketch();
+    let up = wm.sketch_upsert(&sketch).await.expect("SketchUpsert");
+    // dof is reported (u32 ⇒ non-negative by construction); a rectangle with
+    // H/V + one pin is under-constrained (no dimensions) ⇒ dof > 0.
+    assert!(
+        up.dof > 0,
+        "under-constrained rectangle has dof > 0: {}",
+        up.dof
+    );
+
+    let g = wm
+        .begin_gesture(&sketch.id.to_string(), up.sketch_revision, 51, drag, "")
+        .await
+        .expect("BeginGesture");
+    assert!(g.ready);
+
+    let d = wm
+        .solve_drag(51, 1, drag, [50.0, 25.0])
+        .await
+        .expect("SolveDrag");
+    assert!(
+        matches!(
+            d.status.as_str(),
+            "success" | "partial" | "conflicting" | "redundant"
+        ),
+        "unexpected drag status {:?}",
+        d.status
+    );
+    assert!(!d.positions.is_empty(), "the drag moved at least one point");
+    // If the dragged corner is reported, the drag-fix strategy pins it at the target.
+    if let Some(pos) = d.positions.get(&drag.to_string()) {
+        assert!(
+            (pos[0] - 50.0).abs() < 1e-3 && (pos[1] - 25.0).abs() < 1e-3,
+            "dragged point tracks the target, got {pos:?}"
+        );
+    }
+
+    let end = wm
+        .end_gesture(&sketch.id.to_string(), 51, Some([50.0, 25.0]))
+        .await
+        .expect("EndGesture");
+    assert!(
+        end.sketch_revision > up.sketch_revision,
+        "EndGesture bumps the sketch revision"
+    );
+
+    wm.shutdown().await;
+}
+
+/// Proves `AcquireElementIds` + `ResolveRefs` are LIVE on the real worker (wired,
+/// responding). A full pick→promote against a real extruded body is the M2 gate
+/// script; here we assert the verbs respond recoverably without a body.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn real_worker_element_identity_verbs_are_live() {
+    use onecad_core::document::refs::{AnchorIntent, ElementRef};
+    use onecad_core::ids::TopoKey;
+    use onecad_core::math::Vec3;
+    use onecad_core::regen::{
+        AcquireRequest, EngineError, OpFailureCode, Pick, ResolveOutcome, ResolveRef,
+        ResolveRequest,
+    };
+
+    let Some(bin) = real_worker() else {
+        eprintln!("skip: real worker binary not found (set ONECAD_WORKER_PATH)");
+        return;
+    };
+    let wm = WorkerManager::spawn(SupervisorConfig::production(bin));
+    assert!(wm.wait_ready(Duration::from_secs(10)).await, "worker ready");
+
+    // AcquireElementIds against a non-existent body: the verb is live iff it
+    // responds recoverably (REF_UNRESOLVED) or with empty evidence — never
+    // UNSUPPORTED / a crash.
+    let acq = AcquireRequest {
+        snapshot_id: SnapshotId(0),
+        body: BodyId(Uuid::from_u128(0xDEAD)),
+        picks: vec![Pick {
+            topo_key: TopoKey::new("f:0"),
+            anchor: None,
+        }],
+    };
+    match wm.acquire_element_ids(acq).await {
+        Ok(ev) => assert!(
+            ev.iter().all(|e| e.existing.is_none()),
+            "no pre-existing ids for a fresh body"
+        ),
+        Err(EngineError::OpFailed {
+            code: OpFailureCode::RefUnresolved,
+            ..
+        }) => {} // body not found — the verb is wired + live.
+        Err(other) => panic!("AcquireElementIds not live: {other}"),
+    }
+
+    // ResolveRefs dry-run: a ref with no resolvable body ⇒ needsRepair (STATE) — the
+    // verb responds and binds nothing.
+    let req = ResolveRequest {
+        snapshot_id: SnapshotId(0),
+        refs: vec![ResolveRef {
+            ref_id: "op_0.input0".into(),
+            element: ElementRef {
+                primary: None,
+                intent: None,
+                anchor: Some(AnchorIntent {
+                    world_point: Vec3::new_unchecked(1.0, 2.0, 3.0),
+                    surface_uv: None,
+                    local_frame: None,
+                    adjacency_hint: None,
+                    extra: Default::default(),
+                }),
+                extra: Default::default(),
+            },
+        }],
+    };
+    let res = wm.resolve_refs(req).await.expect("ResolveRefs live");
+    assert_eq!(res.len(), 1);
+    assert!(
+        matches!(res[0].outcome, ResolveOutcome::NeedsRepair(_)),
+        "an unresolvable ref dry-runs to needsRepair"
     );
 
     wm.shutdown().await;

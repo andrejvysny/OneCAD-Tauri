@@ -22,12 +22,18 @@ use onecad_core::regen::{GeometryEngine, RegenRequest, SchedulerHandle};
 
 use crate::document_runtime::DocumentRuntime;
 use crate::worker::{
-    resolve_worker_path, MeshProvider, PendingBackend, SupervisorConfig, WorkerManager,
+    resolve_worker_path, MeshProvider, PendingBackend, SolverEngine, SupervisorConfig,
+    WorkerManager,
 };
 
-/// The geometry backend split into its two facets (the executor drives the
-/// [`GeometryEngine`]; the mesh cache pulls bytes from the [`MeshProvider`]).
-pub type BackendPair = (Arc<dyn GeometryEngine>, Arc<dyn MeshProvider>);
+/// The geometry backend split into its three facets (the executor drives the
+/// [`GeometryEngine`]; the mesh cache pulls bytes from the [`MeshProvider`]; the
+/// sketch flow drives the [`SolverEngine`] lane, SCHEMA §7.4).
+pub type BackendPair = (
+    Arc<dyn GeometryEngine>,
+    Arc<dyn MeshProvider>,
+    Arc<dyn SolverEngine>,
+);
 
 /// Builds a fresh backend for a newly opened document.
 pub type BackendFactory = Arc<dyn Fn() -> BackendPair + Send + Sync>;
@@ -107,14 +113,16 @@ fn real_worker_factory(
                 });
             }));
             let engine: Arc<dyn GeometryEngine> = Arc::new(wm.clone());
-            let meshes: Arc<dyn MeshProvider> = Arc::new(wm);
-            (engine, meshes)
+            let meshes: Arc<dyn MeshProvider> = Arc::new(wm.clone());
+            let solver: Arc<dyn SolverEngine> = Arc::new(wm);
+            (engine, meshes, solver)
         }
         None => {
             let backend = Arc::new(PendingBackend);
             let engine: Arc<dyn GeometryEngine> = backend.clone();
-            let meshes: Arc<dyn MeshProvider> = backend;
-            (engine, meshes)
+            let meshes: Arc<dyn MeshProvider> = backend.clone();
+            let solver: Arc<dyn SolverEngine> = backend;
+            (engine, meshes, solver)
         }
     })
 }

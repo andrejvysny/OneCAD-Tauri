@@ -163,6 +163,164 @@ pub struct DocumentChange {
     pub removed_bodies: Vec<String>,
 }
 
+// ── Solver-lane DTOs (SCHEMA §7.4) — mirror `src/ipc/types.ts` sketch shapes ──
+//
+// These MIRROR the frontend `localSolver`/`types.ts` sketch shapes so the F-WP9
+// swap (mock lane → real tauri commands) is a drop-in: `SketchSolveStatus` matches
+// `types.ts SketchSolveStatus` (the four PascalCase tokens the worker's SketchUpsert
+// `state` returns verbatim), `SketchSessionDto` == `SketchSession`, `SketchUpsertDto`
+// == `SketchUpsertResult`, `SketchRegionDto` == `SketchRegion`.
+
+/// Solver state (SCHEMA §7.4 `SketchUpsert.state`; `types.ts SketchSolveStatus`).
+/// Serializes as the bare PascalCase token the worker emits (variant name).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum SketchSolveStatus {
+    UnderConstrained,
+    FullyConstrained,
+    OverConstrained,
+    Conflicting,
+}
+
+impl SketchSolveStatus {
+    /// Parses the worker's `state` string; unknown ⇒ `UnderConstrained` (the safe
+    /// "not solved" default).
+    #[must_use]
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "FullyConstrained" => Self::FullyConstrained,
+            "OverConstrained" => Self::OverConstrained,
+            "Conflicting" => Self::Conflicting,
+            _ => Self::UnderConstrained,
+        }
+    }
+
+    /// The tree-projection [`SketchStatus`] for this solve state.
+    #[must_use]
+    pub fn tree_status(self) -> SketchStatus {
+        match self {
+            Self::FullyConstrained => SketchStatus::Ok,
+            Self::UnderConstrained => SketchStatus::Under,
+            Self::OverConstrained => SketchStatus::Over,
+            Self::Conflicting => SketchStatus::Error,
+        }
+    }
+}
+
+/// A live sketch session (`enterSketch` result; `types.ts SketchSession`). The
+/// `plane`/`entities`/`constraints` carry the SCHEMA §7.3/§7.4 wire JSON verbatim
+/// (identical to the frontend wire form) so the seam is a drop-in.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SketchSessionDto {
+    pub sketch_id: String,
+    pub plane: serde_json::Value,
+    pub entities: serde_json::Value,
+    pub constraints: serde_json::Value,
+    pub dof: u32,
+    pub status: SketchSolveStatus,
+}
+
+/// A re-solve result (`sketchUpsert`/`endGesture`; `types.ts SketchUpsertResult`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SketchUpsertDto {
+    pub sketch_id: String,
+    pub sketch_revision: u64,
+    pub dof: u32,
+    pub status: SketchSolveStatus,
+    /// CHANGED point coordinates after the solve, keyed by the point entity id.
+    pub solved_positions: std::collections::BTreeMap<String, [f64; 2]>,
+}
+
+/// A `BeginGesture` acknowledgement (SCHEMA §7.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BeginGestureDto {
+    pub gesture_id: u64,
+    pub ready: bool,
+}
+
+/// One incremental drag solve (SCHEMA §7.4 `SolveDrag` result). `status` is the
+/// worker token (`success`|`partial`|`conflicting`|`redundant`), plus the
+/// client-side `superseded` terminal a stale `seq` may receive (latest-wins).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DragSolveDto {
+    pub gesture_id: u64,
+    pub seq: u64,
+    pub status: String,
+    pub dof: u32,
+    pub conflicting: Vec<String>,
+    /// CHANGED point coordinates, keyed by point entity id.
+    pub positions: std::collections::BTreeMap<String, [f64; 2]>,
+    pub solve_micros: u64,
+    /// True when this `seq` was superseded by a newer drag (positions empty).
+    pub superseded: bool,
+}
+
+/// One closed profile region (`finishSketch`; `types.ts SketchRegion`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SketchRegionDto {
+    pub region_id: String,
+    pub outer_loop: Vec<String>,
+    pub holes: Vec<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_triangles: Option<PreviewTrianglesDto>,
+}
+
+/// A region's triangulated fill in plane (u,v) coordinates (`types.ts
+/// SketchRegion.previewTriangles`): flat `positions` (u,v pairs) + `indices`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewTrianglesDto {
+    pub positions: Vec<f64>,
+    pub indices: Vec<u32>,
+}
+
+/// `finishSketch` result (`types.ts FinishSketchResult`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FinishSketchDto {
+    pub regions: Vec<SketchRegionDto>,
+}
+
+/// One promoted element (`promoteSelection`; SCHEMA §7.5 `AcquireElementIds`
+/// result — Rust-minted `elementId`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromotedElementDto {
+    pub topo_key: String,
+    pub element_id: String,
+    pub kind: String,
+    pub body_id: String,
+}
+
+/// One dry-run resolution (`resolveRefs`; SCHEMA §7.5 `ResolveRefs` result).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveRefDto {
+    pub ref_id: String,
+    /// `autoBind` | `needsRepair` | `unchanged`.
+    pub outcome: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub element_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub margin: Option<f64>,
+}
+
+/// The `regen-finished` event payload (`{revision, outcome}`) so the frontend
+/// correlation resolves promptly without the 8 s fallback (F-WP8 flag 3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegenFinished {
+    pub revision: u64,
+    /// `published` | `superseded` | `failed` | `cancelled` | `noop`.
+    pub outcome: String,
+}
+
 // ── Mappers (op → feature kind / value; regen state → feature status) ─────────
 
 /// Maps a timeline [`Operation`] to its frontend feature kind.

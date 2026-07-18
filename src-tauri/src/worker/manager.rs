@@ -38,15 +38,20 @@ use onecad_protocol::client::{ProtocolClient, WorkerEvent};
 use onecad_protocol::messages::{HelloResult, Lane};
 use onecad_protocol::ProtocolError;
 
-use onecad_core::ids::{BodyId, DocumentId, DocumentRevision, JobId, SnapshotId, WorkerEpoch};
+use onecad_core::ids::{
+    BodyId, DocumentId, DocumentRevision, EntityId, JobId, SnapshotId, WorkerEpoch,
+};
 use onecad_core::regen::{
     AcceptResult, AcquireRequest, BodySelector, CheckpointArtifacts, EngineError, Fencing,
     GeometryEngine, Lod, OpenSessionRequest, PlanEvent, PlanRequest, RefResolution, ResolveRequest,
     RestoreRequest, RestoreResult, SessionMode, TessellateRequest, TessellateResult,
     WorkerElementEvidence, WorkerHead,
 };
+use onecad_core::sketch::Sketch;
 
-use super::{wire, MeshProvider};
+use crate::dto::{BeginGestureDto, DragSolveDto, SketchRegionDto, SketchUpsertDto};
+
+use super::{wire, MeshProvider, SolverEngine};
 
 /// Lifecycle state surfaced to the app (drives the worker-status banner).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -637,13 +642,27 @@ impl GeometryEngine for WorkerManager {
 
     async fn acquire_element_ids(
         &self,
-        _req: AcquireRequest,
+        req: AcquireRequest,
     ) -> Result<Vec<WorkerElementEvidence>, EngineError> {
-        Err(unsupported("AcquireElementIds not wired in V1"))
+        // SCHEMA §7.5: the worker returns resolved `topoKey → (kind, descriptor,
+        // anchor)` evidence + any already-held id; **Rust mints/owns the ids**.
+        let client = self.client_or_err()?;
+        let fallback = req.body;
+        let resp = client
+            .request("AcquireElementIds", wire::acquire_element_ids_args(&req))
+            .await
+            .map_err(protocol_err)?;
+        ok_result(resp).map(|r| wire::parse_acquire_evidence(&r, fallback))
     }
 
-    async fn resolve_refs(&self, _req: ResolveRequest) -> Result<Vec<RefResolution>, EngineError> {
-        Ok(vec![])
+    async fn resolve_refs(&self, req: ResolveRequest) -> Result<Vec<RefResolution>, EngineError> {
+        // SCHEMA §7.5 dry-run ladder for repair dialogs (binds nothing).
+        let client = self.client_or_err()?;
+        let resp = client
+            .request("ResolveRefs", wire::resolve_refs_args(&req))
+            .await
+            .map_err(protocol_err)?;
+        ok_result(resp).map(|r| wire::parse_resolve_refs(&r))
     }
 
     async fn cancel(&self, job_id: JobId) -> Result<(), EngineError> {
@@ -656,6 +675,105 @@ impl GeometryEngine for WorkerManager {
 
     async fn ping(&self) -> Result<(), EngineError> {
         self.get_worker_head().await.map(|_| ())
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SolverEngine (sketch solver lane, SCHEMA §7.4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[async_trait]
+impl SolverEngine for WorkerManager {
+    async fn sketch_upsert(&self, sketch: &Sketch) -> Result<SketchUpsertDto, EngineError> {
+        let client = self.client_or_err()?;
+        let resp = client
+            .request("SketchUpsert", wire::sketch_upsert_args(sketch))
+            .await
+            .map_err(protocol_err)?;
+        ok_result(resp).map(|r| wire::parse_sketch_upsert(&sketch.id.to_string(), &r))
+    }
+
+    async fn begin_gesture(
+        &self,
+        sketch_id: &str,
+        sketch_revision: u64,
+        gesture_id: u64,
+        drag_point: EntityId,
+        solver_policy_hash: &str,
+    ) -> Result<BeginGestureDto, EngineError> {
+        let client = self.client_or_err()?;
+        let args = wire::begin_gesture_args(
+            sketch_id,
+            sketch_revision,
+            gesture_id,
+            drag_point,
+            solver_policy_hash,
+        );
+        let resp = client
+            .request("BeginGesture", args)
+            .await
+            .map_err(protocol_err)?;
+        ok_result(resp).map(|r| BeginGestureDto {
+            gesture_id: r
+                .get("gestureId")
+                .and_then(Value::as_u64)
+                .unwrap_or(gesture_id),
+            ready: r.get("ready").and_then(Value::as_bool).unwrap_or(false),
+        })
+    }
+
+    async fn solve_drag(
+        &self,
+        gesture_id: u64,
+        seq: u64,
+        drag_point: EntityId,
+        target: [f64; 2],
+    ) -> Result<DragSolveDto, EngineError> {
+        // Fired latest-wins: the client sends the newest seq without serial awaits;
+        // a stale seq may resolve `superseded` (SCHEMA §7.4) — parsed, not an error.
+        let client = self.client_or_err()?;
+        let resp = client
+            .request(
+                "SolveDrag",
+                wire::solve_drag_args(gesture_id, seq, drag_point, target),
+            )
+            .await
+            .map_err(protocol_err)?;
+        ok_result(resp).map(|r| wire::parse_solve_drag(&r))
+    }
+
+    async fn end_gesture(
+        &self,
+        sketch_id: &str,
+        gesture_id: u64,
+        final_target: Option<[f64; 2]>,
+    ) -> Result<SketchUpsertDto, EngineError> {
+        let client = self.client_or_err()?;
+        let resp = client
+            .request(
+                "EndGesture",
+                wire::end_gesture_args(gesture_id, final_target),
+            )
+            .await
+            .map_err(protocol_err)?;
+        ok_result(resp).map(|r| wire::parse_sketch_upsert(sketch_id, &r))
+    }
+
+    async fn sketch_regions(&self, sketch_id: &str) -> Result<Vec<SketchRegionDto>, EngineError> {
+        // Uses the resp binary tail (previewTriangles bins, SCHEMA §7.4 inline §5.2).
+        let client = self.client_or_err()?;
+        let inflight = client
+            .start_request(
+                "SketchRegions",
+                wire::sketch_regions_args(sketch_id),
+                Lane::Control,
+            )
+            .await
+            .map_err(protocol_err)?;
+        let (resp, tail) = inflight.response_with_bin().await.map_err(protocol_err)?;
+        let sections = resp.bin.clone().unwrap_or_default();
+        let result = ok_result(resp)?;
+        Ok(wire::parse_sketch_regions(&result, &sections, &tail))
     }
 }
 

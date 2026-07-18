@@ -80,6 +80,64 @@ pub trait MeshProvider: Send + Sync {
     ) -> Result<Vec<u8>, EngineError>;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Solver-lane seam (SCHEMA §7.4) — separate from GeometryEngine
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The sketch **solver lane** (SCHEMA §7.4) — a dedicated seam distinct from the
+/// OCCT-lane [`GeometryEngine`] because the worker runs PlaneGCS on a separate
+/// thread/actor: drags must **never queue behind** an `ExecutePlan` (plan "Solver
+/// lane in V1"). The transport ([`ProtocolClient`](onecad_protocol::client::ProtocolClient))
+/// already multiplexes concurrent in-flight requests, so a `SolveDrag` frame goes
+/// out and resolves while a plan is mid-flight.
+///
+/// **Latest-wins** is a client-side contract: the caller fires the newest
+/// `SolveDrag` (monotonic `seq`) without awaiting each serially and tolerates a
+/// `superseded`/`CANCELLED` terminal for a stale `seq` (SCHEMA §7.4) — it simply
+/// drops that response's positions.
+#[async_trait]
+pub trait SolverEngine: Send + Sync {
+    /// `SketchUpsert` (SCHEMA §7.4) — sync the authoritative sketch + report dof/state.
+    async fn sketch_upsert(
+        &self,
+        sketch: &onecad_core::sketch::Sketch,
+    ) -> Result<crate::dto::SketchUpsertDto, EngineError>;
+
+    /// `BeginGesture` (SCHEMA §7.4) — open a drag gesture on a point.
+    async fn begin_gesture(
+        &self,
+        sketch_id: &str,
+        sketch_revision: u64,
+        gesture_id: u64,
+        drag_point: onecad_core::ids::EntityId,
+        solver_policy_hash: &str,
+    ) -> Result<crate::dto::BeginGestureDto, EngineError>;
+
+    /// `SolveDrag` (SCHEMA §7.4) — one latest-wins incremental solve.
+    async fn solve_drag(
+        &self,
+        gesture_id: u64,
+        seq: u64,
+        drag_point: onecad_core::ids::EntityId,
+        target: [f64; 2],
+    ) -> Result<crate::dto::DragSolveDto, EngineError>;
+
+    /// `EndGesture` (SCHEMA §7.4) — pointer-up final exact solve; carries the
+    /// changed positions the caller applies as one undo command.
+    async fn end_gesture(
+        &self,
+        sketch_id: &str,
+        gesture_id: u64,
+        final_target: Option<[f64; 2]>,
+    ) -> Result<crate::dto::SketchUpsertDto, EngineError>;
+
+    /// `SketchRegions` (SCHEMA §7.4) — closed profile regions for extrude/preview.
+    async fn sketch_regions(
+        &self,
+        sketch_id: &str,
+    ) -> Result<Vec<crate::dto::SketchRegionDto>, EngineError>;
+}
+
 /// The full geometry backend: a [`GeometryEngine`] plus its [`MeshProvider`].
 /// Blanket-implemented, so any type that is both is a `Backend`.
 pub trait Backend: GeometryEngine + MeshProvider {}
@@ -353,6 +411,49 @@ impl MeshProvider for PendingBackend {
         _lod: Lod,
         _snapshot: SnapshotId,
     ) -> Result<Vec<u8>, EngineError> {
+        Err(Self::not_ready())
+    }
+}
+
+#[async_trait]
+impl SolverEngine for PendingBackend {
+    async fn sketch_upsert(
+        &self,
+        _sketch: &onecad_core::sketch::Sketch,
+    ) -> Result<crate::dto::SketchUpsertDto, EngineError> {
+        Err(Self::not_ready())
+    }
+    async fn begin_gesture(
+        &self,
+        _sketch_id: &str,
+        _sketch_revision: u64,
+        _gesture_id: u64,
+        _drag_point: onecad_core::ids::EntityId,
+        _solver_policy_hash: &str,
+    ) -> Result<crate::dto::BeginGestureDto, EngineError> {
+        Err(Self::not_ready())
+    }
+    async fn solve_drag(
+        &self,
+        _gesture_id: u64,
+        _seq: u64,
+        _drag_point: onecad_core::ids::EntityId,
+        _target: [f64; 2],
+    ) -> Result<crate::dto::DragSolveDto, EngineError> {
+        Err(Self::not_ready())
+    }
+    async fn end_gesture(
+        &self,
+        _sketch_id: &str,
+        _gesture_id: u64,
+        _final_target: Option<[f64; 2]>,
+    ) -> Result<crate::dto::SketchUpsertDto, EngineError> {
+        Err(Self::not_ready())
+    }
+    async fn sketch_regions(
+        &self,
+        _sketch_id: &str,
+    ) -> Result<Vec<crate::dto::SketchRegionDto>, EngineError> {
         Err(Self::not_ready())
     }
 }

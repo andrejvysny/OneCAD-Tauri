@@ -18,8 +18,16 @@ pub const DOCUMENT_CHANGED: &str = "document-changed";
 /// Incremental regen progress for the current job (reserved; R-WP11 fills it).
 pub const REGEN_PROGRESS: &str = "regen-progress";
 
-/// The current regen job finished (published or discarded).
+/// The current regen job finished (published or discarded) — carries a
+/// [`RegenFinished`](crate::dto::RegenFinished) (`{revision, outcome}`) so the
+/// frontend correlation resolves promptly (no 8 s fallback; F-WP8 flag 3). Emitted
+/// at the end of **every** regen (success / superseded / failure).
 pub const REGEN_FINISHED: &str = "regen-finished";
+
+/// A sketch solved on the solver lane (SCHEMA §7.4) — carries a
+/// [`SketchUpsertDto`](crate::dto::SketchUpsertDto) (`{sketchId, sketchRevision,
+/// dof, status, solvedPositions}`) so the DOF badge + constraints panel refresh.
+pub const SKETCH_SOLVED: &str = "sketch-solved";
 
 /// One or more references need user repair.
 pub const NEEDS_REPAIR: &str = "needs-repair";

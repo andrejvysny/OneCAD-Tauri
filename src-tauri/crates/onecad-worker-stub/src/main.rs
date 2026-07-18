@@ -49,6 +49,7 @@
 //!
 //! Logs go to stderr only; stdout carries frames exclusively (SCHEMA §1).
 
+use std::collections::BTreeMap;
 use std::io::Write;
 
 use serde_json::{json, Value};
@@ -78,6 +79,39 @@ struct Prepared {
     plan_document_revision: u64,
 }
 
+/// One stub sketch on the solver lane (SCHEMA §7.4): point positions + a deterministic
+/// dof/state derived from `2·points − constraints`.
+#[derive(Default, Clone)]
+struct StubSketch {
+    revision: u64,
+    /// Point wire id → `[x, y]`.
+    points: BTreeMap<String, [f64; 2]>,
+    point_count: usize,
+    constraint_count: usize,
+}
+
+impl StubSketch {
+    fn dof(&self) -> i64 {
+        (2 * self.point_count as i64 - self.constraint_count as i64).max(0)
+    }
+    fn state(&self) -> &'static str {
+        if self.dof() == 0 {
+            "FullyConstrained"
+        } else {
+            "UnderConstrained"
+        }
+    }
+}
+
+/// One in-flight drag gesture (SCHEMA §7.4). `max_seq` drives latest-wins: a `seq`
+/// not newer than `max_seq` resolves `superseded`.
+struct StubGesture {
+    sketch_id: String,
+    drag_point: String,
+    max_seq: u64,
+    baseline: BTreeMap<String, [f64; 2]>,
+}
+
 /// Mutable stub state across the request loop.
 struct StubState {
     /// Worker output sequence number (SCHEMA §2: monotonic across every frame).
@@ -97,6 +131,10 @@ struct StubState {
     prepared: Vec<Prepared>,
     /// Monotonic bulk-stream id allocator (SCHEMA §2 `streamId`).
     stream_id: u64,
+    /// Solver-lane sketches by id (SCHEMA §7.4).
+    sketches: BTreeMap<String, StubSketch>,
+    /// In-flight drag gestures by gestureId (SCHEMA §7.4).
+    gestures: BTreeMap<u64, StubGesture>,
 }
 
 impl StubState {
@@ -111,6 +149,8 @@ impl StubState {
             fencing_baseline_set: false,
             prepared: Vec::new(),
             stream_id: 700,
+            sketches: BTreeMap::new(),
+            gestures: BTreeMap::new(),
         }
     }
 
@@ -287,6 +327,15 @@ fn handle_req<W: Write>(writer: &mut W, state: &mut StubState, req: ReqFrame) ->
         "AcceptPrepared" => handle_accept_prepared(writer, state, &req),
         "DiscardPrepared" => handle_discard_prepared(writer, state, &req),
         "Tessellate" => handle_tessellate(writer, state, &req),
+        // --- solver lane (SCHEMA §7.4) ---
+        "SketchUpsert" => handle_sketch_upsert(writer, state, &req),
+        "BeginGesture" => handle_begin_gesture(writer, state, &req),
+        "SolveDrag" => handle_solve_drag(writer, state, &req),
+        "EndGesture" => handle_end_gesture(writer, state, &req),
+        "SketchRegions" => handle_sketch_regions(writer, state, &req),
+        // --- element identity (SCHEMA §7.5) ---
+        "AcquireElementIds" => handle_acquire_element_ids(writer, state, &req),
+        "ResolveRefs" => handle_resolve_refs(writer, state, &req),
         unknown => {
             // Well-framed but protocol-illegal: terminal error resp (SCHEMA §8).
             let stamp = state.stamp();
@@ -574,6 +623,329 @@ fn handle_discard_prepared<W: Write>(
         req.id,
         stamp,
         json!({ "discarded": true }),
+        &[],
+        &[],
+    )
+}
+
+// ── Solver lane (SCHEMA §7.4) — echo-style deterministic solve ───────────────
+
+fn read_xy(v: &Value) -> Option<[f64; 2]> {
+    let a = v.as_array()?;
+    Some([a.first()?.as_f64()?, a.get(1)?.as_f64()?])
+}
+
+/// `SketchUpsert` (SCHEMA §7.4): store the point positions + report a deterministic
+/// `dof = max(0, 2·points − constraints)` and derived state.
+fn handle_sketch_upsert<W: Write>(
+    writer: &mut W,
+    state: &mut StubState,
+    req: &ReqFrame,
+) -> Result<(), ProtocolError> {
+    let args = &req.args;
+    let sketch_id = args
+        .get("sketchId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let entities = args
+        .get("entities")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let constraint_count = args
+        .get("constraints")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+
+    let mut points = BTreeMap::new();
+    let mut point_count = 0;
+    for e in &entities {
+        if e.get("type").and_then(Value::as_str) == Some("Point") {
+            point_count += 1;
+            if let (Some(id), Some(xy)) = (
+                e.get("id").and_then(Value::as_str),
+                e.get("at").and_then(read_xy),
+            ) {
+                points.insert(id.to_string(), xy);
+            }
+        }
+    }
+    let prev_rev = state.sketches.get(&sketch_id).map_or(0, |s| s.revision);
+    let sk = StubSketch {
+        revision: prev_rev + 1,
+        points,
+        point_count,
+        constraint_count,
+    };
+    let (dof, st, rev) = (sk.dof(), sk.state(), sk.revision);
+    state.sketches.insert(sketch_id.clone(), sk);
+    let stamp = state.stamp();
+    write_resp_value(
+        writer,
+        req.id,
+        stamp,
+        json!({ "upserted": true, "sketchId": sketch_id, "sketchRevision": rev, "dof": dof, "state": st }),
+        &[],
+        &[],
+    )
+}
+
+/// `BeginGesture` (SCHEMA §7.4): snapshot the point baseline for change reporting.
+fn handle_begin_gesture<W: Write>(
+    writer: &mut W,
+    state: &mut StubState,
+    req: &ReqFrame,
+) -> Result<(), ProtocolError> {
+    let args = &req.args;
+    let gesture_id = args.get("gestureId").and_then(Value::as_u64).unwrap_or(0);
+    let sketch_id = args
+        .get("sketchId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let drag_point = args
+        .get("drag")
+        .and_then(|d| d.get("pointId"))
+        .and_then(Value::as_str)
+        .or_else(|| args.get("pointId").and_then(Value::as_str))
+        .unwrap_or("")
+        .to_string();
+    let baseline = state
+        .sketches
+        .get(&sketch_id)
+        .map(|s| s.points.clone())
+        .unwrap_or_default();
+    state.gestures.insert(
+        gesture_id,
+        StubGesture {
+            sketch_id,
+            drag_point,
+            max_seq: 0,
+            baseline,
+        },
+    );
+    let stamp = state.stamp();
+    write_resp_value(
+        writer,
+        req.id,
+        stamp,
+        json!({ "gestureId": gesture_id, "ready": true }),
+        &[],
+        &[],
+    )
+}
+
+/// `SolveDrag` (SCHEMA §7.4): apply the drag delta to the dragged point. A `seq`
+/// not newer than the gesture's `max_seq` resolves **superseded** (latest-wins).
+fn handle_solve_drag<W: Write>(
+    writer: &mut W,
+    state: &mut StubState,
+    req: &ReqFrame,
+) -> Result<(), ProtocolError> {
+    let args = &req.args;
+    let gesture_id = args.get("gestureId").and_then(Value::as_u64).unwrap_or(0);
+    let seq = args.get("seq").and_then(Value::as_u64).unwrap_or(0);
+    let target = args.get("target").and_then(read_xy).unwrap_or([0.0, 0.0]);
+
+    let (sketch_id, drag_point, stale) = match state.gestures.get_mut(&gesture_id) {
+        Some(g) => {
+            let stale = g.max_seq > 0 && seq <= g.max_seq;
+            if !stale {
+                g.max_seq = seq;
+            }
+            (g.sketch_id.clone(), g.drag_point.clone(), stale)
+        }
+        None => {
+            let stamp = state.stamp();
+            return write_resp_err(
+                writer,
+                req.id,
+                stamp,
+                ErrorObject {
+                    code: ErrorCode::RefUnresolved,
+                    message: "SolveDrag: unknown or ended gesture".into(),
+                    detail: None,
+                    retriable: false,
+                },
+            );
+        }
+    };
+
+    let mut positions = serde_json::Map::new();
+    if !stale {
+        if let Some(sk) = state.sketches.get_mut(&sketch_id) {
+            sk.points.insert(drag_point.clone(), target);
+        }
+        positions.insert(drag_point, json!([target[0], target[1]]));
+    }
+    let dof = state.sketches.get(&sketch_id).map_or(0, StubSketch::dof);
+    let status = if stale { "superseded" } else { "success" };
+    let stamp = state.stamp();
+    write_resp_value(
+        writer,
+        req.id,
+        stamp,
+        json!({
+            "gestureId": gesture_id, "seq": seq, "status": status, "dof": dof,
+            "conflicting": [], "positions": Value::Object(positions), "solveMicros": 42,
+        }),
+        &[],
+        &[],
+    )
+}
+
+/// `EndGesture` (SCHEMA §7.4): apply the final target, bump the sketch revision,
+/// and report the points changed since the gesture began.
+fn handle_end_gesture<W: Write>(
+    writer: &mut W,
+    state: &mut StubState,
+    req: &ReqFrame,
+) -> Result<(), ProtocolError> {
+    let args = &req.args;
+    let gesture_id = args.get("gestureId").and_then(Value::as_u64).unwrap_or(0);
+    let Some(g) = state.gestures.remove(&gesture_id) else {
+        let stamp = state.stamp();
+        return write_resp_err(
+            writer,
+            req.id,
+            stamp,
+            ErrorObject {
+                code: ErrorCode::RefUnresolved,
+                message: "EndGesture: unknown or ended gesture".into(),
+                detail: None,
+                retriable: false,
+            },
+        );
+    };
+    if let Some(ft) = args
+        .get("commit")
+        .and_then(|c| c.get("finalTarget"))
+        .and_then(read_xy)
+    {
+        if let Some(sk) = state.sketches.get_mut(&g.sketch_id) {
+            sk.points.insert(g.drag_point.clone(), ft);
+        }
+    }
+    let (rev, dof, positions) = match state.sketches.get_mut(&g.sketch_id) {
+        Some(sk) => {
+            sk.revision += 1;
+            let mut pos = serde_json::Map::new();
+            for (k, v) in &sk.points {
+                let changed = g
+                    .baseline
+                    .get(k)
+                    .is_none_or(|b| (b[0] - v[0]).abs() > 1e-9 || (b[1] - v[1]).abs() > 1e-9);
+                if changed {
+                    pos.insert(k.clone(), json!([v[0], v[1]]));
+                }
+            }
+            (sk.revision, sk.dof(), Value::Object(pos))
+        }
+        None => (0, 0, json!({})),
+    };
+    let stamp = state.stamp();
+    write_resp_value(
+        writer,
+        req.id,
+        stamp,
+        json!({ "gestureId": gesture_id, "status": "success", "dof": dof, "positions": positions, "sketchRevision": rev }),
+        &[],
+        &[],
+    )
+}
+
+/// `SketchRegions` (SCHEMA §7.4): the stub has no loop detector, so it returns an
+/// empty region set (the flow is exercised; real regions need the C++ worker).
+fn handle_sketch_regions<W: Write>(
+    writer: &mut W,
+    state: &mut StubState,
+    req: &ReqFrame,
+) -> Result<(), ProtocolError> {
+    let sketch_id = req
+        .args
+        .get("sketchId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let rev = state.sketches.get(&sketch_id).map_or(0, |s| s.revision);
+    let stamp = state.stamp();
+    write_resp_value(
+        writer,
+        req.id,
+        stamp,
+        json!({ "sketchId": sketch_id, "sketchRevision": rev, "regions": [] }),
+        &[],
+        &[],
+    )
+}
+
+// ── Element identity (SCHEMA §7.5) — echo-style evidence ─────────────────────
+
+/// `AcquireElementIds` (SCHEMA §7.5): echo one evidence entry per pick with an
+/// empty `elementId` (Rust mints the id) + a stub descriptor.
+fn handle_acquire_element_ids<W: Write>(
+    writer: &mut W,
+    state: &mut StubState,
+    req: &ReqFrame,
+) -> Result<(), ProtocolError> {
+    let args = &req.args;
+    let body_id = args
+        .get("bodyId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let mut ids = Vec::new();
+    if let Some(picks) = args.get("picks").and_then(Value::as_array) {
+        for p in picks {
+            let topo = p.get("topoKey").and_then(Value::as_str).unwrap_or("");
+            let kind = match topo.chars().next() {
+                Some('e') => "edge",
+                Some('v') => "vertex",
+                _ => "face",
+            };
+            let mut entry = json!({
+                "topoKey": topo, "kind": kind, "bodyId": body_id,
+                "elementId": "", "descriptor": { "stub": true },
+            });
+            if let Some(a) = p.get("anchor") {
+                entry["anchor"] = a.clone();
+            }
+            ids.push(entry);
+        }
+    }
+    let stamp = state.stamp();
+    write_resp_value(writer, req.id, stamp, json!({ "ids": ids }), &[], &[])
+}
+
+/// `ResolveRefs` (SCHEMA §7.5): a deterministic dry run — an already-bound ref is
+/// `unchanged`, anything else `autoBind`s with a canned high score.
+fn handle_resolve_refs<W: Write>(
+    writer: &mut W,
+    state: &mut StubState,
+    req: &ReqFrame,
+) -> Result<(), ProtocolError> {
+    let mut resolutions = Vec::new();
+    if let Some(refs) = req.args.get("refs").and_then(Value::as_array) {
+        for r in refs {
+            let ref_id = r.get("refId").and_then(Value::as_str).unwrap_or("");
+            let existing = r
+                .get("primary")
+                .and_then(|p| p.get("elementId"))
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty());
+            resolutions.push(match existing {
+                Some(eid) => json!({ "refId": ref_id, "outcome": "unchanged", "elementId": eid, "topoKey": "f:0" }),
+                None => json!({ "refId": ref_id, "outcome": "autoBind", "topoKey": "f:0", "score": 0.95, "margin": 0.5 }),
+            });
+        }
+    }
+    let stamp = state.stamp();
+    write_resp_value(
+        writer,
+        req.id,
+        stamp,
+        json!({ "resolutions": resolutions }),
         &[],
         &[],
     )

@@ -30,8 +30,16 @@ use onecad_core::regen::{
     StoppedReason, TessellateRequest, TessellateResult, WorkerElementEvidence, WorkerHead,
 };
 
+use onecad_core::document::refs::AnchorIntent;
+use onecad_core::ids::{EntityId, SketchId, TopoKey};
+use onecad_core::math::Vec2;
+use onecad_core::sketch::{Sketch, SketchEntity, WorldPlane};
+
 use super::*;
-use crate::worker::MeshProvider;
+use crate::dto::{
+    BeginGestureDto, DragSolveDto, SketchRegionDto, SketchSolveStatus, SketchUpsertDto,
+};
+use crate::worker::{MeshProvider, SolverEngine};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scripted backend
@@ -41,6 +49,8 @@ use crate::worker::MeshProvider;
 struct FakeState {
     prepared: HashMap<JobId, SnapshotId>,
     snapshot_counter: u64,
+    /// Active gestures: `gestureId → (dragPoint id string, last target)`.
+    gestures: HashMap<u64, (String, [f64; 2])>,
 }
 
 struct FakeBackend {
@@ -211,9 +221,20 @@ impl GeometryEngine for FakeBackend {
     }
     async fn acquire_element_ids(
         &self,
-        _r: AcquireRequest,
+        r: AcquireRequest,
     ) -> Result<Vec<WorkerElementEvidence>, EngineError> {
-        Ok(vec![])
+        // Echo one evidence entry per pick (empty `existing` — Rust mints the id).
+        Ok(r.picks
+            .into_iter()
+            .map(|p| WorkerElementEvidence {
+                topo_key: p.topo_key,
+                body: r.body,
+                kind: onecad_core::document::refs::ElementKind::Face,
+                anchor: p.anchor,
+                descriptor: Some(serde_json::json!({ "fake": true })),
+                existing: None,
+            })
+            .collect())
     }
     async fn resolve_refs(&self, _r: ResolveRequest) -> Result<Vec<RefResolution>, EngineError> {
         Ok(vec![])
@@ -235,6 +256,89 @@ impl MeshProvider for FakeBackend {
         _snapshot: SnapshotId,
     ) -> Result<Vec<u8>, EngineError> {
         Ok(format!("MESH1:{body}:{}", crate::worker::lod_str(lod)).into_bytes())
+    }
+}
+
+#[async_trait]
+impl SolverEngine for FakeBackend {
+    async fn sketch_upsert(&self, sketch: &Sketch) -> Result<SketchUpsertDto, EngineError> {
+        Ok(SketchUpsertDto {
+            sketch_id: sketch.id.to_string(),
+            sketch_revision: 1,
+            dof: 0,
+            status: SketchSolveStatus::FullyConstrained,
+            solved_positions: std::collections::BTreeMap::new(),
+        })
+    }
+    async fn begin_gesture(
+        &self,
+        _sketch_id: &str,
+        _sketch_revision: u64,
+        gesture_id: u64,
+        drag_point: EntityId,
+        _solver_policy_hash: &str,
+    ) -> Result<BeginGestureDto, EngineError> {
+        self.state
+            .lock()
+            .unwrap()
+            .gestures
+            .insert(gesture_id, (drag_point.to_string(), [0.0, 0.0]));
+        Ok(BeginGestureDto {
+            gesture_id,
+            ready: true,
+        })
+    }
+    async fn solve_drag(
+        &self,
+        gesture_id: u64,
+        seq: u64,
+        drag_point: EntityId,
+        target: [f64; 2],
+    ) -> Result<DragSolveDto, EngineError> {
+        let mut positions = std::collections::BTreeMap::new();
+        if let Some(g) = self.state.lock().unwrap().gestures.get_mut(&gesture_id) {
+            g.1 = target;
+        }
+        positions.insert(drag_point.to_string(), target);
+        Ok(DragSolveDto {
+            gesture_id,
+            seq,
+            status: "success".into(),
+            dof: 0,
+            conflicting: vec![],
+            positions,
+            solve_micros: 0,
+            superseded: false,
+        })
+    }
+    async fn end_gesture(
+        &self,
+        sketch_id: &str,
+        gesture_id: u64,
+        final_target: Option<[f64; 2]>,
+    ) -> Result<SketchUpsertDto, EngineError> {
+        let (drag_point, last) = self
+            .state
+            .lock()
+            .unwrap()
+            .gestures
+            .remove(&gesture_id)
+            .unwrap_or_default();
+        let pos = final_target.unwrap_or(last);
+        let mut solved = std::collections::BTreeMap::new();
+        if !drag_point.is_empty() {
+            solved.insert(drag_point, pos);
+        }
+        Ok(SketchUpsertDto {
+            sketch_id: sketch_id.to_string(),
+            sketch_revision: 2,
+            dof: 0,
+            status: SketchSolveStatus::FullyConstrained,
+            solved_positions: solved,
+        })
+    }
+    async fn sketch_regions(&self, _sketch_id: &str) -> Result<Vec<SketchRegionDto>, EngineError> {
+        Ok(vec![])
     }
 }
 
@@ -269,8 +373,9 @@ fn add_extrude(seed: u128, distance: f64) -> EditCommand {
 
 fn runtime_with(backend: Arc<FakeBackend>) -> DocumentRuntime {
     let engine: Arc<dyn GeometryEngine> = backend.clone();
-    let meshes: Arc<dyn MeshProvider> = backend;
-    DocumentRuntime::new_blank(engine, meshes)
+    let meshes: Arc<dyn MeshProvider> = backend.clone();
+    let solver: Arc<dyn SolverEngine> = backend;
+    DocumentRuntime::new_blank(engine, meshes, solver)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -446,8 +551,9 @@ async fn save_then_reopen_round_trips_the_document() {
     // survive the round-trip; a reopened document starts clean.
     let backend = Arc::new(FakeBackend::new());
     let engine: Arc<dyn GeometryEngine> = backend.clone();
-    let meshes: Arc<dyn MeshProvider> = backend;
-    let reopened = DocumentRuntime::open(&path, engine, meshes).unwrap();
+    let meshes: Arc<dyn MeshProvider> = backend.clone();
+    let solver: Arc<dyn SolverEngine> = backend;
+    let reopened = DocumentRuntime::open(&path, engine, meshes, solver).unwrap();
     let proj = reopened.projection();
     assert_eq!(proj.features.len(), 1);
     assert_eq!(proj.features[0].value_text, "25.0 mm");
@@ -533,4 +639,137 @@ async fn edit_during_regen_supersedes_via_live_fencing() {
         .await;
     assert!(matches!(converge.outcome, Outcome::Published(_)));
     assert_eq!(rt.projection().bodies.len(), 2, "converged after supersede");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sketch solver lane + promotion (R-WP12)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn sketch_with_point() -> (Sketch, EntityId) {
+    let sid = SketchId(Uuid::from_u128(0x5c));
+    let p = EntityId(Uuid::from_u128(0x100));
+    let mut sk = Sketch::on_world_plane(sid, "Sketch 1", WorldPlane::XY);
+    sk.add_entity(SketchEntity::point(
+        p,
+        Vec2::new_unchecked(0.0, 0.0),
+        false,
+        false,
+    ))
+    .unwrap();
+    (sk, p)
+}
+
+fn point_at(rt: &DocumentRuntime, sid: SketchId, p: EntityId) -> [f64; 2] {
+    match rt
+        .session
+        .document()
+        .sketch(sid)
+        .unwrap()
+        .get_entity(p)
+        .unwrap()
+    {
+        SketchEntity::Point { at, .. } => [at.x, at.y],
+        _ => panic!("not a point"),
+    }
+}
+
+#[tokio::test]
+async fn sketch_gesture_commits_exactly_one_undo_command() {
+    let mut rt = runtime_with(Arc::new(FakeBackend::new()));
+    let (sk, point) = sketch_with_point();
+    let sid = sk.id;
+    rt.apply(EditCommand::AddSketch { sketch: sk }).unwrap();
+
+    // Enter → real dof/status flow into the projection (FullyConstrained ⇒ dof 0).
+    let session = rt.enter_sketch(sid).await.unwrap();
+    assert_eq!(session.sketch_id, sid.to_string());
+    let proj = rt.projection();
+    assert_eq!(proj.sketches[&sid.to_string()].dof, 0);
+    assert_eq!(
+        proj.sketches[&sid.to_string()].status,
+        crate::dto::SketchStatus::Ok
+    );
+
+    // Drag: begin → N drags → pointer-up commits ONE undo command.
+    let depth_before = rt.session.undo_depth();
+    let g = rt.begin_gesture(sid, point).await.unwrap();
+    assert!(g.ready);
+    rt.solve_drag([5.0, 0.0]).await.unwrap();
+    rt.solve_drag([10.0, 2.0]).await.unwrap();
+    let end = rt.end_gesture(Some([12.0, 3.0])).await.unwrap();
+    assert!(end.solved_positions.contains_key(&point.to_string()));
+
+    assert_eq!(
+        rt.session.undo_depth(),
+        depth_before + 1,
+        "the whole gesture is exactly ONE undo command"
+    );
+    assert_eq!(
+        point_at(&rt, sid, point),
+        [12.0, 3.0],
+        "point moved to target"
+    );
+
+    // One undo reverts the whole drag.
+    assert!(rt.undo());
+    assert_eq!(
+        point_at(&rt, sid, point),
+        [0.0, 0.0],
+        "undo reverts the drag"
+    );
+}
+
+#[tokio::test]
+async fn solve_drag_without_gesture_is_recoverable_error() {
+    let mut rt = runtime_with(Arc::new(FakeBackend::new()));
+    let err = rt.solve_drag([1.0, 1.0]).await.unwrap_err();
+    assert!(matches!(err, EngineError::OpFailed { .. }));
+}
+
+#[tokio::test]
+async fn promote_selection_mints_ids_and_is_stable() {
+    let mut rt = runtime_with(Arc::new(FakeBackend::new()));
+    let body = BodyId(Uuid::from_u128(0xB0));
+    let picks = vec![(TopoKey::new("f:22"), None), (TopoKey::new("e:3"), None)];
+    let ids = rt
+        .promote_selection(SnapshotId(5), body, picks)
+        .await
+        .unwrap();
+    assert_eq!(ids.len(), 2);
+    assert!(ids[0].element_id.starts_with("el_"));
+    assert_eq!(ids[0].topo_key, "f:22");
+    assert_eq!(ids[0].kind, "face");
+
+    // Re-promote the SAME (body, topoKey) ⇒ the SAME id (Invariant 1).
+    let again = rt
+        .promote_selection(SnapshotId(5), body, vec![(TopoKey::new("f:22"), None)])
+        .await
+        .unwrap();
+    assert_eq!(
+        again[0].element_id, ids[0].element_id,
+        "re-pick reuses the id (Invariant 1)"
+    );
+}
+
+#[tokio::test]
+async fn anchor_carries_through_promotion() {
+    let mut rt = runtime_with(Arc::new(FakeBackend::new()));
+    let body = BodyId(Uuid::from_u128(0xB1));
+    let anchor = AnchorIntent {
+        world_point: onecad_core::math::Vec3::new_unchecked(1.0, 2.0, 3.0),
+        surface_uv: Vec2::new(0.5, 0.5),
+        local_frame: None,
+        adjacency_hint: None,
+        extra: Default::default(),
+    };
+    let ids = rt
+        .promote_selection(
+            SnapshotId(9),
+            body,
+            vec![(TopoKey::new("f:7"), Some(anchor))],
+        )
+        .await
+        .unwrap();
+    assert_eq!(ids.len(), 1);
+    assert!(ids[0].element_id.starts_with("el_"));
 }

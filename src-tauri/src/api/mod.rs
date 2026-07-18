@@ -11,19 +11,24 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::Deserialize;
 use tauri::{AppHandle, Emitter, State};
 
-use onecad_core::edit::EditCommand;
-use onecad_core::ids::BodyId;
+use onecad_core::document::refs::{AnchorIntent, ElementRef};
+use onecad_core::edit::{EditCommand, SketchEditOp};
+use onecad_core::ids::{BodyId, EntityId, SketchId, SnapshotId, TopoKey};
 use onecad_core::io::container::SaveMeta;
-use onecad_core::regen::RegenRequest;
+use onecad_core::regen::{RefResolution, RegenRequest, ResolveOutcome, ResolveRef, ResolveRequest};
 
 use crate::document_runtime::{DocumentRuntime, RegenReport};
-use crate::dto::{DocumentProjection, DocumentSnapshotDto, RecentProjectDto};
+use crate::dto::{
+    BeginGestureDto, DocumentProjection, DocumentSnapshotDto, DragSolveDto, FinishSketchDto,
+    PromotedElementDto, RecentProjectDto, ResolveRefDto, SketchSessionDto, SketchUpsertDto,
+};
 use crate::error::ApiError;
 use crate::events;
 use crate::state::AppState;
-use crate::worker::lod_from_str;
+use crate::worker::{lod_from_str, wire};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Lifecycle
@@ -35,10 +40,10 @@ pub async fn new_document(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<DocumentSnapshotDto, ApiError> {
-    let (engine, meshes) = state.make_backend();
+    let (engine, meshes, solver) = state.make_backend();
     let (snapshot, projection) = {
         let mut guard = state.runtime.lock().await;
-        *guard = Some(DocumentRuntime::new_blank(engine, meshes));
+        *guard = Some(DocumentRuntime::new_blank(engine, meshes, solver));
         let rt = guard.as_ref().unwrap();
         (snapshot_of(rt), rt.projection())
     };
@@ -53,8 +58,8 @@ pub async fn open_document(
     app: AppHandle,
     path: String,
 ) -> Result<DocumentSnapshotDto, ApiError> {
-    let (engine, meshes) = state.make_backend();
-    let rt = DocumentRuntime::open(Path::new(&path), engine, meshes)?;
+    let (engine, meshes, solver) = state.make_backend();
+    let rt = DocumentRuntime::open(Path::new(&path), engine, meshes, solver)?;
     let (snapshot, projection) = {
         let mut guard = state.runtime.lock().await;
         *guard = Some(rt);
@@ -217,6 +222,244 @@ pub async fn get_mesh(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Sketch solver lane (SCHEMA §7.4) — mirrors the frontend `localSolver` seam
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Enters sketch mode: syncs the sketch to the worker solver lane and returns the
+/// live session + real dof/status (`CadClient.enterSketch`; the F-WP9 swap target).
+#[tauri::command]
+pub async fn enter_sketch(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    sketch_id: String,
+) -> Result<SketchSessionDto, ApiError> {
+    let id = parse_sketch_id(&sketch_id)?;
+    let (session, projection) = {
+        let mut guard = state.runtime.lock().await;
+        let rt = guard
+            .as_mut()
+            .ok_or_else(|| ApiError::NoDocument("enterSketch".into()))?;
+        let session = rt.enter_sketch(id).await?;
+        (session, rt.projection())
+    };
+    let _ = app.emit(events::PROJECTION_UPDATED, &projection);
+    Ok(session)
+}
+
+/// Applies sketch edits (add/move/delete entities+constraints) then re-solves for
+/// live dof/status (`CadClient.sketchUpsert`).
+#[tauri::command]
+pub async fn sketch_upsert(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    sketch_id: String,
+    ops: Vec<SketchEditOp>,
+) -> Result<SketchUpsertDto, ApiError> {
+    let id = parse_sketch_id(&sketch_id)?;
+    let (result, projection) = {
+        let mut guard = state.runtime.lock().await;
+        let rt = guard
+            .as_mut()
+            .ok_or_else(|| ApiError::NoDocument("sketchUpsert".into()))?;
+        let result = rt.sketch_upsert(id, ops).await?;
+        (result, rt.projection())
+    };
+    let _ = app.emit(events::SKETCH_SOLVED, &result);
+    let _ = app.emit(events::PROJECTION_UPDATED, &projection);
+    Ok(result)
+}
+
+/// Opens a drag gesture on a point (`BeginGesture`; SCHEMA §7.4).
+#[tauri::command]
+pub async fn begin_gesture(
+    state: State<'_, AppState>,
+    sketch_id: String,
+    drag_point: String,
+) -> Result<BeginGestureDto, ApiError> {
+    let id = parse_sketch_id(&sketch_id)?;
+    let point = EntityId::from_str(&drag_point)
+        .map_err(|e| ApiError::InvalidCommand(format!("bad dragPoint {drag_point:?}: {e}")))?;
+    let mut guard = state.runtime.lock().await;
+    let rt = guard
+        .as_mut()
+        .ok_or_else(|| ApiError::NoDocument("beginGesture".into()))?;
+    Ok(rt.begin_gesture(id, point).await?)
+}
+
+/// One latest-wins incremental drag solve (`SolveDrag`; preview only).
+#[tauri::command]
+pub async fn solve_drag(
+    state: State<'_, AppState>,
+    target: [f64; 2],
+) -> Result<DragSolveDto, ApiError> {
+    let mut guard = state.runtime.lock().await;
+    let rt = guard
+        .as_mut()
+        .ok_or_else(|| ApiError::NoDocument("solveDrag".into()))?;
+    Ok(rt.solve_drag(target).await?)
+}
+
+/// Pointer-up: final exact solve committed as ONE undo command (`EndGesture`).
+#[tauri::command]
+pub async fn end_gesture(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    final_target: Option<[f64; 2]>,
+) -> Result<SketchUpsertDto, ApiError> {
+    let (result, projection) = {
+        let mut guard = state.runtime.lock().await;
+        let rt = guard
+            .as_mut()
+            .ok_or_else(|| ApiError::NoDocument("endGesture".into()))?;
+        let result = rt.end_gesture(final_target).await?;
+        (result, rt.projection())
+    };
+    let _ = app.emit(events::SKETCH_SOLVED, &result);
+    let _ = app.emit(events::PROJECTION_UPDATED, &projection);
+    Ok(result)
+}
+
+/// Exits sketch mode / cancels an in-flight gesture without committing.
+#[tauri::command]
+pub async fn cancel_sketch(state: State<'_, AppState>, sketch_id: String) -> Result<(), ApiError> {
+    let id = parse_sketch_id(&sketch_id)?;
+    let mut guard = state.runtime.lock().await;
+    let rt = guard
+        .as_mut()
+        .ok_or_else(|| ApiError::NoDocument("cancelSketch".into()))?;
+    rt.cancel_sketch(id).await?;
+    Ok(())
+}
+
+/// Computes the closed profile regions for extrude/revolve selection + preview fill
+/// (`finishSketch` → `SketchRegions`).
+#[tauri::command]
+pub async fn finish_sketch(
+    state: State<'_, AppState>,
+    sketch_id: String,
+) -> Result<FinishSketchDto, ApiError> {
+    let id = parse_sketch_id(&sketch_id)?;
+    let mut guard = state.runtime.lock().await;
+    let rt = guard
+        .as_mut()
+        .ok_or_else(|| ApiError::NoDocument("finishSketch".into()))?;
+    Ok(rt.finish_sketch(id).await?)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Element identity (SCHEMA §7.5) — pick → promote
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One pick to promote (`{topoKey, anchor?}`).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PickInput {
+    pub topo_key: String,
+    #[serde(default)]
+    pub anchor: Option<AnchorIntent>,
+}
+
+/// One ref to dry-run-resolve (`{refId, primary?, intent?, anchor?}`).
+#[derive(Debug, Deserialize)]
+pub struct ResolveRefInput {
+    #[serde(rename = "refId")]
+    pub ref_id: String,
+    #[serde(flatten)]
+    pub element: ElementRef,
+}
+
+/// Promotes snapshot-scoped TopoKey picks to persistent, Rust-minted `ElementId`s
+/// (`AcquireElementIds`; SCHEMA §7.5) — the pick→promote surface for M2.
+#[tauri::command]
+pub async fn promote_selection(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    snapshot_id: u64,
+    body_id: String,
+    picks: Vec<PickInput>,
+) -> Result<Vec<PromotedElementDto>, ApiError> {
+    let body = wire::parse_body_id(&body_id).map_err(ApiError::InvalidCommand)?;
+    let picks: Vec<(TopoKey, Option<AnchorIntent>)> = picks
+        .into_iter()
+        .map(|p| (TopoKey::new(p.topo_key), p.anchor))
+        .collect();
+    let (ids, projection) = {
+        let mut guard = state.runtime.lock().await;
+        let rt = guard
+            .as_mut()
+            .ok_or_else(|| ApiError::NoDocument("promoteSelection".into()))?;
+        let ids = rt
+            .promote_selection(SnapshotId(snapshot_id), body, picks)
+            .await?;
+        (ids, rt.projection())
+    };
+    let _ = app.emit(events::PROJECTION_UPDATED, &projection);
+    Ok(ids)
+}
+
+/// Dry-run ladder resolution for repair dialogs (`ResolveRefs`; SCHEMA §7.5) —
+/// binds nothing.
+#[tauri::command]
+pub async fn resolve_refs(
+    state: State<'_, AppState>,
+    snapshot_id: u64,
+    refs: Vec<ResolveRefInput>,
+) -> Result<Vec<ResolveRefDto>, ApiError> {
+    let req = ResolveRequest {
+        snapshot_id: SnapshotId(snapshot_id),
+        refs: refs
+            .into_iter()
+            .map(|r| ResolveRef {
+                ref_id: r.ref_id,
+                element: r.element,
+            })
+            .collect(),
+    };
+    let resolutions = {
+        let guard = state.runtime.lock().await;
+        let rt = guard
+            .as_ref()
+            .ok_or_else(|| ApiError::NoDocument("resolveRefs".into()))?;
+        rt.resolve_refs(req).await?
+    };
+    Ok(resolutions.into_iter().map(map_resolution).collect())
+}
+
+fn map_resolution(r: RefResolution) -> ResolveRefDto {
+    match r.outcome {
+        ResolveOutcome::AutoBind {
+            element_id,
+            score,
+            margin,
+        } => ResolveRefDto {
+            ref_id: r.ref_id,
+            outcome: "autoBind".into(),
+            element_id: Some(element_id.as_str().to_string()),
+            score: Some(score),
+            margin: Some(margin),
+        },
+        ResolveOutcome::Unchanged => ResolveRefDto {
+            ref_id: r.ref_id,
+            outcome: "unchanged".into(),
+            element_id: None,
+            score: None,
+            margin: None,
+        },
+        ResolveOutcome::NeedsRepair(_) => ResolveRefDto {
+            ref_id: r.ref_id,
+            outcome: "needsRepair".into(),
+            element_id: None,
+            score: None,
+            margin: None,
+        },
+    }
+}
+
+fn parse_sketch_id(s: &str) -> Result<SketchId, ApiError> {
+    SketchId::from_str(s).map_err(|e| ApiError::InvalidCommand(format!("bad sketchId {s:?}: {e}")))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Start screen + native dialogs (Rust-side; webview has zero fs/dialog cap)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -264,12 +507,21 @@ async fn pick_file(app: AppHandle, save: bool) -> Option<String> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Emits the post-regen events: `document-changed` (pull-model body refs) when a
-/// snapshot published, and the refreshed `projection-updated`.
+/// snapshot published, the refreshed `projection-updated`, and `regen-finished`
+/// (`{revision, outcome}`) at the end of **every** regen so the frontend
+/// correlation resolves promptly without the 8 s fallback (F-WP8 flag 3).
 pub fn emit_regen_events(app: &AppHandle, report: &RegenReport, projection: &DocumentProjection) {
     if let Some(change) = report.document_change() {
         let _ = app.emit(events::DOCUMENT_CHANGED, change);
     }
     let _ = app.emit(events::PROJECTION_UPDATED, projection);
+    let _ = app.emit(
+        events::REGEN_FINISHED,
+        crate::dto::RegenFinished {
+            revision: report.revision,
+            outcome: report.outcome_str().to_string(),
+        },
+    );
 }
 
 fn snapshot_of(rt: &DocumentRuntime) -> DocumentSnapshotDto {

@@ -17,24 +17,33 @@
 //! `needs_repair`, never mapped to an [`EngineError`]. `scoringVersion` rides
 //! through verbatim (the `RepairItem` already carries the optional field).
 
+use std::collections::BTreeMap;
+
 use serde_json::{json, Value};
 use uuid::Uuid;
 
 use onecad_core::document::body::BodyLifecycleEvent;
 use onecad_core::document::record::Operation;
-use onecad_core::document::refs::ElementKind;
+use onecad_core::document::refs::{AnchorIntent, ElementKind};
 use onecad_core::document::repair::RepairItem;
 use onecad_core::ids::{
-    BodyId, DocumentRevision, ElementId, JobId, SnapshotId, TopoKey, WorkerEpoch,
+    BodyId, DocumentRevision, ElementId, EntityId, JobId, SnapshotId, TopoKey, WorkerEpoch,
 };
 use onecad_core::regen::{
-    AcceptResult, BodySelector, Diagnostic, ElementMapDelta, ElementMapEntry, EngineError,
-    HistoryPrefixHash, OpFailureCode, OpenSessionRequest, PlanPrepared, PlanRequest, PlanStepEvent,
-    PlannedOp, SessionMode, Severity, Signature, StepResult, StepSignatures, StepStatus,
-    StoppedReason, TessellateRequest, WorkerHead,
+    AcceptResult, AcquireRequest, BodySelector, Diagnostic, ElementMapDelta, ElementMapEntry,
+    EngineError, HistoryPrefixHash, OpFailureCode, OpenSessionRequest, PlanPrepared, PlanRequest,
+    PlanStepEvent, PlannedOp, RefResolution, ResolveOutcome, ResolveRequest, SessionMode, Severity,
+    Signature, StepResult, StepSignatures, StepStatus, StoppedReason, TessellateRequest,
+    WorkerElementEvidence, WorkerHead,
 };
+use onecad_core::sketch::WorldPlane;
+use onecad_core::sketch::{Constraint, CurvePosition, Sketch, SketchAttachment, SketchEntity};
 
-use onecad_protocol::messages::{ErrorCode, ErrorObject};
+use onecad_protocol::messages::{BinSection, ErrorCode, ErrorObject};
+
+use crate::dto::{
+    DragSolveDto, PreviewTrianglesDto, SketchRegionDto, SketchSolveStatus, SketchUpsertDto,
+};
 
 use super::lod_str;
 
@@ -481,6 +490,554 @@ pub fn map_error(err: &ErrorObject) -> EngineError {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Solver lane — Sketch → SCHEMA §7.4 wire (the Rust `WireSketch` translator)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Translates a core [`Sketch`] into the `(plane, entities, constraints)` wire
+/// JSON the worker's `WireSketch::translate` consumes (SCHEMA §7.3 entity /
+/// constraint shapes, §7.4 solver lane).
+///
+/// The core model references points **by id** (a [`Line`](SketchEntity::Line)
+/// stores its two endpoint ids, an [`Arc`](SketchEntity::Arc)/[`Circle`](SketchEntity::Circle)
+/// its center id); this maps 1:1 onto the worker's `p0Ref`/`p1Ref` line form and
+/// (for arc/circle) an inlined center coordinate resolved from the center point.
+/// [`Ellipse`](SketchEntity::Ellipse) is not translated (the worker's `WireSketch`
+/// has no ellipse case — documented V1 limit; ellipses are outside the slice).
+#[must_use]
+pub fn sketch_wire(sketch: &Sketch) -> (Value, Value, Value) {
+    let plane = json!({
+        "kind": plane_kind_str(sketch),
+        "origin": [sketch.plane.origin.x, sketch.plane.origin.y, sketch.plane.origin.z],
+        "xAxis": [sketch.plane.x_axis.x, sketch.plane.x_axis.y, sketch.plane.x_axis.z],
+        "yAxis": [sketch.plane.y_axis.x, sketch.plane.y_axis.y, sketch.plane.y_axis.z],
+        "normal": [sketch.plane.normal.x, sketch.plane.normal.y, sketch.plane.normal.z],
+    });
+    let entities: Vec<Value> = sketch
+        .entities()
+        .iter()
+        .filter_map(|e| wire_entity(sketch, e))
+        .collect();
+    let constraints: Vec<Value> = sketch.constraints().iter().map(wire_constraint).collect();
+    (plane, Value::Array(entities), Value::Array(constraints))
+}
+
+/// `SketchUpsert.args` (SCHEMA §7.4) for a core [`Sketch`].
+#[must_use]
+pub fn sketch_upsert_args(sketch: &Sketch) -> Value {
+    let (plane, entities, constraints) = sketch_wire(sketch);
+    json!({
+        "sketchId": sketch.id.to_string(),
+        "plane": plane,
+        "entities": entities,
+        "constraints": constraints,
+    })
+}
+
+/// `BeginGesture.args` (SCHEMA §7.4). `drag_point` is the point entity being
+/// dragged — its wire handle is its uuid (points register under their id).
+#[must_use]
+pub fn begin_gesture_args(
+    sketch_id: &str,
+    sketch_revision: u64,
+    gesture_id: u64,
+    drag_point: EntityId,
+    solver_policy_hash: &str,
+) -> Value {
+    json!({
+        "sketchId": sketch_id,
+        "sketchRevision": sketch_revision,
+        "gestureId": gesture_id,
+        "solverPolicyHash": solver_policy_hash,
+        "drag": { "pointId": drag_point.to_string() },
+        "pointId": drag_point.to_string(),
+    })
+}
+
+/// `SolveDrag.args` (SCHEMA §7.4) — latest-wins incremental solve.
+#[must_use]
+pub fn solve_drag_args(gesture_id: u64, seq: u64, drag_point: EntityId, target: [f64; 2]) -> Value {
+    json!({
+        "gestureId": gesture_id,
+        "seq": seq,
+        "pointId": drag_point.to_string(),
+        "target": [target[0], target[1]],
+    })
+}
+
+/// `EndGesture.args` (SCHEMA §7.4) — pointer-up final exact solve.
+#[must_use]
+pub fn end_gesture_args(gesture_id: u64, final_target: Option<[f64; 2]>) -> Value {
+    let mut args = json!({ "gestureId": gesture_id });
+    if let Some(t) = final_target {
+        args["commit"] = json!({ "finalTarget": [t[0], t[1]] });
+    }
+    args
+}
+
+/// `SketchRegions.args` (SCHEMA §7.4).
+#[must_use]
+pub fn sketch_regions_args(sketch_id: &str) -> Value {
+    json!({ "sketchId": sketch_id })
+}
+
+/// Parses a `SketchUpsert`/`EndGesture` solve result into a [`SketchUpsertDto`].
+/// `EndGesture` also carries a `positions` map (changed points since the gesture
+/// began); `SketchUpsert` carries none (identity solve).
+///
+/// `SketchUpsert` reports the solve `state` (the four PascalCase tokens) directly;
+/// `EndGesture` reports a drag `status` (`success`|`partial`|`conflicting`) + `dof`
+/// instead, so the solve status is **derived** (`conflicting` ⇒ `Conflicting`, else
+/// `dof == 0` ⇒ `FullyConstrained` else `UnderConstrained`).
+#[must_use]
+pub fn parse_sketch_upsert(sketch_id: &str, result: &Value) -> SketchUpsertDto {
+    let dof = parse_dof(result);
+    let status = if let Some(state) = result.get("state").and_then(Value::as_str) {
+        SketchSolveStatus::parse(state)
+    } else {
+        match result.get("status").and_then(Value::as_str) {
+            Some("conflicting") => SketchSolveStatus::Conflicting,
+            _ if dof == 0 => SketchSolveStatus::FullyConstrained,
+            _ => SketchSolveStatus::UnderConstrained,
+        }
+    };
+    SketchUpsertDto {
+        sketch_id: sketch_id.to_string(),
+        sketch_revision: result
+            .get("sketchRevision")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        dof,
+        status,
+        solved_positions: parse_positions(result.get("positions")),
+    }
+}
+
+/// Parses a `SolveDrag` result into a [`DragSolveDto`]. A stale `seq` may come
+/// back `status:"superseded"` (latest-wins) — the caller tolerates it and drops
+/// the (empty) positions.
+#[must_use]
+pub fn parse_solve_drag(result: &Value) -> DragSolveDto {
+    let status = result
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("success")
+        .to_string();
+    DragSolveDto {
+        gesture_id: result.get("gestureId").and_then(Value::as_u64).unwrap_or(0),
+        seq: result.get("seq").and_then(Value::as_u64).unwrap_or(0),
+        superseded: status == "superseded",
+        status,
+        dof: parse_dof(result),
+        conflicting: str_array(result.get("conflicting")),
+        positions: parse_positions(result.get("positions")),
+        solve_micros: result
+            .get("solveMicros")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+    }
+}
+
+/// Parses a `SketchRegions` result + its response binary tail into region DTOs.
+/// `previewTriangles` bins are decoded from the tail (f32 xyz then u32 indices;
+/// SCHEMA §7.4) into `(u,v)` positions the frontend fill consumes.
+#[must_use]
+pub fn parse_sketch_regions(
+    result: &Value,
+    bin_sections: &[BinSection],
+    tail: &[u8],
+) -> Vec<SketchRegionDto> {
+    let Some(arr) = result.get("regions").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    arr.iter()
+        .map(|r| SketchRegionDto {
+            region_id: r
+                .get("regionId")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            outer_loop: str_array(r.get("outerLoop")),
+            holes: r
+                .get("holes")
+                .and_then(Value::as_array)
+                .map(|hs| hs.iter().map(|h| str_array(Some(h))).collect())
+                .unwrap_or_default(),
+            preview_triangles: parse_preview_triangles(
+                r.get("previewTriangles"),
+                bin_sections,
+                tail,
+            ),
+        })
+        .collect()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Element identity (SCHEMA §7.5) — AcquireElementIds / ResolveRefs
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `AcquireElementIds.args` (SCHEMA §7.5) — promote TopoKeys to persistent ids.
+#[must_use]
+pub fn acquire_element_ids_args(req: &AcquireRequest) -> Value {
+    let picks: Vec<Value> = req
+        .picks
+        .iter()
+        .map(|p| {
+            let mut o = json!({ "topoKey": p.topo_key.as_str() });
+            if let Some(anchor) = &p.anchor {
+                o["anchor"] = anchor_to_wire(anchor);
+            }
+            o
+        })
+        .collect();
+    json!({
+        "snapshotId": req.snapshot_id.0,
+        "bodyId": body_id_wire(req.body),
+        "picks": picks,
+    })
+}
+
+/// Parses an `AcquireElementIds` result into worker evidence (Rust then mints the
+/// ids via [`mint_element_ids`](onecad_core::regen::mint_element_ids)). A worker
+/// `elementId` (echoed existing binding) rides through as `existing`. `fallback_body`
+/// backs a malformed/absent `bodyId`.
+#[must_use]
+pub fn parse_acquire_evidence(result: &Value, fallback_body: BodyId) -> Vec<WorkerElementEvidence> {
+    result
+        .get("ids")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .map(|e| WorkerElementEvidence {
+                    topo_key: TopoKey::new(e.get("topoKey").and_then(Value::as_str).unwrap_or("")),
+                    body: e
+                        .get("bodyId")
+                        .and_then(Value::as_str)
+                        .and_then(|s| parse_body_id(s).ok())
+                        .unwrap_or(fallback_body),
+                    kind: parse_kind(e.get("kind").and_then(Value::as_str).unwrap_or("face")),
+                    anchor: e
+                        .get("anchor")
+                        .and_then(|a| serde_json::from_value::<AnchorIntent>(a.clone()).ok()),
+                    descriptor: e.get("descriptor").cloned(),
+                    existing: e
+                        .get("elementId")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty())
+                        .map(ElementId::new),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `ResolveRefs.args` (SCHEMA §7.5) — dry-run ladder for repair dialogs.
+#[must_use]
+pub fn resolve_refs_args(req: &ResolveRequest) -> Value {
+    let refs: Vec<Value> = req
+        .refs
+        .iter()
+        .map(|r| {
+            let mut o = serde_json::to_value(&r.element).unwrap_or_else(|_| json!({}));
+            if let Some(map) = o.as_object_mut() {
+                map.insert("refId".to_string(), json!(r.ref_id));
+            }
+            o
+        })
+        .collect();
+    json!({ "snapshotId": req.snapshot_id.0, "refs": refs })
+}
+
+/// Parses a `ResolveRefs` result into core [`RefResolution`]s. The worker returns
+/// a `topoKey` for `autoBind` (Rust mints/binds the real id at bind time); it is
+/// carried as the ref's evidence id here (dry-run — nothing is bound). `needsRepair`
+/// carries the full [`RepairItem`] evidence.
+#[must_use]
+pub fn parse_resolve_refs(result: &Value) -> Vec<RefResolution> {
+    result
+        .get("resolutions")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().filter_map(parse_one_resolution).collect())
+        .unwrap_or_default()
+}
+
+fn parse_one_resolution(r: &Value) -> Option<RefResolution> {
+    let ref_id = r.get("refId").and_then(Value::as_str)?.to_string();
+    let outcome = match r.get("outcome").and_then(Value::as_str)? {
+        "autoBind" => {
+            // The worker echoes `topoKey` (dry-run — Rust binds the real id later);
+            // `elementId` is used when present (an already-bound `unchanged`-like hit).
+            let id = r
+                .get("elementId")
+                .or_else(|| r.get("topoKey"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            ResolveOutcome::AutoBind {
+                element_id: ElementId::new(id),
+                score: r.get("score").and_then(Value::as_f64).unwrap_or(0.0),
+                margin: r.get("margin").and_then(Value::as_f64).unwrap_or(0.0),
+            }
+        }
+        "unchanged" => ResolveOutcome::Unchanged,
+        "needsRepair" => {
+            let mut obj = r.get("needsRepair").cloned().unwrap_or_else(|| json!({}));
+            if let Some(map) = obj.as_object_mut() {
+                map.entry("stepIndex".to_string()).or_insert(json!(0));
+                map.entry("refId".to_string()).or_insert(json!(ref_id));
+            }
+            ResolveOutcome::NeedsRepair(serde_json::from_value::<RepairItem>(obj).ok()?)
+        }
+        _ => return None,
+    };
+    Some(RefResolution { ref_id, outcome })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Solver / identity helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn plane_kind_str(sketch: &Sketch) -> &'static str {
+    match &sketch.attachment {
+        SketchAttachment::World { plane } => match plane {
+            WorldPlane::XY => "XY",
+            WorldPlane::XZ => "XZ",
+            WorldPlane::YZ => "YZ",
+        },
+        // Datum / host-face frames carry a resolved custom basis.
+        _ => "custom",
+    }
+}
+
+/// The `[x, y]` position of a point entity (for inlining arc/circle centers).
+fn point_pos(sketch: &Sketch, id: EntityId) -> Option<[f64; 2]> {
+    match sketch.get_entity(id)? {
+        SketchEntity::Point { at, .. } => Some([at.x, at.y]),
+        _ => None,
+    }
+}
+
+fn wire_entity(sketch: &Sketch, e: &SketchEntity) -> Option<Value> {
+    Some(match e {
+        SketchEntity::Point {
+            id,
+            at,
+            construction,
+            ..
+        } => json!({
+            "id": id.to_string(), "type": "Point",
+            "at": [at.x, at.y], "construction": construction,
+        }),
+        SketchEntity::Line {
+            id,
+            start,
+            end,
+            construction,
+        } => json!({
+            "id": id.to_string(), "type": "Line",
+            "p0Ref": start.to_string(), "p1Ref": end.to_string(), "construction": construction,
+        }),
+        SketchEntity::Circle {
+            id,
+            center,
+            radius,
+            construction,
+        } => {
+            let c = point_pos(sketch, *center)?;
+            json!({
+                "id": id.to_string(), "type": "Circle",
+                "center": c, "radius": radius, "construction": construction,
+            })
+        }
+        SketchEntity::Arc {
+            id,
+            center,
+            radius,
+            start_angle,
+            end_angle,
+            construction,
+        } => {
+            let c = point_pos(sketch, *center)?;
+            json!({
+                "id": id.to_string(), "type": "Arc",
+                "center": c, "radius": radius,
+                "startAngle": start_angle, "endAngle": end_angle, "construction": construction,
+            })
+        }
+        // No worker `WireSketch` ellipse case — skip (documented V1 limit).
+        SketchEntity::Ellipse { .. } => return None,
+    })
+}
+
+fn wire_constraint(c: &Constraint) -> Value {
+    let s = |id: &EntityId| id.to_string();
+    match c {
+        Constraint::Coincident { point1, point2, .. } => json!({
+            "id": cid(c), "type": "Coincident", "entities": [s(point1), s(point2)],
+        }),
+        Constraint::Horizontal { line, .. } => {
+            json!({ "id": cid(c), "type": "Horizontal", "entities": [s(line)] })
+        }
+        Constraint::Vertical { line, .. } => {
+            json!({ "id": cid(c), "type": "Vertical", "entities": [s(line)] })
+        }
+        Constraint::Fixed { point, .. } => {
+            json!({ "id": cid(c), "type": "Fixed", "entities": [s(point)] })
+        }
+        Constraint::Midpoint { point, line, .. } => {
+            json!({ "id": cid(c), "type": "Midpoint", "entities": [s(point), s(line)] })
+        }
+        Constraint::OnCurve {
+            point,
+            curve,
+            position,
+            ..
+        } => json!({
+            "id": cid(c), "type": "OnCurve",
+            "entities": [s(point), s(curve)],
+            "positions": ["", curve_position_str(*position)],
+        }),
+        Constraint::Parallel { line1, line2, .. } => {
+            json!({ "id": cid(c), "type": "Parallel", "entities": [s(line1), s(line2)] })
+        }
+        Constraint::Perpendicular { line1, line2, .. } => {
+            json!({ "id": cid(c), "type": "Perpendicular", "entities": [s(line1), s(line2)] })
+        }
+        Constraint::Tangent {
+            entity1, entity2, ..
+        } => json!({ "id": cid(c), "type": "Tangent", "entities": [s(entity1), s(entity2)] }),
+        Constraint::Concentric {
+            entity1, entity2, ..
+        } => json!({ "id": cid(c), "type": "Concentric", "entities": [s(entity1), s(entity2)] }),
+        Constraint::Equal {
+            entity1, entity2, ..
+        } => json!({ "id": cid(c), "type": "Equal", "entities": [s(entity1), s(entity2)] }),
+        Constraint::Distance {
+            entity1,
+            entity2,
+            value,
+            ..
+        } => json!({
+            "id": cid(c), "type": "Distance",
+            "entities": [s(entity1), s(entity2)], "value": value.value,
+        }),
+        Constraint::HorizontalDistance {
+            point1,
+            point2,
+            value,
+            ..
+        } => json!({
+            "id": cid(c), "type": "HorizontalDistance",
+            "entities": [s(point1), s(point2)], "value": value.value,
+        }),
+        Constraint::VerticalDistance {
+            point1,
+            point2,
+            value,
+            ..
+        } => json!({
+            "id": cid(c), "type": "VerticalDistance",
+            "entities": [s(point1), s(point2)], "value": value.value,
+        }),
+        Constraint::Angle {
+            line1,
+            line2,
+            value,
+            ..
+        } => json!({
+            "id": cid(c), "type": "Angle",
+            "entities": [s(line1), s(line2)], "value": value.value,
+        }),
+        Constraint::Radius { entity, value, .. } => json!({
+            "id": cid(c), "type": "Radius", "entities": [s(entity)], "value": value.value,
+        }),
+        Constraint::Diameter { entity, value, .. } => json!({
+            "id": cid(c), "type": "Diameter", "entities": [s(entity)], "value": value.value,
+        }),
+        Constraint::Symmetric {
+            point1,
+            point2,
+            axis,
+            ..
+        } => json!({
+            "id": cid(c), "type": "Symmetric", "entities": [s(point1), s(point2), s(axis)],
+        }),
+    }
+}
+
+fn cid(c: &Constraint) -> String {
+    c.id().to_string()
+}
+
+fn curve_position_str(p: CurvePosition) -> &'static str {
+    match p {
+        CurvePosition::Start => "Start",
+        CurvePosition::End => "End",
+        CurvePosition::Arbitrary => "Arbitrary",
+    }
+}
+
+fn anchor_to_wire(anchor: &AnchorIntent) -> Value {
+    serde_json::to_value(anchor).unwrap_or_else(|_| json!({}))
+}
+
+fn parse_dof(result: &Value) -> u32 {
+    result
+        .get("dof")
+        .and_then(Value::as_i64)
+        .map(|d| d.max(0) as u32)
+        .unwrap_or(0)
+}
+
+/// Parses a solver `positions` map (`{handle: [x, y]}`), keyed by the point
+/// entity id (the wire handle for a point).
+fn parse_positions(v: Option<&Value>) -> BTreeMap<String, [f64; 2]> {
+    let Some(obj) = v.and_then(Value::as_object) else {
+        return BTreeMap::new();
+    };
+    obj.iter()
+        .filter_map(|(k, xy)| {
+            let a = xy.as_array()?;
+            let x = a.first()?.as_f64()?;
+            let y = a.get(1)?.as_f64()?;
+            Some((k.clone(), [x, y]))
+        })
+        .collect()
+}
+
+/// Decodes one region's `previewTriangles` bin (f32 xyz vertices then u32
+/// indices) into `(u,v)` positions + triangle indices.
+fn parse_preview_triangles(
+    v: Option<&Value>,
+    bin_sections: &[BinSection],
+    tail: &[u8],
+) -> Option<PreviewTrianglesDto> {
+    let pt = v?;
+    let section_name = pt.get("bin").and_then(Value::as_str)?;
+    let vertex_count = pt.get("vertexCount").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let triangle_count = pt.get("triangleCount").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let section = bin_sections.iter().find(|s| s.name == section_name)?;
+    let start = section.off as usize;
+    let end = start + section.len as usize;
+    let bytes = tail.get(start..end)?;
+
+    let mut positions = Vec::with_capacity(vertex_count * 2);
+    for i in 0..vertex_count {
+        // xyz f32 per vertex; keep (x, y) — the sketch fill is planar (z == 0).
+        let base = i * 12;
+        let x = f32::from_le_bytes(bytes.get(base..base + 4)?.try_into().ok()?);
+        let y = f32::from_le_bytes(bytes.get(base + 4..base + 8)?.try_into().ok()?);
+        positions.push(f64::from(x));
+        positions.push(f64::from(y));
+    }
+    let idx_base = vertex_count * 12;
+    let mut indices = Vec::with_capacity(triangle_count * 3);
+    for i in 0..(triangle_count * 3) {
+        let o = idx_base + i * 4;
+        indices.push(u32::from_le_bytes(bytes.get(o..o + 4)?.try_into().ok()?));
+    }
+    Some(PreviewTrianglesDto { positions, indices })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Small helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -646,5 +1203,191 @@ mod tests {
                 ..
             }
         ));
+    }
+}
+
+#[cfg(test)]
+mod solver_wire_tests {
+    use super::*;
+    use onecad_core::document::variables::Scalar;
+    use onecad_core::ids::{ConstraintId, SketchId};
+    use onecad_core::math::Vec2;
+    use onecad_core::regen::Pick;
+    use onecad_core::sketch::{Constraint, Sketch, SketchEntity, WorldPlane};
+
+    fn eid(n: u128) -> EntityId {
+        EntityId(Uuid::from_u128(n))
+    }
+    fn cid(n: u128) -> ConstraintId {
+        ConstraintId(Uuid::from_u128(n))
+    }
+
+    /// A point-referenced line + a circle (center inlined) + two constraints,
+    /// translated to the worker `WireSketch` shapes (SCHEMA §7.3/§7.4).
+    #[test]
+    fn sketch_wire_maps_topology_to_worker_shapes() {
+        let sid = SketchId(Uuid::from_u128(1));
+        let (p0, p1, c) = (eid(0x10), eid(0x11), eid(0x12));
+        let (line, circle) = (eid(0x20), eid(0x21));
+        let mut sk = Sketch::on_world_plane(sid, "S", WorldPlane::XY);
+        sk.add_entity(SketchEntity::point(
+            p0,
+            Vec2::new_unchecked(0.0, 0.0),
+            false,
+            false,
+        ))
+        .unwrap();
+        sk.add_entity(SketchEntity::point(
+            p1,
+            Vec2::new_unchecked(40.0, 0.0),
+            false,
+            false,
+        ))
+        .unwrap();
+        sk.add_entity(SketchEntity::point(
+            c,
+            Vec2::new_unchecked(10.0, 10.0),
+            false,
+            false,
+        ))
+        .unwrap();
+        sk.add_entity(SketchEntity::line(line, p0, p1, false))
+            .unwrap();
+        sk.add_entity(SketchEntity::circle(circle, c, 3.0, false).unwrap())
+            .unwrap();
+        sk.add_constraint(Constraint::Horizontal { id: cid(1), line })
+            .unwrap();
+        sk.add_constraint(Constraint::Distance {
+            id: cid(2),
+            entity1: p0,
+            entity2: p1,
+            value: Scalar::new(40.0),
+        })
+        .unwrap();
+
+        let (plane, entities, constraints) = sketch_wire(&sk);
+        // Named plane keeps the non-standard XY basis.
+        assert_eq!(plane["kind"], "XY");
+        assert_eq!(plane["xAxis"], json!([0.0, 1.0, 0.0]));
+
+        let ents = entities.as_array().unwrap();
+        // Line references its endpoints by id (p0Ref/p1Ref) — the point-ref form.
+        let l = ents
+            .iter()
+            .find(|e| e["id"] == json!(line.to_string()))
+            .unwrap();
+        assert_eq!(l["type"], "Line");
+        assert_eq!(l["p0Ref"], json!(p0.to_string()));
+        assert_eq!(l["p1Ref"], json!(p1.to_string()));
+        // Circle inlines its center coordinate.
+        let ci = ents
+            .iter()
+            .find(|e| e["id"] == json!(circle.to_string()))
+            .unwrap();
+        assert_eq!(ci["type"], "Circle");
+        assert_eq!(ci["center"], json!([10.0, 10.0]));
+        assert_eq!(ci["radius"], json!(3.0));
+
+        let cons = constraints.as_array().unwrap();
+        let h = cons
+            .iter()
+            .find(|c| c["type"] == json!("Horizontal"))
+            .unwrap();
+        assert_eq!(h["entities"], json!([line.to_string()]));
+        let d = cons
+            .iter()
+            .find(|c| c["type"] == json!("Distance"))
+            .unwrap();
+        assert_eq!(d["entities"], json!([p0.to_string(), p1.to_string()]));
+        assert_eq!(d["value"], json!(40.0));
+    }
+
+    #[test]
+    fn solve_drag_parses_superseded_and_positions() {
+        let ok = json!({
+            "gestureId": 51, "seq": 129, "status": "success", "dof": 1,
+            "conflicting": [], "positions": { "e3.start": [42.0, 19.5] }, "solveMicros": 1840
+        });
+        let d = parse_solve_drag(&ok);
+        assert_eq!(d.seq, 129);
+        assert!(!d.superseded);
+        assert_eq!(d.positions["e3.start"], [42.0, 19.5]);
+        assert_eq!(d.dof, 1);
+
+        let stale =
+            json!({ "gestureId": 51, "seq": 3, "status": "superseded", "dof": 1, "positions": {} });
+        let d = parse_solve_drag(&stale);
+        assert!(
+            d.superseded,
+            "a stale seq resolves superseded (latest-wins)"
+        );
+        assert!(d.positions.is_empty());
+    }
+
+    #[test]
+    fn sketch_upsert_parses_state_and_end_gesture_derives_status() {
+        // SketchUpsert carries `state`.
+        let up = json!({ "sketchId": "sk_1", "sketchRevision": 4, "dof": 2, "state": "UnderConstrained" });
+        let d = parse_sketch_upsert("sk_1", &up);
+        assert_eq!(d.sketch_revision, 4);
+        assert_eq!(d.dof, 2);
+        assert_eq!(d.status, SketchSolveStatus::UnderConstrained);
+        // EndGesture carries `status` (drag status) + dof; the DTO derives the solve
+        // status from dof (0 ⇒ FullyConstrained).
+        let end = json!({ "gestureId": 51, "status": "success", "dof": 0,
+            "positions": { "00000000-0000-0000-0000-000000000010": [1.0, 2.0] }, "sketchRevision": 5 });
+        let d = parse_sketch_upsert("sk_1", &end);
+        assert_eq!(d.status, SketchSolveStatus::FullyConstrained);
+        assert_eq!(d.sketch_revision, 5);
+        assert_eq!(d.solved_positions.len(), 1);
+    }
+
+    #[test]
+    fn acquire_args_and_evidence_round_trip() {
+        let body = BodyId(Uuid::from_u128(0x3));
+        let req = AcquireRequest {
+            snapshot_id: SnapshotId(5012),
+            body,
+            picks: vec![Pick {
+                topo_key: TopoKey::new("f:22"),
+                anchor: None,
+            }],
+        };
+        let args = acquire_element_ids_args(&req);
+        assert_eq!(args["snapshotId"], 5012);
+        assert_eq!(args["bodyId"], json!(body_id_wire(body)));
+        assert_eq!(args["picks"][0]["topoKey"], "f:22");
+
+        // Worker echoes evidence (existing id present ⇒ carried through).
+        let result = json!({ "ids": [
+            { "topoKey": "f:22", "kind": "face", "bodyId": body_id_wire(body), "elementId": "el_00000000000004a1", "descriptor": {} },
+            { "topoKey": "e:3", "kind": "edge", "bodyId": body_id_wire(body), "elementId": "" }
+        ]});
+        let ev = parse_acquire_evidence(&result, body);
+        assert_eq!(ev.len(), 2);
+        assert_eq!(
+            ev[0].existing.as_ref().unwrap().as_str(),
+            "el_00000000000004a1"
+        );
+        assert_eq!(ev[0].kind, onecad_core::document::refs::ElementKind::Face);
+        assert!(ev[1].existing.is_none(), "empty elementId ⇒ Rust mints");
+        assert_eq!(ev[1].kind, onecad_core::document::refs::ElementKind::Edge);
+    }
+
+    #[test]
+    fn resolve_refs_parses_all_three_outcomes() {
+        let result = json!({ "resolutions": [
+            { "refId": "op_5.input0", "outcome": "autoBind", "topoKey": "f:1", "score": 0.94, "margin": 0.31 },
+            { "refId": "op_5.input1", "outcome": "unchanged", "elementId": "el_9", "topoKey": "f:2" },
+            { "refId": "op_5.input2", "outcome": "needsRepair",
+              "needsRepair": { "refId": "op_5.input2", "ladderFailed": "descriptor", "reason": "ambiguous", "candidates": [] } }
+        ]});
+        let res = parse_resolve_refs(&result);
+        assert_eq!(res.len(), 3);
+        assert!(
+            matches!(res[0].outcome, ResolveOutcome::AutoBind { score, .. } if (score - 0.94).abs() < 1e-9)
+        );
+        assert!(matches!(res[1].outcome, ResolveOutcome::Unchanged));
+        assert!(matches!(res[2].outcome, ResolveOutcome::NeedsRepair(_)));
     }
 }

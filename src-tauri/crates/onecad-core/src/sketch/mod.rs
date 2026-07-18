@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::document::refs::{ElementRef, Extra};
 use crate::ids::{ConstraintId, DatumPlaneId, EntityId, RegionId, SketchId};
+use crate::math::Vec2;
 
 pub use constraint::{Constraint, CurvePosition};
 pub use entity::SketchEntity;
@@ -485,6 +486,29 @@ impl Sketch {
         self.regions = regions;
     }
 
+    /// Applies solver-returned point positions (the solver-lane drag/solve
+    /// write-back — SCHEMA §7.4 `SolveDrag`/`EndGesture` `positions`). Only
+    /// [`Point`](SketchEntity::Point) entities carry coordinates, so only points
+    /// are moved; a non-point or unknown id is ignored (lines/arcs/circles follow
+    /// their referenced points). Returns the number of points actually moved.
+    ///
+    /// This is the single-writer application step: the app clones the sketch
+    /// before a gesture, drives the solver lane, then applies the final exact
+    /// positions here to build the `after` sketch it commits as **one** undo
+    /// command (plan "Pick tokens" / "Solver lane in V1").
+    pub fn apply_solved_positions(&mut self, positions: &[(EntityId, Vec2)]) -> usize {
+        let mut moved = 0;
+        for &(id, pos) in positions {
+            if let Some(&index) = self.entity_index.get(&id) {
+                if let SketchEntity::Point { at, .. } = &mut self.entities[index] {
+                    *at = pos;
+                    moved += 1;
+                }
+            }
+        }
+        moved
+    }
+
     fn rebuild_indexes(&mut self) {
         self.rebuild_entity_index();
         self.rebuild_constraint_index();
@@ -647,6 +671,30 @@ mod tests {
         // Stability lock: exact value must not drift silently.
         let stable = derive_region_id(&[eid(1), eid(2)], Winding::Ccw);
         assert_eq!(stable.as_str(), "r_fbf1e34acfb51ba4");
+    }
+
+    #[test]
+    fn apply_solved_positions_moves_points_only() {
+        let (mut s, p0, p1) = sketch_with_two_points();
+        let line = eid(0x20);
+        s.add_entity(SketchEntity::line(line, p0, p1, false))
+            .unwrap();
+        // Move p0; a line id (non-point) and an unknown id are ignored.
+        let moved = s.apply_solved_positions(&[
+            (p0, Vec2::new_unchecked(7.0, 8.0)),
+            (line, Vec2::new_unchecked(99.0, 99.0)),
+            (eid(0xDEAD), Vec2::new_unchecked(1.0, 1.0)),
+        ]);
+        assert_eq!(moved, 1, "only the point moved");
+        match s.get_entity(p0).unwrap() {
+            SketchEntity::Point { at, .. } => assert_eq!([at.x, at.y], [7.0, 8.0]),
+            _ => panic!("p0 is a point"),
+        }
+        // p1 untouched.
+        match s.get_entity(p1).unwrap() {
+            SketchEntity::Point { at, .. } => assert_eq!([at.x, at.y], [40.0, 0.0]),
+            _ => panic!("p1 is a point"),
+        }
     }
 
     #[test]
