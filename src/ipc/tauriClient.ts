@@ -1,43 +1,79 @@
 /*
- * tauriClient — the REAL CadClient over the Tauri command/event surface (R-WP10/11).
+ * tauriClient — the REAL CadClient over the Tauri command/event surface
+ * (R-WP10/11/12).
  *
  * Implements the same `CadClient` interface as `mockClient`, mapping each method
- * onto a `#[tauri::command]` (`invoke`) or a backend event (`listen`). It is
- * constructed ONLY inside a Tauri webview (see `createClient` in `client.ts`);
- * dev-in-browser, vitest and Playwright keep the mock.
+ * onto a `#[tauri::command]` (`invoke`) or a backend event (`listen`). Constructed
+ * ONLY inside a Tauri webview (see `createClient` in `client.ts`); dev-in-browser,
+ * vitest and Playwright keep the mock.
  *
- * ── What is REAL vs the SEAM ──────────────────────────────────────────────────
- *  REAL commands : lifecycle (new/open/import), dialogs, recents, get_mesh (the
- *                  MESH1 ArrayBuffer path), undo/redo, apply_edit_command; the
- *                  `document-changed` event (pull-model mesh refs).
- *  LOCAL SEAM    : the sketch SOLVER lane + the drag-time L2 PREVIEW lane run in
- *                  the shared `localSolver` module — the real backend does not
- *                  speak them yet. R-WP12 replaces this seam with solver-lane
- *                  verbs (BeginGesture / SolveDrag); a previewed op's COMMIT
- *                  already routes through the real `apply_edit_command`.
+ * ── What is REAL vs the SEAM (F-WP9) ──────────────────────────────────────────
+ *  REAL commands : lifecycle, dialogs, recents, get_mesh (MESH1 ArrayBuffer),
+ *                  undo/redo, apply_edit_command; the SKETCH SOLVER lane
+ *                  (enter/upsert/finish/cancel) + the DRAG gesture lane
+ *                  (begin/solve/end, latest-wins) + promote_selection.
+ *  REAL events   : document-changed, projection-updated (→ store hydration),
+ *                  regen-finished (prompt correlation), sketch-solved.
+ *  LOCAL SEAM    : the drag-time L2 PREVIEW lane. The real backend has NO cheap
+ *                  preview verb (only apply/regen commits geometry), so L2 stays
+ *                  on the local previewer — seam-marked "(backend preview verb
+ *                  TBD)". A previewed op's COMMIT already routes through the real
+ *                  `apply_edit_command`; only the drag-time exact mesh is local.
  *
  * ── Sync-over-async adapter ───────────────────────────────────────────────────
- * The frontend tool layer consumes a SYNCHRONOUS `ApplyOperationResult` (it drives
- * the stores from method results). The real backend is event-driven: an edit
- * command returns the PRE-regen projection, then regen publishes geometry LATER
- * via `document-changed`. `applyOperation`/`undo`/`redo` therefore correlate the
- * command's returned projection (features/revision) with the next `document-changed`
- * (changed/removed bodies) to synthesize the result the controllers expect.
+ * `applyOperation`/`undo`/`redo` return a SYNCHRONOUS `ApplyOperationResult`, but
+ * the backend is event-driven: an edit returns the PRE-regen projection, then
+ * regen publishes geometry LATER. Each edit correlates the command's projection
+ * with the next `document-changed` (bodies) OR `regen-finished` (`{revision,
+ * outcome}` — resolves the no-geometry / noop case promptly, replacing the old 8 s
+ * wait; F-WP8 flag 3).
+ *
+ * ── Sketch marshalling ────────────────────────────────────────────────────────
+ * The frontend authors inlined-coordinate entities with string ids; `sketch_upsert`
+ * wants `SketchEditOp[]` (Rust typed doc form, UUID ids, point-referenced). The
+ * pure `sketchWireMap` module bridges them, synthesizing points + keeping an
+ * id-map per sketch (see its header). See the M2-gate notes for the round-trip
+ * items this WP marshals but cannot end-to-end validate without the real worker.
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { CadClient } from "./client";
 import type {
   ApplyOperationResult,
+  BeginGestureResult,
   DocumentChange,
+  DocumentProjectionWire,
   DocumentSnapshot,
+  DragSolveResult,
+  EnterSketchTarget,
   FeatureRecord,
+  FinishSketchResult,
   Lod,
   OperationOp,
+  PromotedElement,
+  PromotePick,
   RecentProject,
+  RegenFinished,
+  SketchConstraint,
+  SketchEntity,
+  SketchPlane,
+  SketchPlaneKind,
+  SketchRegion,
+  SketchSession,
+  SketchSolveStatus,
+  SketchUpsertResult,
 } from "./types";
 import { createLocalSolverLane } from "./localSolver";
 import { operationToEditCommand, opLabelFor } from "./tauriCommandMap";
+import {
+  buildAddSketch,
+  createIdMap,
+  frontendEntitiesFromDto,
+  marshalUpsert,
+  mintUuid,
+  type SketchIdMap,
+} from "./sketchWireMap";
+import { applyProjectionToStore } from "./projectionHydration";
 
 // ── Command + event names (must match src-tauri/src/api + events.rs) ──────────
 const CMD = {
@@ -50,21 +86,30 @@ const CMD = {
   applyEditCommand: "apply_edit_command",
   undo: "undo",
   redo: "redo",
+  enterSketch: "enter_sketch",
+  sketchUpsert: "sketch_upsert",
+  finishSketch: "finish_sketch",
+  cancelSketch: "cancel_sketch",
+  beginGesture: "begin_gesture",
+  solveDrag: "solve_drag",
+  endGesture: "end_gesture",
+  promoteSelection: "promote_selection",
 } as const;
 
 const EVT = {
   documentChanged: "document-changed",
   projectionUpdated: "projection-updated",
+  regenFinished: "regen-finished",
+  sketchSolved: "sketch-solved",
 } as const;
 
-/** L2 preview pacing for the local seam (snappy; the real solver lane lands R-WP12). */
+/** L2 preview pacing for the local seam (snappy; there is no backend preview verb). */
 const PREVIEW_LATENCY_MS = 16;
 
 /**
- * Max wait for a regen's `document-changed` after an edit command before falling
- * back to the pre-regen projection (empty body delta). Tunable for M2: a
- * `regen-finished` event (reserved in events.rs, not yet emitted) would let this
- * resolve promptly when regen yields no geometry change.
+ * Ultimate fallback for a regen's correlation if NEITHER `document-changed` nor
+ * `regen-finished` arrives (should not happen — regen-finished fires on every
+ * regen). Kept as a safety net; the prompt path is regen-finished.
  */
 let regenTimeoutMs = 8000;
 /** Test seam: shrink the correlation timeout so a no-event path resolves fast. */
@@ -77,15 +122,61 @@ interface DocumentSnapshotDto {
   documentId: string;
   title: string;
 }
-interface DocumentProjectionDto {
-  status: "empty" | "loading" | "ready";
-  revision: number;
-  title: string;
-  dirty: boolean;
-  bodies: Record<string, { id: string; name: string; visible: boolean }>;
-  sketches: Record<string, unknown>;
+interface DocumentProjectionDto extends DocumentProjectionWire {
   /** `FeatureDto` is field-identical to the frontend `FeatureRecord`. */
   features: FeatureRecord[];
+}
+interface SketchSessionDto {
+  sketchId: string;
+  plane: SketchPlane;
+  entities: unknown;
+  constraints: unknown;
+  dof: number;
+  status: SketchSolveStatus;
+}
+interface SketchUpsertDto {
+  sketchId: string;
+  sketchRevision: number;
+  dof: number;
+  status: SketchSolveStatus;
+  solvedPositions: Record<string, [number, number]>;
+}
+interface BeginGestureDto {
+  gestureId: number;
+  ready: boolean;
+}
+interface DragSolveDto {
+  gestureId: number;
+  seq: number;
+  status: string;
+  dof: number;
+  conflicting: string[];
+  positions: Record<string, [number, number]>;
+  solveMicros: number;
+  superseded: boolean;
+}
+interface SketchRegionDto {
+  regionId: string;
+  outerLoop: string[];
+  holes: string[][];
+  previewTriangles?: { positions: number[]; indices: number[] };
+}
+interface FinishSketchDto {
+  regions: SketchRegionDto[];
+}
+interface PromotedElementDto {
+  topoKey: string;
+  elementId: string;
+  kind: string;
+  bodyId: string;
+}
+
+/** Last `sketch-solved` payload seen (test/debug seam; the command return is the
+ *  authoritative sync result — the event mirrors it for out-of-band subscribers). */
+let lastSketchSolved: SketchUpsertDto | null = null;
+/** Test seam: read the most recent `sketch-solved` event payload. */
+export function __lastSketchSolvedForTests(): SketchUpsertDto | null {
+  return lastSketchSolved;
 }
 
 /** Normalize a rejected command (Rust `ApiError {kind, message}`) into an Error. */
@@ -109,35 +200,62 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 }
 
 export function createTauriClient(): CadClient {
-  // Fan-out for app-level document-changed subscribers (MeshIngest).
+  // Fan-out for app-level subscribers.
   const docChangeListeners = new Set<(c: DocumentChange) => void>();
-  // Latest authoritative projection (cached from projection-updated).
+  const projectionListeners = new Set<(p: DocumentProjectionWire) => void>();
+  // Latest authoritative revision (cached from any event).
   let latestRevision = 0;
+  // Latest snapshot id for promote_selection. No frontend-facing event carries it
+  // today (SEAM → M2 gate: the events must publish snapshotId, or add a query).
+  let currentSnapshotId = 0;
 
-  // Correlation awaiters: resolved by the next document-changed with a higher rev.
+  // Correlation awaiters: resolved by the next document-changed / regen-finished
+  // with a higher revision than the edit's base.
+  interface Resolved {
+    change: DocumentChange | null;
+    revision: number;
+  }
   interface Awaiter {
     baseRev: number;
-    resolve(c: DocumentChange | null): void;
+    resolve(r: Resolved | null): void;
     timer: ReturnType<typeof setTimeout>;
   }
   const awaiters = new Set<Awaiter>();
 
-  function onDocumentChangedEvent(change: DocumentChange): void {
-    latestRevision = Math.max(latestRevision, change.revision);
-    for (const cb of [...docChangeListeners]) cb(change);
+  /** Resolve every awaiter whose edit base is below `resolved.revision`. */
+  function resolveAwaiters(resolved: Resolved): void {
     for (const a of [...awaiters]) {
-      if (change.revision > a.baseRev) {
+      if (resolved.revision > a.baseRev) {
         clearTimeout(a.timer);
         awaiters.delete(a);
-        a.resolve(change);
+        a.resolve(resolved);
       }
     }
   }
 
-  /** Await the next regen publish (or null on timeout). Register BEFORE invoking. */
-  function awaitNextChange(baseRev: number): { promise: Promise<DocumentChange | null>; cancel(): void } {
+  function onDocumentChangedEvent(change: DocumentChange): void {
+    latestRevision = Math.max(latestRevision, change.revision);
+    for (const cb of [...docChangeListeners]) cb(change);
+    resolveAwaiters({ change, revision: change.revision });
+  }
+
+  function onRegenFinishedEvent(rf: RegenFinished): void {
+    latestRevision = Math.max(latestRevision, rf.revision);
+    // Resolve any edit awaiting this regen that no document-changed already
+    // resolved (the noop / no-geometry-change case → prompt, no 8 s wait).
+    resolveAwaiters({ change: null, revision: rf.revision });
+  }
+
+  function onProjectionUpdatedEvent(p: DocumentProjectionWire): void {
+    latestRevision = Math.max(latestRevision, p.revision);
+    applyProjectionToStore(p); // hydrate documentStore (revision-reconciled)
+    for (const cb of [...projectionListeners]) cb(p);
+  }
+
+  /** Await the next regen publish (or null on the safety timeout). Register BEFORE invoking. */
+  function awaitNextChange(baseRev: number): { promise: Promise<Resolved | null>; cancel(): void } {
     let awaiter!: Awaiter;
-    const promise = new Promise<DocumentChange | null>((resolve) => {
+    const promise = new Promise<Resolved | null>((resolve) => {
       const timer = setTimeout(() => {
         awaiters.delete(awaiter);
         resolve(null);
@@ -154,8 +272,8 @@ export function createTauriClient(): CadClient {
     };
   }
 
-  // Persistent event listeners are started lazily (first correlation or first
-  // subscribe) so pure command tests don't need the event plugin mocked.
+  // Persistent event listeners started lazily (first correlation / subscribe) so
+  // pure command tests don't need the event plugin mocked.
   let eventsStarted = false;
   const unlisteners: UnlistenFn[] = [];
   async function ensureEvents(): Promise<void> {
@@ -164,10 +282,10 @@ export function createTauriClient(): CadClient {
     try {
       unlisteners.push(
         await listen<DocumentChange>(EVT.documentChanged, (e) => onDocumentChangedEvent(e.payload)),
-      );
-      unlisteners.push(
-        await listen<DocumentProjectionDto>(EVT.projectionUpdated, (e) => {
-          latestRevision = Math.max(latestRevision, e.payload.revision);
+        await listen<DocumentProjectionDto>(EVT.projectionUpdated, (e) => onProjectionUpdatedEvent(e.payload)),
+        await listen<RegenFinished>(EVT.regenFinished, (e) => onRegenFinishedEvent(e.payload)),
+        await listen<SketchUpsertDto>(EVT.sketchSolved, (e) => {
+          lastSketchSolved = e.payload;
         }),
       );
     } catch {
@@ -192,11 +310,11 @@ export function createTauriClient(): CadClient {
       awaiter.cancel();
       throw e;
     }
-    const change = await awaiter.promise;
+    const resolved = await awaiter.promise;
     return {
-      revision: change?.revision ?? projection.revision,
-      changedBodies: change?.changedBodies ?? [],
-      removedBodies: change?.removedBodies ?? [],
+      revision: resolved?.revision ?? projection.revision,
+      changedBodies: resolved?.change?.changedBodies ?? [],
+      removedBodies: resolved?.change?.removedBodies ?? [],
       features: projection.features,
       opLabel,
     };
@@ -207,12 +325,166 @@ export function createTauriClient(): CadClient {
     return applyEdit(CMD.applyEditCommand, { command }, opLabelFor(op));
   }
 
-  // The sketch + preview seam. Commit routes a previewed op through the REAL
-  // apply_edit_command path above (R-WP12 replaces the drag-time lane itself).
+  // ── Sketch solver lane state (frontend id ↔ backend UUID via sketchWireMap) ──
+  const sketchMaps = new Map<string, SketchIdMap>();
+  let sketchNameSeq = 1;
+
+  /** The frontend-facing id for an enter target (kept as the session id). */
+  function frontendIdFor(target: EnterSketchTarget): string {
+    if (typeof target === "string") return target;
+    return target.sketchId ?? `sk-${sketchNameSeq}`;
+  }
+
+  /** Resolve (or lazily create) the backend sketch for a frontend id + plane. */
+  async function ensureBackendSketch(frontendId: string, planeKind: SketchPlaneKind): Promise<SketchIdMap> {
+    const existing = sketchMaps.get(frontendId);
+    if (existing) return existing;
+    // New sketch: mint a real SketchId, register it via AddSketch, then enter.
+    const backendSketchId = mintUuid();
+    const map = createIdMap(backendSketchId, planeKind);
+    sketchMaps.set(frontendId, map);
+    // Create the backend sketch (a fresh world-plane sketch; SketchData defaults).
+    // NOTE: this fires an edit + regen; the sketch appears in the tree via
+    // projection-updated hydration. (custom/host-face planes → M2+; see M2 notes.)
+    await call<DocumentProjectionDto>(CMD.applyEditCommand, {
+      command: buildAddSketch(backendSketchId, `Sketch ${sketchNameSeq++}`, planeKind),
+    });
+    return map;
+  }
+
+  // The two-level PREVIEW lane stays LOCAL (no backend preview verb — see header).
+  // Commit routes a previewed op through the REAL apply_edit_command path above.
   const lane = createLocalSolverLane({
     commit: applyOperation,
     latencyMs: () => PREVIEW_LATENCY_MS,
   });
+
+  async function enterSketch(target: EnterSketchTarget): Promise<SketchSession> {
+    await ensureEvents();
+    const frontendId = frontendIdFor(target);
+    const planeKind: SketchPlaneKind = typeof target === "string" ? "XY" : target.newOnPlane;
+    const map = await ensureBackendSketch(frontendId, planeKind);
+    const dto = await call<SketchSessionDto>(CMD.enterSketch, { sketchId: map.backendSketchId });
+    const entities = frontendEntitiesFromDto(dto.entities);
+    // Feed the plane into the local preview lane so beginPreview resolves it.
+    lane.cacheSketchPlane(frontendId, dto.plane);
+    // NOTE: constraints are returned in the worker-wire form; the SketchController
+    // rebuilds constraints locally on each draw, so a fresh sketch needs none.
+    // Re-entering a sketch WITH existing constraints is an M2+ reverse-map seam.
+    return {
+      sketchId: frontendId, // keep the frontend id; the map holds the backend UUID
+      plane: dto.plane,
+      entities,
+      constraints: [],
+      dof: dto.dof,
+      status: dto.status,
+    };
+  }
+
+  async function sketchUpsert(
+    sketchId: string,
+    entities: SketchEntity[],
+    constraints: SketchConstraint[],
+  ): Promise<SketchUpsertResult> {
+    const map = sketchMaps.get(sketchId);
+    if (!map) throw new Error(`sketchUpsert: unknown sketch ${sketchId} (enter first)`);
+    const ops = marshalUpsert(map, { entities, constraints });
+    const dto = await call<SketchUpsertDto>(CMD.sketchUpsert, { sketchId: map.backendSketchId, ops });
+    return {
+      sketchId, // frontend id
+      sketchRevision: dto.sketchRevision,
+      dof: dto.dof,
+      status: dto.status,
+      // Keys are backend point UUIDs; the frontend consumes solvedPositions only
+      // for drag write-back (empty for an identity upsert). M2+ reverse-map seam.
+      solvedPositions: dto.solvedPositions,
+    };
+  }
+
+  async function finishSketch(sketchId: string): Promise<FinishSketchResult> {
+    const map = sketchMaps.get(sketchId);
+    if (!map) throw new Error(`finishSketch: unknown sketch ${sketchId} (enter first)`);
+    const dto = await call<FinishSketchDto>(CMD.finishSketch, { sketchId: map.backendSketchId });
+    const regions: SketchRegion[] = dto.regions.map((r) => ({
+      regionId: r.regionId,
+      outerLoop: r.outerLoop,
+      holes: r.holes,
+      previewTriangles: r.previewTriangles,
+    }));
+    lane.cacheFinishedRegions(sketchId, regions); // feed the local L2 preview
+    return { regions };
+  }
+
+  async function cancelSketch(sketchId: string): Promise<void> {
+    const map = sketchMaps.get(sketchId);
+    if (!map) return; // never entered — nothing to cancel
+    await call<void>(CMD.cancelSketch, { sketchId: map.backendSketchId });
+  }
+
+  // ── Sketch drag gesture (latest-wins) ─────────────────────────────────────
+  let dragSketchId: string | null = null;
+  let dragMaxSeq = 0;
+
+  async function beginGesture(sketchId: string, dragPointId: string): Promise<BeginGestureResult> {
+    await ensureEvents();
+    const map = sketchMaps.get(sketchId);
+    if (!map) throw new Error(`beginGesture: unknown sketch ${sketchId} (enter first)`);
+    // Translate the frontend point ref → backend point UUID (a synthesized point,
+    // a Point entity, or an already-real uuid pass-through).
+    const dragPoint = map.point.get(dragPointId) ?? map.entity.get(dragPointId) ?? dragPointId;
+    dragSketchId = sketchId;
+    dragMaxSeq = 0;
+    const dto = await call<BeginGestureDto>(CMD.beginGesture, {
+      sketchId: map.backendSketchId,
+      dragPoint,
+    });
+    return { gestureId: dto.gestureId, ready: dto.ready };
+  }
+
+  async function solveDrag(target: [number, number]): Promise<DragSolveResult | null> {
+    // Fire-and-forget: the caller does NOT await serially. Responses reconcile
+    // latest-wins by seq — a stale/superseded seq is dropped (returns null).
+    const dto = await call<DragSolveDto>(CMD.solveDrag, { target });
+    if (dto.superseded || dto.seq <= dragMaxSeq) return null; // stale — drop
+    dragMaxSeq = dto.seq;
+    return {
+      gestureId: dto.gestureId,
+      seq: dto.seq,
+      status: dto.status,
+      dof: dto.dof,
+      conflicting: dto.conflicting,
+      positions: dto.positions,
+      solveMicros: dto.solveMicros,
+      superseded: dto.superseded,
+    };
+  }
+
+  async function endGesture(finalTarget?: [number, number]): Promise<SketchUpsertResult> {
+    const sketchId = dragSketchId;
+    dragSketchId = null;
+    dragMaxSeq = 0;
+    const dto = await call<SketchUpsertDto>(CMD.endGesture, { finalTarget: finalTarget ?? null });
+    return {
+      sketchId: sketchId ?? dto.sketchId,
+      sketchRevision: dto.sketchRevision,
+      dof: dto.dof,
+      status: dto.status,
+      solvedPositions: dto.solvedPositions,
+    };
+  }
+
+  // ── Promotion (pick → ElementId) ──────────────────────────────────────────
+  async function promoteSelection(bodyId: string, picks: PromotePick[]): Promise<PromotedElement[]> {
+    // promote_selection wants the `body_<uuid>` wire form; document-changed hands
+    // the frontend a bare uuid, so prefix it here (get_mesh keeps the bare form).
+    const wireBodyId = bodyId.startsWith("body_") ? bodyId : `body_${bodyId}`;
+    const out = await call<PromotedElementDto[]>(CMD.promoteSelection, {
+      snapshotId: currentSnapshotId,
+      bodyId: wireBodyId,
+      picks: picks.map((p) => ({ topoKey: p.topoKey, anchor: p.anchor })),
+    });
+    return out.map((e) => ({ topoKey: e.topoKey, elementId: e.elementId, kind: e.kind, bodyId: e.bodyId }));
+  }
 
   return {
     async listRecents(): Promise<RecentProject[]> {
@@ -243,6 +515,12 @@ export function createTauriClient(): CadClient {
       return () => docChangeListeners.delete(cb);
     },
 
+    onProjectionUpdated(cb: (p: DocumentProjectionWire) => void): () => void {
+      void ensureEvents();
+      projectionListeners.add(cb);
+      return () => projectionListeners.delete(cb);
+    },
+
     applyOperation,
 
     async undo(): Promise<ApplyOperationResult> {
@@ -252,11 +530,17 @@ export function createTauriClient(): CadClient {
       return applyEdit(CMD.redo, {}, undefined);
     },
 
-    // ── Sketch solver lane + two-level preview (shared local seam; R-WP12) ────
-    enterSketch: lane.enterSketch,
-    sketchUpsert: lane.sketchUpsert,
-    finishSketch: lane.finishSketch,
-    cancelSketch: lane.cancelSketch,
+    // ── Sketch solver lane + drag gesture + promotion (REAL commands) ─────────
+    enterSketch,
+    sketchUpsert,
+    finishSketch,
+    cancelSketch,
+    beginGesture,
+    solveDrag,
+    endGesture,
+    promoteSelection,
+
+    // ── Two-level preview (local seam; backend preview verb TBD) ──────────────
     beginPreview: lane.beginPreview,
     updatePreview: lane.updatePreview,
     endPreview: lane.endPreview,

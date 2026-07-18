@@ -44,8 +44,10 @@ Tracks: W = C++ worker, R = Rust core, F = frontend. Gates in **bold**.
 - [x] F-WP7 tools+preview: extrude drag (auto-arm from finish-sketch, Alt symmetric, flip-through-zero), fillet radius chip, boolean chip, undo/redo, live HistoryList + dbl-click edit seed, **60fps GATE PASS** (p95 ~10ms @300ms L2 lag, epoch race-free), 278/278 — GATE PASSED (verified). F vertical slice COMPLETE; F-WP8 real-backend swap blocked on R-WP10/11.
 - [ ] R-WP5.1 session review fixes (in flight: txn auto-cancel MAJOR + lockstep + repair seeding + hardening)
 
+- [x] F-WP9: real sketch lane (sketchWireMap marshaller w/ point synthesis + UUID id-map), drag latest-wins client reconcile, L2 preview stays local (no backend preview verb — seam-marked), hydration bridge (revision >= rule, empty always resets), regen-finished correlation (8s fallback → safety net only), pick→promote wired in ViewportRoot, status-bar error surfacing. 297→319 tests + build + hex verified — GATE PASSED. M2 script gaps (from report): (1) snapshotId not exposed to frontend — promote sends 0 (BLOCKER, needs small Rust event/DTO change); (2) real sketch round-trip unproven; (3) PlaneGCS dof-0 convergence of synthesized rectangle; (4) sketch re-entry returns [] constraints; (5) solvedPositions reverse map missing (M4); (6) drag has no frontend caller yet (gate drives client directly); (7) non-XY plane targets; (8) dual store authorship (optimistic vs hydration).
+
 ## M2 — **First micro-slice integration gate**
-- [ ] sketch → extrude → tessellate → pick → promote ElementId → save/reopen replay → STEP export, real worker
+- [ ] sketch → extrude → tessellate → pick → promote ElementId → save/reopen replay → STEP export, real worker — M2-WP in flight
 
 ## M3 — **Packaging gate (early)**
 - [ ] bundle-dylibs.sh, signed app on clean Mac w/o Homebrew, worker --selftest

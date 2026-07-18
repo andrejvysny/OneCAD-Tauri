@@ -16,6 +16,7 @@
  */
 import type { CadClient } from "@/ipc/client";
 import type {
+  ApplyOperationResult,
   BooleanOperation,
   FeatureRecord,
   OperationOp,
@@ -416,7 +417,14 @@ export class ModelToolController {
     this.commitFinalEpoch = send ? send.epoch : this.throttle.epoch;
     this.client.updatePreview(sessionId, { distance: finalDepth, extrudeMode: symmetric ? "Symmetric" : "Blind" }, this.commitFinalEpoch);
 
-    const res = await this.client.endPreview(sessionId, true);
+    let res: ApplyOperationResult | null;
+    try {
+      res = await this.client.endPreview(sessionId, true);
+    } catch (e) {
+      this.finishExtrude(null);
+      viewportStore.getState().setStatusHint(`Extrude failed: ${errMessage(e)}`);
+      return;
+    }
     if (!res || !res.changedBodies[0]) {
       this.finishExtrude(null);
       return;
@@ -466,10 +474,14 @@ export class ModelToolController {
     };
     this.deps.engine.setOrbitSuppressed(false);
     toolChipStore.getState().clear();
-    const res = await this.client.applyOperation(op);
-    this.applyResult(res);
+    try {
+      const res = await this.client.applyOperation(op);
+      this.applyResult(res);
+      viewportStore.getState().setStatusHint(`Filleted ${edges.length} edge${edges.length > 1 ? "s" : ""}`);
+    } catch (e) {
+      viewportStore.getState().setStatusHint(`Fillet failed: ${errMessage(e)}`);
+    }
     this.fillet = filletInit();
-    viewportStore.getState().setStatusHint(`Filleted ${edges.length} edge${edges.length > 1 ? "s" : ""}`);
     toolStore.getState().setTool("select");
     this.updateDebug();
   }
@@ -515,11 +527,15 @@ export class ModelToolController {
       ],
       params: { operation, targetBodyId, toolBodyId },
     };
-    const res = await this.client.applyOperation(cmd);
-    this.applyResult(res);
+    try {
+      const res = await this.client.applyOperation(cmd);
+      this.applyResult(res);
+      selectionStore.getState().set([{ kind: "body", id: targetBodyId }]);
+      viewportStore.getState().setStatusHint(`${operation} applied`);
+    } catch (e) {
+      viewportStore.getState().setStatusHint(`${operation} failed: ${errMessage(e)}`);
+    }
     this.boolean = booleanInit();
-    selectionStore.getState().set([{ kind: "body", id: targetBodyId }]);
-    viewportStore.getState().setStatusHint(`${operation} applied`);
     toolStore.getState().setTool("select");
     this.updateDebug();
   }
@@ -691,4 +707,9 @@ export class ModelToolController {
 
 function toFeatureMeta(f: FeatureRecord): FeatureMeta {
   return { id: f.id, kind: f.kind, label: f.label, valueText: f.valueText, status: f.status };
+}
+
+/** Human message from a rejected backend call (ApiError → JS Error message). */
+function errMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }

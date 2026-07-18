@@ -184,6 +184,94 @@ export interface FinishSketchResult {
   regions: SketchRegion[];
 }
 
+// ── Sketch drag gesture (SCHEMA §7.4 BeginGesture / SolveDrag / EndGesture) ───
+//
+// The real client routes these to the worker's PlaneGCS gesture verbs; the mock
+// runs a local identity solve. A drag is: beginGesture(point) → many solveDrag
+// (latest-wins, fire-and-reconcile) → endGesture (commits ONE undo step).
+
+/** `beginGesture` acknowledgement (`BeginGestureDto`). */
+export interface BeginGestureResult {
+  gestureId: number;
+  ready: boolean;
+}
+
+/**
+ * One incremental drag solve (`SolveDrag`; `DragSolveDto`). Carries the backend
+ * `seq` (assigned per drag) so the client drops stale/superseded responses
+ * latest-wins. `positions` are a PREVIEW (uncommitted), keyed by point entity id.
+ */
+export interface DragSolveResult {
+  gestureId: number;
+  seq: number;
+  /** `success` | `partial` | `conflicting` | `redundant` | `superseded`. */
+  status: string;
+  dof: number;
+  conflicting: string[];
+  positions: Record<string, [number, number]>;
+  solveMicros: number;
+  /** True when this `seq` was superseded by a newer drag (positions empty). */
+  superseded: boolean;
+}
+
+// ── Element identity (SCHEMA §7.5 AcquireElementIds) — pick → promote ─────────
+
+/** One pick to promote (`{topoKey, anchor?}`). */
+export interface PromotePick {
+  topoKey: string;
+  anchor?: { worldPoint?: [number, number, number]; surfaceUv?: [number, number] };
+}
+
+/** One promoted element (Rust-minted `elementId`; `PromotedElementDto`). */
+export interface PromotedElement {
+  topoKey: string;
+  elementId: string;
+  /** `face` | `edge` | `vertex`. */
+  kind: string;
+  bodyId: string;
+}
+
+// ── Projection hydration (SCHEMA §7.2 projection-updated) ─────────────────────
+//
+// The authoritative document projection the backend publishes on open/new/close/
+// edit/regen. Field-identical to `documentStore.DocumentProjection` so the
+// hydration bridge writes the store 1:1 (F-WP8 flag 2).
+
+/** One body in the projection (mirrors `documentStore.BodyMeta`). */
+export interface BodyProjection {
+  id: string;
+  name: string;
+  visible: boolean;
+}
+
+/** One sketch in the projection (mirrors `documentStore.SketchMeta`). */
+export interface SketchProjection {
+  id: string;
+  name: string;
+  visible: boolean;
+  dof: number;
+  /** `ok` | `under` | `over` | `error`. */
+  status: string;
+}
+
+/** The `projection-updated` payload (mirrors `documentStore.DocumentProjection`). */
+export interface DocumentProjectionWire {
+  status: "empty" | "loading" | "ready";
+  revision: number;
+  title: string;
+  dirty: boolean;
+  bodies: Record<string, BodyProjection>;
+  sketches: Record<string, SketchProjection>;
+  features: FeatureRecord[];
+}
+
+/** The `regen-finished` payload (`{revision, outcome}`; F-WP8 flag 3). */
+export interface RegenFinished {
+  revision: number;
+  /** `published` | `superseded` | `failed` | `cancelled` | `noop`. */
+  outcome: string;
+}
+
 // ── Model operations (SCHEMA §7.3 op payloads) ───────────────────────────────
 //
 // These mirror the JSON the C++ worker consumes inside `ExecutePlan.ops`. The

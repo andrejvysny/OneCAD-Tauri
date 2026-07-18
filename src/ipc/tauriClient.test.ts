@@ -10,12 +10,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
-import { createTauriClient, __setRegenTimeoutForTests } from "./tauriClient";
+import { createTauriClient, __setRegenTimeoutForTests, __lastSketchSolvedForTests } from "./tauriClient";
 import { createClient } from "./client";
 import { mockClient } from "./mockClient";
 import { operationToEditCommand } from "./tauriCommandMap";
 import { makeBoxMesh } from "./mockMeshes";
 import { parseMeshPayload } from "@/viewport/mesh/parseMeshPayload";
+import { documentStore, seedMockDocument } from "@/stores/documentStore";
 import type { DocumentChange, OperationOp } from "./types";
 
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
@@ -35,7 +36,12 @@ function readyProjection(revision: number, features: unknown[] = []): unknown {
 afterEach(() => {
   clearMocks();
   delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  // Reset the shared projection store (the hydration test writes it).
+  documentStore.getState().applySnapshot(seedMockDocument());
 });
+
+/** A full SketchPlane payload (XZ) an `enter_sketch` mock returns. */
+const XZ_PLANE = { kind: "XZ", origin: [0, 0, 0], xAxis: [0, 1, 0], yAxis: [0, 0, 1], normal: [1, 0, 0] };
 
 // ── Runtime selection ─────────────────────────────────────────────────────────
 
@@ -290,29 +296,79 @@ describe("tauriClient edit + correlation", () => {
 
 // ── Solver-lane seam (local) + preview-commit delegation ──────────────────────
 
-describe("tauriClient solver-lane seam", () => {
-  it("runs the sketch solver lane locally (no backend command)", async () => {
+describe("tauriClient sketch solver lane (real commands)", () => {
+  const xzPlane = { kind: "XZ", origin: [0, 0, 0], xAxis: [0, 1, 0], yAxis: [0, 0, 1], normal: [1, 0, 0] };
+
+  it("enters via AddSketch + enter_sketch, marshals upserts to SketchEditOp[], finishes", async () => {
     const seen: string[] = [];
-    mockIPC((cmd) => {
-      seen.push(cmd);
-      return undefined;
-    });
+    let upsertArgs: { sketchId?: string; ops?: { op: string; entity?: { kind: string } }[] } | undefined;
+    mockIPC(
+      (cmd, payload) => {
+        seen.push(cmd);
+        if (cmd === "apply_edit_command") return readyProjection(1);
+        if (cmd === "enter_sketch")
+          return {
+            sketchId: (payload as { sketchId: string }).sketchId,
+            plane: xzPlane,
+            entities: [],
+            constraints: [],
+            dof: 4,
+            status: "UnderConstrained",
+          };
+        if (cmd === "sketch_upsert") {
+          upsertArgs = payload as typeof upsertArgs;
+          return { sketchId: (payload as { sketchId: string }).sketchId, sketchRevision: 1, dof: 3, status: "UnderConstrained", solvedPositions: {} };
+        }
+        if (cmd === "finish_sketch") return { regions: [] };
+      },
+      { shouldMockEvents: true },
+    );
     const client = createTauriClient();
     const s = await client.enterSketch({ newOnPlane: "XZ", sketchId: "sk" });
     expect(s.plane.kind).toBe("XZ");
+    expect(s.sketchId).toBe("sk"); // keeps the FRONTEND id (map holds the UUID)
+    expect(seen).toContain("apply_edit_command"); // AddSketch created the sketch
+    expect(seen).toContain("enter_sketch");
+
     const up = await client.sketchUpsert(
       "sk",
       [{ id: "e1", type: "Line", p0: [0, 0], p1: [40, 0] }],
       [{ id: "c1", type: "Horizontal", entities: ["e1"] }],
     );
-    expect(up.sketchRevision).toBe(1);
-    expect(up.dof).toBe(3); // line (4) − 1
+    expect(up.dof).toBe(3);
+    expect(up.sketchId).toBe("sk");
+    // A Line marshals to two synthesized Points + the Line; H → an AddConstraint.
+    const ops = upsertArgs?.ops ?? [];
+    expect(ops.filter((o) => o.op === "addEntity" && o.entity?.kind === "point")).toHaveLength(2);
+    expect(ops.some((o) => o.op === "addEntity" && o.entity?.kind === "line")).toBe(true);
+    expect(ops.some((o) => o.op === "addConstraint")).toBe(true);
+
     const fin = await client.finishSketch("sk");
     expect(Array.isArray(fin.regions)).toBe(true);
-    // The sketch lane never touches an invoke command.
-    expect(seen).not.toContain("apply_edit_command");
+    expect(seen).toContain("sketch_upsert");
+    expect(seen).toContain("finish_sketch");
   });
 
+  it("cancelSketch invokes cancel_sketch on the backend sketch id", async () => {
+    const seen: string[] = [];
+    mockIPC(
+      (cmd, payload) => {
+        seen.push(cmd);
+        if (cmd === "apply_edit_command") return readyProjection(1);
+        if (cmd === "enter_sketch")
+          return { sketchId: (payload as { sketchId: string }).sketchId, plane: xzPlane, entities: [], constraints: [], dof: 0, status: "FullyConstrained" };
+        if (cmd === "cancel_sketch") return null;
+      },
+      { shouldMockEvents: true },
+    );
+    const client = createTauriClient();
+    await client.enterSketch({ newOnPlane: "XZ", sketchId: "sk" });
+    await client.cancelSketch("sk");
+    expect(seen).toContain("cancel_sketch");
+  });
+});
+
+describe("tauriClient preview seam (local) + commit delegation", () => {
   it("endPreview(commit) materializes the op through apply_edit_command", async () => {
     const cmds: string[] = [];
     mockIPC(
@@ -361,5 +417,188 @@ describe("tauriClient solver-lane seam", () => {
     });
     expect(await client.endPreview(session.sessionId, false)).toBeNull();
     expect(cmds).not.toContain("apply_edit_command");
+  });
+});
+
+// ── Sketch drag gesture — latest-wins reconciliation ──────────────────────────
+
+describe("tauriClient drag gesture (latest-wins)", () => {
+  async function enteredClient(onDrag: () => unknown) {
+    let beginArgs: { dragPoint?: string } | undefined;
+    mockIPC(
+      (cmd, payload) => {
+        if (cmd === "apply_edit_command") return readyProjection(1);
+        if (cmd === "enter_sketch")
+          return { sketchId: (payload as { sketchId: string }).sketchId, plane: XZ_PLANE, entities: [], constraints: [], dof: 4, status: "UnderConstrained" };
+        if (cmd === "sketch_upsert")
+          return { sketchId: (payload as { sketchId: string }).sketchId, sketchRevision: 1, dof: 3, status: "UnderConstrained", solvedPositions: {} };
+        if (cmd === "begin_gesture") {
+          beginArgs = payload as { dragPoint: string };
+          return { gestureId: 7, ready: true };
+        }
+        if (cmd === "solve_drag") return onDrag();
+        if (cmd === "end_gesture")
+          return { sketchId: "u", sketchRevision: 9, dof: 0, status: "FullyConstrained", solvedPositions: { p: [8, 8] } };
+      },
+      { shouldMockEvents: true },
+    );
+    const client = createTauriClient();
+    await client.enterSketch({ newOnPlane: "XZ", sketchId: "sk" });
+    // Create a Line so the point map has "e1.Start" for the drag-point translation.
+    await client.sketchUpsert("sk", [{ id: "e1", type: "Line", p0: [0, 0], p1: [40, 0] }], []);
+    return { client, getBeginArgs: () => beginArgs };
+  }
+
+  const drag = (seq: number, superseded = false) => ({
+    gestureId: 7,
+    seq,
+    status: superseded ? "superseded" : "success",
+    dof: 1,
+    conflicting: [] as string[],
+    positions: superseded ? {} : { p: [seq, seq] },
+    solveMicros: 5,
+    superseded,
+  });
+
+  it("begins on a translated point id, drops stale + superseded seq, commits on end", async () => {
+    let resp: unknown;
+    const { client, getBeginArgs } = await enteredClient(() => resp);
+
+    const begin = await client.beginGesture("sk", "e1.Start");
+    expect(begin.ready).toBe(true);
+    // The frontend "e1.Start" was translated to a minted point UUID (not passed raw).
+    expect(getBeginArgs()?.dragPoint).not.toBe("e1.Start");
+    expect(getBeginArgs()?.dragPoint).toMatch(/^[0-9a-f-]{36}$/);
+
+    resp = drag(5);
+    expect((await client.solveDrag([5, 5]))?.seq).toBe(5); // applied
+
+    resp = drag(3);
+    expect(await client.solveDrag([3, 3])).toBeNull(); // stale seq → dropped
+
+    resp = drag(9, true);
+    expect(await client.solveDrag([9, 9])).toBeNull(); // superseded flag → dropped
+
+    resp = drag(8);
+    expect((await client.solveDrag([8, 8]))?.seq).toBe(8); // newer seq → applied
+
+    const end = await client.endGesture([8, 8]);
+    expect(end.status).toBe("FullyConstrained");
+    expect(end.solvedPositions?.p).toEqual([8, 8]);
+  });
+});
+
+// ── Promotion (pick → ElementId) ──────────────────────────────────────────────
+
+describe("tauriClient promoteSelection", () => {
+  it("prefixes the bodyId, marshals picks, returns minted element ids", async () => {
+    let args: { snapshotId?: number; bodyId?: string; picks?: { topoKey: string }[] } | undefined;
+    mockIPC((cmd, payload) => {
+      if (cmd === "promote_selection") {
+        args = payload as typeof args;
+        return [{ topoKey: "f:2", elementId: "el_abc", kind: "face", bodyId: "body_uuid-1" }];
+      }
+    });
+    const out = await createTauriClient().promoteSelection("uuid-1", [
+      { topoKey: "f:2", anchor: { worldPoint: [1, 2, 3] } },
+    ]);
+    expect(out[0].elementId).toBe("el_abc");
+    expect(args?.bodyId).toBe("body_uuid-1"); // bare uuid prefixed to the wire form
+    expect(args?.snapshotId).toBe(0); // SEAM: no frontend snapshot source yet (M2)
+    expect(args?.picks?.[0].topoKey).toBe("f:2");
+  });
+});
+
+// ── Projection hydration bridge (projection-updated → documentStore) ──────────
+
+describe("tauriClient projection hydration", () => {
+  it("hydrates documentStore from projection-updated and drops stale revisions", async () => {
+    mockIPC(() => undefined, { shouldMockEvents: true });
+    const client = createTauriClient();
+    const seen: unknown[] = [];
+    const unsub = client.onProjectionUpdated((p) => seen.push(p));
+    await tick(); // let the lazy listen() register
+
+    documentStore.getState().applySnapshot({ ...seedMockDocument(), revision: 2 });
+    await emit("projection-updated", {
+      status: "ready",
+      revision: 5,
+      title: "Opened",
+      dirty: true,
+      bodies: { b1: { id: "b1", name: "B1", visible: true } },
+      sketches: {},
+      features: [{ id: "f1", kind: "extrude", label: "Extrude", valueText: "10.0 mm", status: "ok" }],
+    });
+    expect(documentStore.getState().revision).toBe(5);
+    expect(documentStore.getState().bodies.b1.name).toBe("B1");
+    expect(documentStore.getState().title).toBe("Opened");
+    expect(seen).toHaveLength(1);
+
+    // A stale (lower-revision) projection must NOT clobber the newer state.
+    await emit("projection-updated", { status: "ready", revision: 3, title: "STALE", dirty: false, bodies: {}, sketches: {}, features: [] });
+    expect(documentStore.getState().revision).toBe(5);
+    expect(documentStore.getState().title).toBe("Opened");
+
+    unsub();
+  });
+});
+
+// ── regen-finished correlation (prompt, no 8 s wait) ──────────────────────────
+
+describe("tauriClient regen-finished correlation", () => {
+  it("resolves a no-geometry edit from regen-finished (not the timeout)", async () => {
+    mockIPC(
+      (cmd) => {
+        if (cmd === "apply_edit_command") {
+          setTimeout(() => void emit("regen-finished", { revision: 12, outcome: "noop" }), 0);
+          return readyProjection(11);
+        }
+      },
+      { shouldMockEvents: true },
+    );
+    __setRegenTimeoutForTests(5000); // long: regen-finished must win, not the timeout
+    const res = await createTauriClient().applyOperation({
+      opType: "Boolean",
+      params: { operation: "Union", targetBodyId: "t", toolBodyId: "u" },
+    } as OperationOp);
+    expect(res.revision).toBe(12); // from regen-finished, not the pre-regen 11
+    expect(res.changedBodies).toEqual([]); // noop → no body delta
+  });
+});
+
+// ── sketch-solved event + sketch error path ───────────────────────────────────
+
+describe("tauriClient sketch-solved + errors", () => {
+  it("receives the sketch-solved event (mirrors the solve result)", async () => {
+    mockIPC(
+      (cmd, payload) => {
+        if (cmd === "apply_edit_command") return readyProjection(1);
+        if (cmd === "enter_sketch")
+          return { sketchId: (payload as { sketchId: string }).sketchId, plane: XZ_PLANE, entities: [], constraints: [], dof: 0, status: "FullyConstrained" };
+      },
+      { shouldMockEvents: true },
+    );
+    const client = createTauriClient();
+    await client.enterSketch({ newOnPlane: "XZ", sketchId: "sk" });
+    await emit("sketch-solved", { sketchId: "u", sketchRevision: 3, dof: 1, status: "UnderConstrained", solvedPositions: {} });
+    await tick();
+    expect(__lastSketchSolvedForTests()?.sketchRevision).toBe(3);
+  });
+
+  it("surfaces a rejected sketch_upsert as an Error with the ApiError kind", async () => {
+    mockIPC(
+      (cmd, payload) => {
+        if (cmd === "apply_edit_command") return readyProjection(1);
+        if (cmd === "enter_sketch")
+          return { sketchId: (payload as { sketchId: string }).sketchId, plane: XZ_PLANE, entities: [], constraints: [], dof: 0, status: "FullyConstrained" };
+        if (cmd === "sketch_upsert") return Promise.reject({ kind: "opFailed", message: "solve boom" });
+      },
+      { shouldMockEvents: true },
+    );
+    const client = createTauriClient();
+    await client.enterSketch({ newOnPlane: "XZ", sketchId: "sk" });
+    await expect(
+      client.sketchUpsert("sk", [{ id: "e1", type: "Line", p0: [0, 0], p1: [1, 0] }], []),
+    ).rejects.toThrow(/opFailed: solve boom/);
   });
 });

@@ -21,6 +21,8 @@
  */
 import type {
   ApplyOperationResult,
+  BeginGestureResult,
+  DragSolveResult,
   ExtrudeParams,
   EnterSketchTarget,
   OperationOp,
@@ -86,6 +88,9 @@ export interface LocalSolverLane {
   ): Promise<SketchUpsertResult>;
   finishSketch(sketchId: string): Promise<{ regions: SketchRegion[] }>;
   cancelSketch(sketchId: string): Promise<void>;
+  beginGesture(sketchId: string, dragPointId: string): Promise<BeginGestureResult>;
+  solveDrag(target: [number, number]): Promise<DragSolveResult | null>;
+  endGesture(finalTarget?: [number, number]): Promise<SketchUpsertResult>;
   beginPreview(draft: PreviewDraft): Promise<PreviewSession>;
   updatePreview(sessionId: string, params: PreviewParams, epoch: number): void;
   endPreview(sessionId: string, commit: boolean): Promise<ApplyOperationResult | null>;
@@ -95,6 +100,10 @@ export interface LocalSolverLane {
     sketchId: string | undefined,
     regionId: string | undefined,
   ): { plane: SketchPlane; profile: PrismProfile };
+  /** Seam: feed a real enter_sketch plane so beginPreview resolves it (tauri). */
+  cacheSketchPlane(sketchId: string, plane: SketchPlane): void;
+  /** Seam: feed real finish_sketch regions so beginPreview builds the profile (tauri). */
+  cacheFinishedRegions(sketchId: string, regions: SketchRegion[]): void;
   /** Forget sketch sessions (mirrors the mock's `resetMockSketches`). */
   resetSketches(): void;
   /** Forget preview sessions + finished regions (mirrors `resetMockDocument`). */
@@ -107,6 +116,10 @@ export function createLocalSolverLane(deps: LocalSolverDeps): LocalSolverLane {
   const sketchRevisions = new Map<string, number>();
   let nextSketchSeq = 1;
   const finishedRegions = new Map<string, SketchRegion[]>();
+
+  // Drag-gesture state (mock identity drag — echoes the target position).
+  let gestureSeq = 0;
+  let activeGesture: { sketchId: string; dragPointId: string; nextSeq: number } | null = null;
 
   // Preview-lane state.
   const previewSessions = new Map<string, PreviewSessionState>();
@@ -225,7 +238,50 @@ export function createLocalSolverLane(deps: LocalSolverDeps): LocalSolverLane {
 
     async cancelSketch(_sketchId: string): Promise<void> {
       await wait(0);
+      activeGesture = null;
       // Real backend discards scratch; the lane keeps the last committed session.
+    },
+
+    // ── Drag gesture (mock identity drag: solveDrag echoes the target) ─────────
+    async beginGesture(sketchId: string, dragPointId: string): Promise<BeginGestureResult> {
+      await wait(0);
+      activeGesture = { sketchId, dragPointId, nextSeq: 1 };
+      return { gestureId: ++gestureSeq, ready: true };
+    },
+
+    async solveDrag(target: [number, number]): Promise<DragSolveResult | null> {
+      await wait(0);
+      const g = activeGesture;
+      if (!g) return null;
+      const seq = g.nextSeq++;
+      const session = sketchSessions.get(g.sketchId);
+      return {
+        gestureId: gestureSeq,
+        seq,
+        status: "success",
+        dof: session?.dof ?? 0,
+        conflicting: [],
+        positions: { [g.dragPointId]: target },
+        solveMicros: 0,
+        superseded: false,
+      };
+    },
+
+    async endGesture(finalTarget?: [number, number]): Promise<SketchUpsertResult> {
+      await wait(SKETCH_LATENCY_MS);
+      const g = activeGesture;
+      activeGesture = null;
+      const sketchId = g?.sketchId ?? "";
+      const session = sketchId ? sketchSessions.get(sketchId) : undefined;
+      const rev = (sketchRevisions.get(sketchId) ?? 0) + 1;
+      if (sketchId) sketchRevisions.set(sketchId, rev);
+      return {
+        sketchId,
+        sketchRevision: rev,
+        dof: session?.dof ?? 0,
+        status: session?.status ?? "FullyConstrained",
+        solvedPositions: g && finalTarget ? { [g.dragPointId]: finalTarget } : {},
+      };
     },
 
     async beginPreview(draft: PreviewDraft): Promise<PreviewSession> {
@@ -293,6 +349,20 @@ export function createLocalSolverLane(deps: LocalSolverDeps): LocalSolverLane {
     },
 
     resolveExtrudeInput,
+
+    cacheSketchPlane(sketchId: string, plane: SketchPlane): void {
+      const existing = sketchSessions.get(sketchId);
+      sketchSessions.set(
+        sketchId,
+        existing
+          ? { ...existing, plane }
+          : { sketchId, plane, entities: [], constraints: [], dof: 0, status: "FullyConstrained" },
+      );
+    },
+
+    cacheFinishedRegions(sketchId: string, regions: SketchRegion[]): void {
+      finishedRegions.set(sketchId, regions);
+    },
 
     resetSketches(): void {
       sketchSessions.clear();

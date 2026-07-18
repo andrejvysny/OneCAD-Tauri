@@ -47,6 +47,29 @@ function refFromHit(hit: PickHit): EntityRef {
   };
 }
 
+/**
+ * Promote a face/edge pick to a persistent Rust-minted ElementId (SCHEMA §7.5)
+ * and write it back onto the still-selected ref. Fire-and-forget; a failed / stale
+ * promotion leaves the transient topoKey ref intact (the tool falls back to it).
+ */
+function promotePick(client: ReturnType<typeof createClient>, ref: EntityRef): void {
+  if ((ref.kind !== "face" && ref.kind !== "edge") || !ref.bodyId || !ref.topoKey) return;
+  const pick = { topoKey: ref.topoKey, anchor: ref.anchor ? { worldPoint: ref.anchor.worldPoint } : undefined };
+  void client
+    .promoteSelection(ref.bodyId, [pick])
+    .then((promoted) => {
+      const elementId = promoted.find((p) => p.topoKey === ref.topoKey)?.elementId;
+      if (!elementId) return;
+      const sel = selectionStore.getState();
+      // Only if the ref is still selected (selection may have moved on).
+      if (!sel.selected.some((r) => r.id === ref.id)) return;
+      sel.set(sel.selected.map((r) => (r.id === ref.id ? { ...r, elementId } : r)));
+    })
+    .catch(() => {
+      // Promotion failed (no snapshot / worker error) — keep the topoKey ref.
+    });
+}
+
 // Faint 45° hatch behind the placeholder (prototype 1c) — fallback only.
 const VIEWPORT_HATCH =
   "repeating-linear-gradient(45deg, rgba(0,0,0,0.02) 0 12px, transparent 12px 24px)";
@@ -140,6 +163,10 @@ export function ViewportRoot({ className }: { className?: string }) {
             const ref = refFromHit(hit);
             if (mods.shift || mods.meta) sel.toggle(ref);
             else sel.set([ref]);
+            // Promote face/edge picks to a persistent ElementId (mock mints ids;
+            // the real client routes to AcquireElementIds). Promoted id flows back
+            // onto the selected ref, exactly as the mock does.
+            promotePick(client, ref);
           },
         });
         cleanups.push(() => engine.configurePicking(null));

@@ -99,7 +99,13 @@ export class SketchController {
       if (toolStore.getState().mode !== "sketch") return;
       const activeId = viewportStore.getState().activeSketchId ?? "sketch";
       const target: EnterSketchTarget = activeId;
-      const session = await this.deps.client.enterSketch(target);
+      let session: SketchSession;
+      try {
+        session = await this.deps.client.enterSketch(target);
+      } catch (e) {
+        viewportStore.getState().setStatusHint(`Enter sketch failed: ${sketchErr(e)}`);
+        return;
+      }
       if (toolStore.getState().mode !== "sketch") return; // exited during await
 
       sketchStore.getState().setSession(session);
@@ -233,7 +239,13 @@ export class SketchController {
     const entities = [...session.entities, ...newEntities];
     const constraints = [...session.constraints, ...newConstraints];
 
-    const result = await this.deps.client.sketchUpsert(session.sketchId, entities, constraints);
+    let result;
+    try {
+      result = await this.deps.client.sketchUpsert(session.sketchId, entities, constraints);
+    } catch (e) {
+      viewportStore.getState().setStatusHint(`Sketch solve failed: ${sketchErr(e)}`);
+      return;
+    }
     // A late exit could have cleared the session mid-await.
     if (!sketchStore.getState().session) return;
 
@@ -291,6 +303,11 @@ export class SketchController {
 }
 
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** Human message from a rejected backend sketch call. */
+function sketchErr(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
 
 /** Local H/V inference for the ghost glyph (mirrors autoConstrain thresholds). */
 function inferHVDraft(p0: Point2, p1: Point2): "H" | "V" | null {

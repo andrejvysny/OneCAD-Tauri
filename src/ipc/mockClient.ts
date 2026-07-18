@@ -15,11 +15,15 @@ import type {
   ApplyOperationResult,
   BodyMeshRef,
   DocumentChange,
+  DocumentProjectionWire,
   DocumentSnapshot,
   FeatureRecord,
   Lod,
   OperationOp,
+  PromotedElement,
+  PromotePick,
   RecentProject,
+  Unsubscribe,
 } from "./types";
 import { makeBoxMesh, makeCylinderMesh, makeExtrudeBodyMesh } from "./mockMeshes";
 import { createLocalSolverLane } from "./localSolver";
@@ -328,6 +332,23 @@ export const mockClient: CadClient = {
     return () => docChangeListeners.delete(cb);
   },
 
+  // The mock writes its projection stores directly (no backend event stream), so
+  // the projection-updated subscription is a no-op that never fires.
+  onProjectionUpdated(_cb: (p: DocumentProjectionWire) => void): Unsubscribe {
+    return () => {};
+  },
+
+  // Deterministic mock promotion (Invariant 1: same pick → same id).
+  async promoteSelection(bodyId: string, picks: PromotePick[]): Promise<PromotedElement[]> {
+    await wait(MESH_LATENCY_MS);
+    return picks.map((p) => ({
+      topoKey: p.topoKey,
+      elementId: `el_${mockElementHash(`${bodyId}#${p.topoKey}`)}`,
+      kind: p.topoKey.startsWith("e:") ? "edge" : "face",
+      bodyId,
+    }));
+  },
+
   // ── Model operations (SCHEMA §7.3) — the mock's local document model ───────
 
   applyOperation(op: OperationOp): Promise<ApplyOperationResult> {
@@ -374,11 +395,24 @@ export const mockClient: CadClient = {
   sketchUpsert: lane.sketchUpsert,
   finishSketch: lane.finishSketch,
   cancelSketch: lane.cancelSketch,
+  beginGesture: lane.beginGesture,
+  solveDrag: lane.solveDrag,
+  endGesture: lane.endGesture,
   beginPreview: lane.beginPreview,
   updatePreview: lane.updatePreview,
   endPreview: lane.endPreview,
   onPreviewResult: lane.onPreviewResult,
 };
+
+/** Small deterministic hash for mock ElementIds (FNV-1a-32 hex). */
+function mockElementHash(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
 
 function basename(path: string): string {
   const file = path.split(/[\\/]/).pop() ?? path;

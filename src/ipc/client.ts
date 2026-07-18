@@ -11,8 +11,11 @@
  */
 import type {
   ApplyOperationResult,
+  BeginGestureResult,
   DocumentChange,
+  DocumentProjectionWire,
   DocumentSnapshot,
+  DragSolveResult,
   EnterSketchTarget,
   FinishSketchResult,
   Lod,
@@ -21,6 +24,8 @@ import type {
   PreviewParams,
   PreviewResult,
   PreviewSession,
+  PromotedElement,
+  PromotePick,
   RecentProject,
   SketchConstraint,
   SketchEntity,
@@ -89,6 +94,34 @@ export interface CadClient {
   /** Discard the in-flight sketch edit session (no geometry change). */
   cancelSketch(sketchId: string): Promise<void>;
 
+  // ── Sketch drag gesture (SCHEMA §7.4) ──────────────────────────────────────
+  // A point drag: beginGesture → many solveDrag (latest-wins) → endGesture (ONE
+  // undo step). The real client routes to the worker's gesture verbs; the mock
+  // runs a local identity solve. No frontend caller yet (SketchController point
+  // drag lands with M2/M4); wired + tested here so the seam is real.
+
+  /** Open a drag gesture on a sketch point (`dragPointId` = a point entity id). */
+  beginGesture(sketchId: string, dragPointId: string): Promise<BeginGestureResult>;
+
+  /**
+   * One incremental drag solve to `target` (fire-and-forget, latest-wins). Fire
+   * without awaiting serially; each resolves with the fresh preview positions, or
+   * `null` when the response was stale/superseded (dropped client-side by `seq`).
+   */
+  solveDrag(target: [number, number]): Promise<DragSolveResult | null>;
+
+  /** Pointer-up: final exact solve committed as ONE undo command. */
+  endGesture(finalTarget?: [number, number]): Promise<SketchUpsertResult>;
+
+  // ── Element identity (SCHEMA §7.5) — pick → promote ────────────────────────
+
+  /**
+   * Promote snapshot-scoped TopoKey picks on a body to persistent, Rust-minted
+   * `ElementId`s. The real client routes to `AcquireElementIds`; the mock mints
+   * deterministic ids. Promoted ids flow back into the selection refs.
+   */
+  promoteSelection(bodyId: string, picks: PromotePick[]): Promise<PromotedElement[]>;
+
   // ── Model operations + two-level preview (SCHEMA §7.3 / NEW_SPEC §15) ──────
   // The real client routes these to the worker's ExecutePlan (op) + solver-style
   // preview lane; the mock synthesizes bodies + a feature timeline locally.
@@ -124,6 +157,14 @@ export interface CadClient {
 
   /** Subscribe to exact Level-2 preview results (carry their epoch for reconcile). */
   onPreviewResult(cb: (r: PreviewResult) => void): Unsubscribe;
+
+  /**
+   * Subscribe to authoritative `projection-updated` events (SCHEMA §7.2). The
+   * frontend owns the projection stores and re-hydrates them from one payload on
+   * open/new/close/edit/regen (F-WP8 flag 2). The real event arrives from Rust;
+   * the mock is a no-op (it seeds + mutates its projection stores directly).
+   */
+  onProjectionUpdated(cb: (projection: DocumentProjectionWire) => void): Unsubscribe;
 
   /** Undo the last committed op → new revision + changed/removed bodies + timeline. */
   undo(): Promise<ApplyOperationResult>;
