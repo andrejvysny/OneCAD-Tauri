@@ -23,7 +23,20 @@ jobs:
         run: cargo fmt --all --check
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      # Build the C++ sidecar so the real-worker / m2 integration tests exercise
+      # the actual worker instead of silently skipping (they gate on
+      # ONECAD_WORKER_PATH pointing at an existing binary).
+      - name: Install OCCT toolchain
+        working-directory: .
+        run: brew install opencascade boost eigen nlohmann-json || true
+      - name: Build worker
+        working-directory: .
+        run: |
+          cmake -S worker -B worker/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build worker/build --parallel
       - name: test
+        env:
+          ONECAD_WORKER_PATH: ${{ github.workspace }}/worker/build/onecad-worker
         run: cargo test --workspace
 
   worker:

@@ -18,7 +18,7 @@
 //! [`AppState`]: crate::state::AppState
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -44,19 +44,62 @@ pub const DEV_WORKER_PATH: &str = "../worker/build/onecad-worker";
 /// The `ONECAD_WORKER_PATH` override env var (highest precedence).
 pub const WORKER_PATH_ENV: &str = "ONECAD_WORKER_PATH";
 
-/// Resolves the worker binary path (SCHEMA-agnostic packaging seam):
-/// `ONECAD_WORKER_PATH` override → the dev fallback `../worker/build/onecad-worker`
-/// (a Tauri `externalBin`/resource path is resolved by the caller when bundled).
+/// The sidecar binary's basename as Tauri drops it beside the main executable in
+/// a bundled app (`externalBin` strips the target triple at install time).
+pub const BUNDLED_WORKER_NAME: &str = "onecad-worker";
+
+/// Resolves the worker binary path (SCHEMA-agnostic packaging seam) over a fixed
+/// precedence chain:
+///
+/// 1. `ONECAD_WORKER_PATH` override — if it names a file that exists;
+/// 2. `<exe_dir>/onecad-worker` — where Tauri places the `externalBin` sidecar in
+///    a bundled app (next to the main executable), if it exists;
+/// 3. the dev fallback `../worker/build/onecad-worker` (relative to `src-tauri/`),
+///    if it exists.
+///
 /// Returns `None` when no candidate exists on disk, so the app keeps the
 /// [`PendingBackend`] fallback rather than spawning a missing binary.
 #[must_use]
 pub fn resolve_worker_path() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var(WORKER_PATH_ENV) {
-        let path = PathBuf::from(p);
-        return path.exists().then_some(path);
+    let env_override = std::env::var_os(WORKER_PATH_ENV).map(PathBuf::from);
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf));
+    resolve_worker_path_from(env_override, exe_dir, Path::new(DEV_WORKER_PATH))
+}
+
+/// The pure resolution core behind [`resolve_worker_path`], factored out so the
+/// precedence chain is unit-testable without touching the process-global
+/// environment or the real executable location.
+///
+/// Walks the same three rungs as [`resolve_worker_path`] — `env_override`, then
+/// `<exe_dir>/onecad-worker` (with a `.exe` suffix on Windows), then
+/// `dev_fallback` — returning the first candidate that exists on disk.
+fn resolve_worker_path_from(
+    env_override: Option<PathBuf>,
+    exe_dir: Option<PathBuf>,
+    dev_fallback: &Path,
+) -> Option<PathBuf> {
+    if let Some(path) = env_override {
+        if path.exists() {
+            return Some(path);
+        }
     }
-    let dev = PathBuf::from(DEV_WORKER_PATH);
-    dev.exists().then_some(dev)
+    if let Some(dir) = exe_dir {
+        let name = if cfg!(windows) {
+            "onecad-worker.exe"
+        } else {
+            BUNDLED_WORKER_NAME
+        };
+        let bundled = dir.join(name);
+        if bundled.exists() {
+            return Some(bundled);
+        }
+    }
+    if dev_fallback.exists() {
+        return Some(dev_fallback.to_path_buf());
+    }
+    None
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -464,6 +507,63 @@ mod tests {
 
     fn body(n: u128) -> BodyId {
         BodyId(Uuid::from_u128(n))
+    }
+
+    #[test]
+    fn resolve_prefers_env_override_when_it_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let over = dir.path().join("custom-worker");
+        std::fs::write(&over, b"x").unwrap();
+        // A bundled sidecar also exists, but the override wins.
+        let exe_dir = dir.path().join("bundle");
+        std::fs::create_dir(&exe_dir).unwrap();
+        std::fs::write(exe_dir.join(BUNDLED_WORKER_NAME), b"x").unwrap();
+
+        let got = resolve_worker_path_from(
+            Some(over.clone()),
+            Some(exe_dir),
+            Path::new("/nonexistent/dev/onecad-worker"),
+        );
+        assert_eq!(got, Some(over));
+    }
+
+    #[test]
+    fn resolve_falls_through_missing_env_override_to_bundled() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe_dir = dir.path().join("bundle");
+        std::fs::create_dir(&exe_dir).unwrap();
+        let bundled = exe_dir.join(BUNDLED_WORKER_NAME);
+        std::fs::write(&bundled, b"x").unwrap();
+
+        let got = resolve_worker_path_from(
+            Some(dir.path().join("does-not-exist")),
+            Some(exe_dir),
+            Path::new("/nonexistent/dev/onecad-worker"),
+        );
+        assert_eq!(got, Some(bundled));
+    }
+
+    #[test]
+    fn resolve_falls_through_to_dev_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe_dir = dir.path().join("bundle"); // empty — no sidecar beside exe
+        std::fs::create_dir(&exe_dir).unwrap();
+        let dev = dir.path().join("dev-onecad-worker");
+        std::fs::write(&dev, b"x").unwrap();
+
+        let got = resolve_worker_path_from(None, Some(exe_dir), &dev);
+        assert_eq!(got, Some(dev));
+    }
+
+    #[test]
+    fn resolve_returns_none_when_no_candidate_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let got = resolve_worker_path_from(
+            Some(dir.path().join("missing-override")),
+            Some(dir.path().join("empty-bundle")),
+            &dir.path().join("missing-dev"),
+        );
+        assert_eq!(got, None);
     }
 
     #[test]
