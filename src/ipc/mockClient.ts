@@ -287,6 +287,63 @@ function mutateOp(op: OperationOp): { changed: string[]; removed: string[]; labe
     mockFeatures = [...mockFeatures, { id: featureId, kind: "fillet", label: "Fillet", valueText, status: "ok" }];
     return { changed: [bodyId], removed: [], label: "Fillet" };
   }
+  if (op.opType === "Shell") {
+    // MOCK LIMIT: no real hollowing — re-emit the shelled body + a feature. A
+    // re-edit (featureId of an existing shell) just updates the thickness text.
+    const bodyId = op.params.targetBodyId ?? op.inputs?.[0]?.primary.bodyId ?? "body1";
+    const featureId = op.featureId ?? nextFeatureId();
+    const valueText = `${op.params.thickness.toFixed(1)} mm`;
+    const editing = op.featureId !== undefined && mockFeatures.some((f) => f.id === featureId);
+    if (editing) {
+      mockFeatures = mockFeatures.map((f) => (f.id === featureId ? { ...f, valueText } : f));
+    } else {
+      mockFeatures = [...mockFeatures, { id: featureId, kind: "shell", label: "Shell", valueText, status: "ok" }];
+    }
+    return { changed: [bodyId], removed: [], label: "Shell" };
+  }
+  if (op.opType === "LinearPattern") {
+    // MOCK LIMIT: no real instancing — re-emit the source body + a feature.
+    const bodyId = op.params.sourceBodyId ?? op.inputs?.[0]?.primary.bodyId ?? "body1";
+    const featureId = op.featureId ?? nextFeatureId();
+    const valueText = `×${op.params.count}`;
+    const editing = op.featureId !== undefined && mockFeatures.some((f) => f.id === featureId);
+    if (editing) {
+      mockFeatures = mockFeatures.map((f) => (f.id === featureId ? { ...f, valueText } : f));
+    } else {
+      mockFeatures = [
+        ...mockFeatures,
+        { id: featureId, kind: "linearPattern", label: "Linear Pattern", valueText, status: "ok" },
+      ];
+    }
+    return { changed: [bodyId], removed: [], label: "Linear Pattern" };
+  }
+  if (op.opType === "CircularPattern") {
+    const bodyId = op.params.sourceBodyId ?? op.inputs?.[0]?.primary.bodyId ?? "body1";
+    const featureId = op.featureId ?? nextFeatureId();
+    const valueText = `×${op.params.count}`;
+    const editing = op.featureId !== undefined && mockFeatures.some((f) => f.id === featureId);
+    if (editing) {
+      mockFeatures = mockFeatures.map((f) => (f.id === featureId ? { ...f, valueText } : f));
+    } else {
+      mockFeatures = [
+        ...mockFeatures,
+        { id: featureId, kind: "circularPattern", label: "Circular Pattern", valueText, status: "ok" },
+      ];
+    }
+    return { changed: [bodyId], removed: [], label: "Circular Pattern" };
+  }
+  if (op.opType === "MirrorBody") {
+    const bodyId = op.params.sourceBodyId ?? op.inputs?.[0]?.primary.bodyId ?? "body1";
+    const featureId = op.featureId ?? nextFeatureId();
+    const valueText = planeLabelForNormal(op.params.planeNormal);
+    const editing = op.featureId !== undefined && mockFeatures.some((f) => f.id === featureId);
+    if (editing) {
+      mockFeatures = mockFeatures.map((f) => (f.id === featureId ? { ...f, valueText } : f));
+    } else {
+      mockFeatures = [...mockFeatures, { id: featureId, kind: "mirror", label: "Mirror", valueText, status: "ok" }];
+    }
+    return { changed: [bodyId], removed: [], label: "Mirror" };
+  }
   // Boolean: MOCK removes the tool body, keeps the target (no real fusion).
   const { targetBodyId, toolBodyId, operation } = op.params;
   syntheticBodies.delete(toolBodyId);
@@ -609,4 +666,13 @@ function mockElementHash(s: string): string {
 function basename(path: string): string {
   const file = path.split(/[\\/]/).pop() ?? path;
   return file.replace(/\.[^.]+$/, "");
+}
+
+/** Short mirror-plane label from a world plane normal (mock feature valueText). */
+function planeLabelForNormal(n: [number, number, number]): string {
+  const [x, y, z] = n.map((c) => Math.abs(c));
+  if (z > x && z > y) return "XY";
+  if (y > x && y > z) return "XZ";
+  if (x > y && x > z) return "YZ";
+  return "";
 }

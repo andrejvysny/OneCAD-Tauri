@@ -29,12 +29,16 @@
 import type {
   AxisRef,
   BooleanParams,
+  CircularPatternParams,
   ExtrudeMode,
   ExtrudeParams,
   FeatureBooleanMode,
   FilletParams,
+  LinearPatternParams,
+  MirrorBodyParams,
   OperationOp,
   RevolveParams,
+  ShellParams,
 } from "./types";
 
 /** A dimension value on the wire (Rust `Scalar {value, expr?}`). */
@@ -93,12 +97,64 @@ interface WireBooleanParams {
   toolBodyId: string;
 }
 
+/** A world 3-vector on the wire (Rust `Vec3` — `try_from = "[f64; 3]"`, so `[x,y,z]`). */
+type WireVec3 = [number, number, number];
+
+/** Rust `ShellParams` (record.rs). `openFaces` are bare ElementIds/TopoKeys. */
+interface WireShellParams {
+  thickness: WireScalar;
+  openFaces: string[];
+  targetBodyId?: string;
+}
+
+/**
+ * Rust `LinearPatternParams` (record.rs). SCHEMA truth: the C++ flat `dirX/Y/Z`
+ * is a single `direction: Vec3` here (the UI axis chip picks a world axis), and
+ * `count` is a bare `u32` (NOT a Scalar). `fuseResult` defaults true on the Rust
+ * side (`default_true`).
+ */
+interface WireLinearPatternParams {
+  sourceBodyId?: string;
+  direction: WireVec3;
+  spacing: WireScalar;
+  count: number;
+  fuseResult: boolean;
+}
+
+/**
+ * Rust `CircularPatternParams` (record.rs). The C++ flat point/dir become
+ * `axisOrigin`/`axisDirection` Vec3s; `angleDeg` is a Scalar, `count` a bare u32.
+ */
+interface WireCircularPatternParams {
+  sourceBodyId?: string;
+  axisOrigin: WireVec3;
+  axisDirection: WireVec3;
+  angleDeg: WireScalar;
+  count: number;
+  fuseResult: boolean;
+}
+
+/**
+ * Rust `MirrorBodyParams` (record.rs). The C++ flat plane point/normal become
+ * `planePoint`/`planeNormal` Vec3s; `fuseWithOriginal` defaults FALSE on Rust.
+ */
+interface WireMirrorBodyParams {
+  sourceBodyId?: string;
+  planePoint: WireVec3;
+  planeNormal: WireVec3;
+  fuseWithOriginal: boolean;
+}
+
 /** A known op on the wire — adjacently tagged `{opType, params}` (SCHEMA §7.3). */
 type WireOperation =
   | { opType: "Extrude"; params: WireExtrudeParams }
   | { opType: "Revolve"; params: WireRevolveParams }
   | { opType: "Fillet"; params: WireFilletParams }
-  | { opType: "Boolean"; params: WireBooleanParams };
+  | { opType: "Boolean"; params: WireBooleanParams }
+  | { opType: "Shell"; params: WireShellParams }
+  | { opType: "LinearPattern"; params: WireLinearPatternParams }
+  | { opType: "CircularPattern"; params: WireCircularPatternParams }
+  | { opType: "MirrorBody"; params: WireMirrorBodyParams };
 
 /** A minimal real `OperationRecord` (every other field defaults on the Rust side). */
 interface WireOperationRecord {
@@ -191,6 +247,48 @@ function booleanParams(p: BooleanParams): WireBooleanParams {
   };
 }
 
+function shellParams(p: ShellParams): WireShellParams {
+  const wire: WireShellParams = {
+    thickness: scalar(p.thickness),
+    openFaces: [...p.openFaces],
+  };
+  if (p.targetBodyId !== undefined) wire.targetBodyId = p.targetBodyId;
+  return wire;
+}
+
+function linearPatternParams(p: LinearPatternParams): WireLinearPatternParams {
+  const wire: WireLinearPatternParams = {
+    direction: [...p.direction],
+    spacing: scalar(p.spacing),
+    count: p.count, // bare u32 — NOT a Scalar
+    fuseResult: p.fuseResult ?? true,
+  };
+  if (p.sourceBodyId !== undefined) wire.sourceBodyId = p.sourceBodyId;
+  return wire;
+}
+
+function circularPatternParams(p: CircularPatternParams): WireCircularPatternParams {
+  const wire: WireCircularPatternParams = {
+    axisOrigin: [...p.axisOrigin],
+    axisDirection: [...p.axisDirection],
+    angleDeg: scalar(p.angleDeg),
+    count: p.count, // bare u32 — NOT a Scalar
+    fuseResult: p.fuseResult ?? true,
+  };
+  if (p.sourceBodyId !== undefined) wire.sourceBodyId = p.sourceBodyId;
+  return wire;
+}
+
+function mirrorBodyParams(p: MirrorBodyParams): WireMirrorBodyParams {
+  const wire: WireMirrorBodyParams = {
+    planePoint: [...p.planePoint],
+    planeNormal: [...p.planeNormal],
+    fuseWithOriginal: p.fuseWithOriginal ?? false,
+  };
+  if (p.sourceBodyId !== undefined) wire.sourceBodyId = p.sourceBodyId;
+  return wire;
+}
+
 /** Build the `{opType, params}` wire op for an OperationOp (no ids yet). */
 function wireOperation(op: OperationOp): WireOperation {
   switch (op.opType) {
@@ -214,6 +312,14 @@ function wireOperation(op: OperationOp): WireOperation {
       return { opType: "Fillet", params: filletParams(op.params) };
     case "Boolean":
       return { opType: "Boolean", params: booleanParams(op.params) };
+    case "Shell":
+      return { opType: "Shell", params: shellParams(op.params) };
+    case "LinearPattern":
+      return { opType: "LinearPattern", params: linearPatternParams(op.params) };
+    case "CircularPattern":
+      return { opType: "CircularPattern", params: circularPatternParams(op.params) };
+    case "MirrorBody":
+      return { opType: "MirrorBody", params: mirrorBodyParams(op.params) };
   }
 }
 
@@ -236,7 +342,18 @@ export function operationToEditCommand(op: OperationOp): WireEditCommand {
 
 /** Human label for a committed/undone op, for the status-bar hint. */
 export function opLabelFor(op: OperationOp): string {
-  return op.opType === "Boolean" ? op.params.operation : op.opType;
+  switch (op.opType) {
+    case "Boolean":
+      return op.params.operation;
+    case "LinearPattern":
+      return "Linear Pattern";
+    case "CircularPattern":
+      return "Circular Pattern";
+    case "MirrorBody":
+      return "Mirror";
+    default:
+      return op.opType;
+  }
 }
 
 // ── M4b: raw EditCommand builders (repair rebind + history affordances) ────────

@@ -267,3 +267,265 @@ export function booleanStep(s: BooleanFsm, e: BooleanEvent): BooleanStep {
       return { state: booleanInit(), effect: "cancel" };
   }
 }
+
+// ── Shell ────────────────────────────────────────────────────────────────────
+//
+// Shell mirrors Fillet: it arms from a FACE selection (the selected faces are the
+// removed/open faces), then a vertical drag (or the mm chip) sets the wall
+// thickness, and release commits. There is no cheap L1 preview (hollowing needs
+// OCCT), so it is chip + status-hint driven — the exact body arrives on commit.
+
+export const DEFAULT_SHELL_THICKNESS = 2;
+
+export interface ShellFsm {
+  phase: ModelPhase;
+  thickness: number;
+  faceCount: number;
+}
+
+export type ShellEvent =
+  | { kind: "arm"; faceCount: number; thickness?: number }
+  | { kind: "grab" }
+  | { kind: "drag"; thickness: number }
+  | { kind: "setThickness"; thickness: number }
+  | { kind: "release" }
+  | { kind: "settle" }
+  | { kind: "cancel" };
+
+export interface ShellStep {
+  state: ShellFsm;
+  effect: ToolEffect;
+}
+
+export function shellInit(): ShellFsm {
+  return { phase: "idle", thickness: DEFAULT_SHELL_THICKNESS, faceCount: 0 };
+}
+
+export function shellStep(s: ShellFsm, e: ShellEvent): ShellStep {
+  switch (e.kind) {
+    case "arm":
+      if (e.faceCount <= 0) return { state: shellInit(), effect: "none" };
+      return {
+        state: { phase: "armed", thickness: e.thickness ?? DEFAULT_SHELL_THICKNESS, faceCount: e.faceCount },
+        effect: "begin",
+      };
+    case "grab":
+      if (s.phase !== "armed") return { state: s, effect: "none" };
+      return { state: { ...s, phase: "dragging" }, effect: "none" };
+    case "drag":
+      if (s.phase !== "dragging") return { state: s, effect: "none" };
+      return { state: { ...s, thickness: e.thickness }, effect: "update" };
+    case "setThickness":
+      if (s.phase !== "armed" && s.phase !== "dragging") return { state: s, effect: "none" };
+      return { state: { ...s, thickness: e.thickness }, effect: "update" };
+    case "release":
+      if (s.phase !== "dragging") return { state: s, effect: "none" };
+      return { state: { ...s, phase: "committing" }, effect: "commit" };
+    case "settle":
+      return { state: shellInit(), effect: "none" };
+    case "cancel":
+      if (s.phase === "idle") return { state: s, effect: "none" };
+      return { state: shellInit(), effect: "cancel" };
+  }
+}
+
+// ── Linear pattern ─────────────────────────────────────────────────────────
+//
+// LinearPattern arms with a BODY selected; the user picks a world axis (X/Y/Z
+// chip), an instance count (2–12 stepper) and spacing (mm chip). A live GHOST of
+// translated body clones renders as any chip changes; Apply commits. There is no
+// drag-to-commit — orbit stays free so the 3D ghost can be inspected (the
+// spacing DRAG affordance is deferred; the chip covers it — see the WP report).
+
+export type PatternAxis = "X" | "Y" | "Z";
+
+export type ConfigPhase = "idle" | "armed" | "committing";
+
+export interface LinearPatternFsm {
+  phase: ConfigPhase;
+  axis: PatternAxis;
+  count: number;
+  spacing: number;
+  bodyId: string | null;
+}
+
+export type LinearPatternEvent =
+  | { kind: "arm"; bodyId?: string; axis?: PatternAxis; count?: number; spacing?: number }
+  | { kind: "setAxis"; axis: PatternAxis }
+  | { kind: "setCount"; count: number }
+  | { kind: "setSpacing"; spacing: number }
+  | { kind: "apply" }
+  | { kind: "settle" }
+  | { kind: "cancel" };
+
+export interface LinearPatternStep {
+  state: LinearPatternFsm;
+  effect: ToolEffect;
+}
+
+export const DEFAULT_PATTERN_COUNT = 3;
+export const DEFAULT_LINEAR_SPACING = 20;
+
+function clampCount(n: number): number {
+  if (!Number.isFinite(n)) return DEFAULT_PATTERN_COUNT;
+  return Math.max(2, Math.min(12, Math.round(n)));
+}
+
+export function linearPatternInit(): LinearPatternFsm {
+  return { phase: "idle", axis: "X", count: DEFAULT_PATTERN_COUNT, spacing: DEFAULT_LINEAR_SPACING, bodyId: null };
+}
+
+export function linearPatternStep(s: LinearPatternFsm, e: LinearPatternEvent): LinearPatternStep {
+  switch (e.kind) {
+    case "arm":
+      if (!e.bodyId) return { state: linearPatternInit(), effect: "none" };
+      return {
+        state: {
+          phase: "armed",
+          axis: e.axis ?? "X",
+          count: clampCount(e.count ?? DEFAULT_PATTERN_COUNT),
+          spacing: e.spacing ?? DEFAULT_LINEAR_SPACING,
+          bodyId: e.bodyId,
+        },
+        effect: "ghost",
+      };
+    case "setAxis":
+      if (s.phase !== "armed") return { state: s, effect: "none" };
+      return { state: { ...s, axis: e.axis }, effect: "ghost" };
+    case "setCount":
+      if (s.phase !== "armed") return { state: s, effect: "none" };
+      return { state: { ...s, count: clampCount(e.count) }, effect: "ghost" };
+    case "setSpacing":
+      if (s.phase !== "armed") return { state: s, effect: "none" };
+      return { state: { ...s, spacing: e.spacing }, effect: "ghost" };
+    case "apply":
+      if (s.phase !== "armed") return { state: s, effect: "none" };
+      return { state: { ...s, phase: "committing" }, effect: "commit" };
+    case "settle":
+      return { state: linearPatternInit(), effect: "none" };
+    case "cancel":
+      if (s.phase === "idle") return { state: s, effect: "none" };
+      return { state: linearPatternInit(), effect: "cancel" };
+  }
+}
+
+// ── Circular pattern ─────────────────────────────────────────────────────────
+//
+// Same shape as LinearPattern but the axis defaults to world Z and the numeric
+// param is a TOTAL sweep angle (degrees). Ghost clones are rotated about the axis.
+
+export interface CircularPatternFsm {
+  phase: ConfigPhase;
+  axis: PatternAxis;
+  count: number;
+  angle: number;
+  bodyId: string | null;
+}
+
+export type CircularPatternEvent =
+  | { kind: "arm"; bodyId?: string; axis?: PatternAxis; count?: number; angle?: number }
+  | { kind: "setAxis"; axis: PatternAxis }
+  | { kind: "setCount"; count: number }
+  | { kind: "setAngle"; angle: number }
+  | { kind: "apply" }
+  | { kind: "settle" }
+  | { kind: "cancel" };
+
+export interface CircularPatternStep {
+  state: CircularPatternFsm;
+  effect: ToolEffect;
+}
+
+export const DEFAULT_CIRCULAR_ANGLE = 360;
+
+function clampCircularAngle(a: number): number {
+  if (!Number.isFinite(a)) return DEFAULT_CIRCULAR_ANGLE;
+  return Math.max(1, Math.min(360, a));
+}
+
+export function circularPatternInit(): CircularPatternFsm {
+  return { phase: "idle", axis: "Z", count: DEFAULT_PATTERN_COUNT, angle: DEFAULT_CIRCULAR_ANGLE, bodyId: null };
+}
+
+export function circularPatternStep(s: CircularPatternFsm, e: CircularPatternEvent): CircularPatternStep {
+  switch (e.kind) {
+    case "arm":
+      if (!e.bodyId) return { state: circularPatternInit(), effect: "none" };
+      return {
+        state: {
+          phase: "armed",
+          axis: e.axis ?? "Z",
+          count: clampCount(e.count ?? DEFAULT_PATTERN_COUNT),
+          angle: clampCircularAngle(e.angle ?? DEFAULT_CIRCULAR_ANGLE),
+          bodyId: e.bodyId,
+        },
+        effect: "ghost",
+      };
+    case "setAxis":
+      if (s.phase !== "armed") return { state: s, effect: "none" };
+      return { state: { ...s, axis: e.axis }, effect: "ghost" };
+    case "setCount":
+      if (s.phase !== "armed") return { state: s, effect: "none" };
+      return { state: { ...s, count: clampCount(e.count) }, effect: "ghost" };
+    case "setAngle":
+      if (s.phase !== "armed") return { state: s, effect: "none" };
+      return { state: { ...s, angle: clampCircularAngle(e.angle) }, effect: "ghost" };
+    case "apply":
+      if (s.phase !== "armed") return { state: s, effect: "none" };
+      return { state: { ...s, phase: "committing" }, effect: "commit" };
+    case "settle":
+      return { state: circularPatternInit(), effect: "none" };
+    case "cancel":
+      if (s.phase === "idle") return { state: s, effect: "none" };
+      return { state: circularPatternInit(), effect: "cancel" };
+  }
+}
+
+// ── Mirror body ──────────────────────────────────────────────────────────────
+//
+// MirrorBody arms with a BODY selected; the user picks a world mirror plane
+// (XY/XZ/YZ chip). A ghost of the mirrored clone renders; Apply commits.
+// (Datum-plane picking is deferred to a later WP — see the WP report.)
+
+export type MirrorPlane = "XY" | "XZ" | "YZ";
+
+export interface MirrorFsm {
+  phase: ConfigPhase;
+  plane: MirrorPlane;
+  bodyId: string | null;
+}
+
+export type MirrorEvent =
+  | { kind: "arm"; bodyId?: string; plane?: MirrorPlane }
+  | { kind: "setPlane"; plane: MirrorPlane }
+  | { kind: "apply" }
+  | { kind: "settle" }
+  | { kind: "cancel" };
+
+export interface MirrorStep {
+  state: MirrorFsm;
+  effect: ToolEffect;
+}
+
+export function mirrorInit(): MirrorFsm {
+  return { phase: "idle", plane: "XY", bodyId: null };
+}
+
+export function mirrorStep(s: MirrorFsm, e: MirrorEvent): MirrorStep {
+  switch (e.kind) {
+    case "arm":
+      if (!e.bodyId) return { state: mirrorInit(), effect: "none" };
+      return { state: { phase: "armed", plane: e.plane ?? "XY", bodyId: e.bodyId }, effect: "ghost" };
+    case "setPlane":
+      if (s.phase !== "armed") return { state: s, effect: "none" };
+      return { state: { ...s, plane: e.plane }, effect: "ghost" };
+    case "apply":
+      if (s.phase !== "armed") return { state: s, effect: "none" };
+      return { state: { ...s, phase: "committing" }, effect: "commit" };
+    case "settle":
+      return { state: mirrorInit(), effect: "none" };
+    case "cancel":
+      if (s.phase === "idle") return { state: s, effect: "none" };
+      return { state: mirrorInit(), effect: "cancel" };
+  }
+}

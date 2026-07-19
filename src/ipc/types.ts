@@ -393,7 +393,15 @@ export interface WorkerStatus {
 // for the tool layer. Values keep OneCAD-CPP `operationTypeName` spelling
 // (PascalCase). The vertical slice authors Extrude | Fillet | Boolean.
 
-export type OpType = "Extrude" | "Revolve" | "Fillet" | "Boolean";
+export type OpType =
+  | "Extrude"
+  | "Revolve"
+  | "Fillet"
+  | "Boolean"
+  | "Shell"
+  | "LinearPattern"
+  | "CircularPattern"
+  | "MirrorBody";
 
 /** Extrude end condition (SCHEMA §7.3 ExtrudeParams). */
 export type ExtrudeMode = "Blind" | "ThroughAll" | "Symmetric" | "ToNext" | "ToFace";
@@ -471,6 +479,55 @@ export interface BooleanParams {
 }
 
 /**
+ * Shell op params (Rust `ShellParams`). `openFaces` are the removed faces
+ * (ElementIds or snapshot TopoKeys, resolved through the ladder); `thickness` is
+ * the wall thickness. `targetBodyId` is the shelled body.
+ */
+export interface ShellParams {
+  thickness: number;
+  openFaces: string[];
+  targetBodyId?: string;
+}
+
+/**
+ * Linear-pattern op params (Rust `LinearPatternParams`). `direction` is a WORLD
+ * unit vector (the Rust port uses a single `direction: Vec3`, NOT an axis enum —
+ * the UI's axis chip maps to one of the world axes). `spacing` is the per-step
+ * distance, `count` the total instances (source + clones).
+ */
+export interface LinearPatternParams {
+  sourceBodyId?: string;
+  direction: [number, number, number];
+  spacing: number;
+  count: number;
+  fuseResult?: boolean;
+}
+
+/**
+ * Circular-pattern op params (Rust `CircularPatternParams`). The axis is a world
+ * ray (`axisOrigin` + `axisDirection` Vec3s); `angleDeg` is the TOTAL sweep.
+ */
+export interface CircularPatternParams {
+  sourceBodyId?: string;
+  axisOrigin: [number, number, number];
+  axisDirection: [number, number, number];
+  angleDeg: number;
+  count: number;
+  fuseResult?: boolean;
+}
+
+/**
+ * Mirror-body op params (Rust `MirrorBodyParams`). The mirror plane is a world
+ * point + normal (`planePoint` + `planeNormal` Vec3s).
+ */
+export interface MirrorBodyParams {
+  sourceBodyId?: string;
+  planePoint: [number, number, number];
+  planeNormal: [number, number, number];
+  fuseWithOriginal?: boolean;
+}
+
+/**
  * One op in an `ExecutePlan` (SCHEMA §7.3), discriminated by `opType`. An
  * optional `featureId` re-targets an EXISTING feature (parametric edit —
  * double-click a history entry → re-drag). `sketchId`/`regionId` on Extrude tell
@@ -509,6 +566,34 @@ export type OperationOp =
       featureId?: string;
       inputs?: SemanticRef[];
       params: BooleanParams;
+    }
+  | {
+      opType: "Shell";
+      opId?: string;
+      featureId?: string;
+      inputs?: SemanticRef[];
+      params: ShellParams;
+    }
+  | {
+      opType: "LinearPattern";
+      opId?: string;
+      featureId?: string;
+      inputs?: SemanticRef[];
+      params: LinearPatternParams;
+    }
+  | {
+      opType: "CircularPattern";
+      opId?: string;
+      featureId?: string;
+      inputs?: SemanticRef[];
+      params: CircularPatternParams;
+    }
+  | {
+      opType: "MirrorBody";
+      opId?: string;
+      featureId?: string;
+      inputs?: SemanticRef[];
+      params: MirrorBodyParams;
     };
 
 /**
@@ -518,7 +603,16 @@ export type OperationOp =
  */
 export interface FeatureRecord {
   id: string;
-  kind: "sketch" | "extrude" | "revolve" | "fillet" | "boolean";
+  kind:
+    | "sketch"
+    | "extrude"
+    | "revolve"
+    | "fillet"
+    | "boolean"
+    | "shell"
+    | "linearPattern"
+    | "circularPattern"
+    | "mirror";
   label: string;
   valueText: string;
   status: "ok" | "dirty" | "error" | "needsRepair";

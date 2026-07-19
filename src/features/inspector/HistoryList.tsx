@@ -11,6 +11,10 @@ const FEATURE_ICON: Record<FeatureKind, IconName> = {
   revolve: "revolve",
   fillet: "fillet",
   boolean: "boolean",
+  shell: "shell",
+  linearPattern: "linearPattern",
+  circularPattern: "circularPattern",
+  mirror: "mirrorBody",
 };
 
 /** Per-row history affordances (M4b): suppress toggle · roll-to-here · delete. */

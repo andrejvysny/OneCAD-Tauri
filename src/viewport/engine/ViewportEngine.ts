@@ -38,7 +38,9 @@ import type { DraftEntity } from "@/tools/sketch/toolMachine";
 import { PreviewMesh } from "./PreviewMesh";
 import { DragHandle } from "./DragHandle";
 import { RevolvePreview, type AxisCandidate } from "./RevolvePreview";
+import { GhostLayer } from "./GhostLayer";
 import type { LatheAxis } from "@/tools/preview/lathePreview";
+import type { GhostTransform } from "@/tools/preview/patternPreview";
 import { buildBodyObject, createBodyMaterials, type BodyMaterials, type BodyObjectHandle } from "./BodyObject";
 import type { PrismProfile } from "@/tools/preview/prismPreview";
 import type { Vec3 } from "@/tools/preview/depthProjection";
@@ -92,6 +94,7 @@ export class ViewportEngine {
   private previewMesh: PreviewMesh | null = null; // L1 extrude prism
   private dragHandle: DragHandle | null = null;
   private revolvePreview: RevolvePreview | null = null; // L1 lathe + axis picker
+  private ghostLayer: GhostLayer | null = null; // L1 pattern / mirror clones
   private previewMaterials: BodyMaterials | null = null;
   private previewBody: BodyObjectHandle | null = null;
 
@@ -697,6 +700,26 @@ export class ViewportEngine {
     this.revolvePreview?.clearLathe();
   }
 
+  // ---- Ghost preview (pattern / mirror L1) ----
+
+  /** Show translucent clones of `entry`'s geometry at each transform (pattern/mirror L1). */
+  showGhostPreview(entry: MeshEntry, transforms: GhostTransform[]): void {
+    if (this.disposed) return;
+    if (!this.ghostLayer) {
+      this.ghostLayer = new GhostLayer({ root: this.interactionRoot, invalidate: () => this.invalidate() });
+    }
+    this.ghostLayer.show(entry, transforms);
+  }
+
+  hideGhostPreview(): void {
+    this.ghostLayer?.hide();
+  }
+
+  /** True while any pattern/mirror ghost clones are visible. */
+  isGhostPreviewVisible(): boolean {
+    return this.ghostLayer?.visible ?? false;
+  }
+
   /** Raycast a client point onto an ARBITRARY sketch plane → plane (u,v). */
   screenToPlaneOn(plane: SketchPlane, clientX: number, clientY: number): Point2 | null {
     const ndc = this.clientToNdc(clientX, clientY);
@@ -827,6 +850,8 @@ export class ViewportEngine {
     this.dragHandle = null;
     this.revolvePreview?.dispose();
     this.revolvePreview = null;
+    this.ghostLayer?.dispose();
+    this.ghostLayer = null;
     if (this.previewBody) this.previewRoot.remove(this.previewBody.group);
     this.previewBody = null;
     this.previewMaterials?.dispose();

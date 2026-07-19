@@ -42,6 +42,16 @@ import { axisDepthFromRay, normalize, type Vec3 } from "@/tools/preview/depthPro
 import { radiusFromDrag, radiusFromValueText } from "@/tools/preview/filletRadius";
 import { axisSplitsRegion, type LatheAxis } from "@/tools/preview/lathePreview";
 import { angleFromDrag, snapRevolveAngle, clampAngle, angleFromValueText } from "@/tools/preview/revolveAngle";
+import { thicknessFromValueText } from "@/tools/preview/shellThickness";
+import {
+  WORLD_AXIS,
+  WORLD_PLANE_NORMAL,
+  linearGhostTransforms,
+  circularGhostTransforms,
+  mirrorGhostTransforms,
+  clampPatternCount,
+  countFromValueText,
+} from "@/tools/preview/patternPreview";
 import { PreviewThrottle } from "@/tools/preview/previewThrottle";
 import {
   booleanInit,
@@ -52,13 +62,28 @@ import {
   filletStep,
   revolveInit,
   revolveStep,
+  shellInit,
+  shellStep,
+  linearPatternInit,
+  linearPatternStep,
+  circularPatternInit,
+  circularPatternStep,
+  mirrorInit,
+  mirrorStep,
   DEFAULT_EXTRUDE_DEPTH,
   DEFAULT_FILLET_RADIUS,
   DEFAULT_REVOLVE_ANGLE,
+  DEFAULT_SHELL_THICKNESS,
   type BooleanFsm,
   type ExtrudeFsm,
   type FilletFsm,
   type RevolveFsm,
+  type ShellFsm,
+  type LinearPatternFsm,
+  type CircularPatternFsm,
+  type MirrorFsm,
+  type PatternAxis,
+  type MirrorPlane,
 } from "./modelToolMachine";
 
 const DRAG_PX = 4;
@@ -72,7 +97,7 @@ export interface ModelToolDeps {
   debug?: boolean;
 }
 
-type DragKind = "extrude" | "fillet" | "revolve" | null;
+type DragKind = "extrude" | "fillet" | "revolve" | "shell" | null;
 
 /** One pickable revolve axis candidate (a sketch line), plane (u,v) endpoints. */
 interface AxisCandidate {
@@ -86,6 +111,10 @@ export class ModelToolController {
   private fillet: FilletFsm = filletInit();
   private boolean: BooleanFsm = booleanInit();
   private revolve: RevolveFsm = revolveInit();
+  private shell: ShellFsm = shellInit();
+  private linear: LinearPatternFsm = linearPatternInit();
+  private circular: CircularPatternFsm = circularPatternInit();
+  private mirror: MirrorFsm = mirrorInit();
   private readonly throttle = new PreviewThrottle<{ distance: number }>({ trailingMs: 80 });
 
   // Extrude preview context.
@@ -101,6 +130,15 @@ export class ModelToolController {
   private filletDownY = 0;
   private filletStartRadius = DEFAULT_FILLET_RADIUS;
   private filletEditFeatureId: string | undefined;
+
+  // Shell context (mirrors fillet: face selection + vertical thickness drag).
+  private shellFaces: EntityRef[] = [];
+  private shellDownY = 0;
+  private shellStartThickness = DEFAULT_SHELL_THICKNESS;
+  private shellEditFeatureId: string | undefined;
+
+  // Pattern / mirror context (chip-driven; ghost clones of the source body).
+  private patternEditFeatureId: string | undefined;
 
   // Revolve context.
   private revolveProfile: PrismProfile | null = null;
@@ -183,11 +221,17 @@ export class ModelToolController {
     this.cancelFillet();
     this.cancelBoolean();
     this.cancelRevolve();
+    this.cancelShell();
+    this.cancelPattern();
     toolChipStore.getState().clear();
     if (tool === "extrude") this.armExtrudeFromSelection();
     else if (tool === "revolve") this.armRevolveFromSelection();
     else if (tool === "fillet") this.armFilletFromSelection();
     else if (tool === "boolean") this.startBooleanFromSelection();
+    else if (tool === "shell") this.armShellFromSelection();
+    else if (tool === "linearPattern") this.armLinearFromSelection();
+    else if (tool === "circularPattern") this.armCircularFromSelection();
+    else if (tool === "mirror") this.armMirrorFromSelection();
     else viewportStore.getState().setStatusHint(null);
   }
 
@@ -534,6 +578,365 @@ export class ModelToolController {
     this.updateDebug();
   }
 
+  // ── shell ──────────────────────────────────────────────────────────────────
+  //
+  // Shell mirrors fillet: it arms from a FACE selection (selected faces = removed
+  // faces), a vertical drag (or the mm chip) sets the wall thickness, and release
+  // commits. No cheap L1 mesh (hollowing needs OCCT) — chip + status-hint only.
+
+  private armShellFromSelection(): void {
+    const faces = selectionStore.getState().selected.filter((r) => r.kind === "face");
+    if (faces.length === 0) {
+      viewportStore.getState().setStatusHint("Select faces to remove, then Shell");
+      return;
+    }
+    this.armShell(faces);
+  }
+
+  private armShell(faces: EntityRef[], editFeatureId?: string, startThickness = DEFAULT_SHELL_THICKNESS): void {
+    this.shellFaces = faces;
+    this.shellEditFeatureId = editFeatureId;
+    this.shell = shellStep(shellInit(), {
+      kind: "arm",
+      // A re-edit has no fresh face picks yet — faceCount 1 keeps the FSM out of
+      // its bail path (mirrors the fillet re-edit seed).
+      faceCount: editFeatureId ? 1 : faces.length,
+      thickness: startThickness,
+    }).state;
+    toolStore.setState({ phase: "armed" });
+    this.deps.engine.setOrbitSuppressed(true); // modal: drag adjusts thickness, not orbit
+    const n = faces.length;
+    viewportStore.getState().setStatusHint(
+      editFeatureId
+        ? "Edit shell thickness — drag or type, Enter to apply"
+        : `Shell ${n} face${n > 1 ? "s" : ""} — drag or type thickness`,
+    );
+    const anchor = faces[0]?.anchor?.worldPoint ?? [0, 0, 0];
+    if (editFeatureId) {
+      toolChipStore.getState().showShell(startThickness, anchor, (v) => {
+        this.onShellChip(v);
+        void this.commitShell(); // chip Enter/blur commits the thickness-only re-edit
+      });
+    } else {
+      toolChipStore.getState().showShell(startThickness, anchor, (v) => this.onShellChip(v));
+    }
+    this.updateDebug();
+  }
+
+  private onShellChip(v: number): void {
+    this.shell = shellStep(this.shell, { kind: "setThickness", thickness: v }).state;
+    toolChipStore.getState().setValue(v);
+  }
+
+  private async commitShell(): Promise<void> {
+    const thickness = this.shell.thickness;
+    const faces = this.shellFaces;
+    const editFeatureId = this.shellEditFeatureId;
+    if (faces.length === 0 && !editFeatureId) {
+      this.cancelShell();
+      return;
+    }
+    const bodyId = faces[0]?.bodyId;
+    const op: OperationOp = {
+      opType: "Shell",
+      featureId: editFeatureId, // parametric re-edit → UpdateOperationParams
+      inputs: faces.map((f) => this.semanticRefFor(f)),
+      // SEAM (shell re-edit): the projection does not expose a shell's current open
+      // faces, so a thickness-only re-edit sends no openFaces — the mock ignores
+      // them (updates thickness) but the real backend needs the preserved faces (a
+      // follow-up threads them via EditOperationInput, as for fillet edges).
+      params: {
+        thickness,
+        openFaces: faces.map((f) => f.elementId ?? f.topoKey ?? f.id),
+        targetBodyId: bodyId,
+      },
+    };
+    this.deps.engine.setOrbitSuppressed(false);
+    toolChipStore.getState().clear();
+    try {
+      const res = await this.client.applyOperation(op);
+      this.applyResult(res);
+      viewportStore.getState().setStatusHint(editFeatureId ? "Shell thickness updated" : "Shelled");
+    } catch (e) {
+      viewportStore.getState().setStatusHint(`Shell failed: ${errMessage(e)}`);
+    }
+    this.shell = shellInit();
+    this.shellFaces = [];
+    this.shellEditFeatureId = undefined;
+    toolStore.getState().setTool("select");
+    this.updateDebug();
+  }
+
+  /** Re-arm the shell tool on an existing shell feature (thickness re-edit seed). */
+  editShellFeature(featureId: string): void {
+    const feat = documentStore.getState().features.find((f) => f.id === featureId);
+    if (!feat || feat.kind !== "shell") return;
+    const thickness = thicknessFromValueText(feat.valueText);
+    toolStore.getState().setTool("shell");
+    this.armShell([], featureId, thickness);
+  }
+
+  // ── linear pattern ───────────────────────────────────────────────────────
+  //
+  // Chip-driven: axis (X/Y/Z) + count (2–12) + spacing (mm) + Apply. A live ghost
+  // of translated body clones renders as any chip changes. Orbit stays free so the
+  // 3D ghost can be inspected; there is no drag-to-commit (Apply commits).
+
+  private armLinearFromSelection(): void {
+    const bodyId = this.firstSelectedBodyId();
+    if (!bodyId) {
+      viewportStore.getState().setStatusHint("Select a body to pattern");
+      return;
+    }
+    this.armLinear(bodyId);
+  }
+
+  private armLinear(bodyId: string, editFeatureId?: string, seedCount?: number): void {
+    this.patternEditFeatureId = editFeatureId;
+    this.linear = linearPatternStep(linearPatternInit(), { kind: "arm", bodyId, count: seedCount }).state;
+    toolStore.setState({ phase: "armed" });
+    viewportStore.getState().setStatusHint("Pick axis + count + spacing, then Apply");
+    this.rebuildLinearGhost();
+    toolChipStore.getState().showLinearPattern(this.linear.axis, this.linear.count, this.linear.spacing, this.bodyCenter(bodyId), {
+      onAxis: (a) => this.onLinearAxis(a),
+      onCount: (n) => this.onLinearCount(n),
+      onSpacing: (v) => this.onLinearSpacing(v),
+      onApply: () => void this.commitLinear(),
+    });
+    this.updateDebug();
+  }
+
+  private onLinearAxis(axis: PatternAxis): void {
+    this.linear = linearPatternStep(this.linear, { kind: "setAxis", axis }).state;
+    toolChipStore.getState().setAxis(this.linear.axis);
+    this.rebuildLinearGhost();
+  }
+  private onLinearCount(count: number): void {
+    this.linear = linearPatternStep(this.linear, { kind: "setCount", count: clampPatternCount(count) }).state;
+    toolChipStore.getState().setCount(this.linear.count);
+    this.rebuildLinearGhost();
+  }
+  private onLinearSpacing(spacing: number): void {
+    this.linear = linearPatternStep(this.linear, { kind: "setSpacing", spacing }).state;
+    toolChipStore.getState().setValue(this.linear.spacing);
+    this.rebuildLinearGhost();
+  }
+
+  private rebuildLinearGhost(): void {
+    if (!this.linear.bodyId) return;
+    const entry = getEntry(this.linear.bodyId);
+    if (!entry) return;
+    this.deps.engine.showGhostPreview(
+      entry,
+      linearGhostTransforms(WORLD_AXIS[this.linear.axis], this.linear.spacing, this.linear.count),
+    );
+  }
+
+  private async commitLinear(): Promise<void> {
+    if (this.linear.phase !== "armed" || !this.linear.bodyId) return;
+    const { bodyId, axis, spacing, count } = this.linear;
+    const editFeatureId = this.patternEditFeatureId;
+    this.linear = linearPatternStep(this.linear, { kind: "apply" }).state;
+    const op: OperationOp = {
+      opType: "LinearPattern",
+      featureId: editFeatureId,
+      inputs: [{ primary: { bodyId, kind: "body" } }],
+      params: { sourceBodyId: bodyId, direction: WORLD_AXIS[axis], spacing, count, fuseResult: true },
+    };
+    await this.commitPattern(op, bodyId, `Linear pattern ×${count}`);
+  }
+
+  // ── circular pattern ─────────────────────────────────────────────────────
+
+  private armCircularFromSelection(): void {
+    const bodyId = this.firstSelectedBodyId();
+    if (!bodyId) {
+      viewportStore.getState().setStatusHint("Select a body to pattern");
+      return;
+    }
+    this.armCircular(bodyId);
+  }
+
+  private armCircular(bodyId: string, editFeatureId?: string, seedCount?: number): void {
+    this.patternEditFeatureId = editFeatureId;
+    this.circular = circularPatternStep(circularPatternInit(), { kind: "arm", bodyId, count: seedCount }).state;
+    toolStore.setState({ phase: "armed" });
+    viewportStore.getState().setStatusHint("Pick axis + count + angle, then Apply");
+    this.rebuildCircularGhost();
+    toolChipStore.getState().showCircularPattern(this.circular.axis, this.circular.count, this.circular.angle, this.bodyCenter(bodyId), {
+      onAxis: (a) => this.onCircularAxis(a),
+      onCount: (n) => this.onCircularCount(n),
+      onAngle: (v) => this.onCircularAngle(v),
+      onApply: () => void this.commitCircular(),
+    });
+    this.updateDebug();
+  }
+
+  private onCircularAxis(axis: PatternAxis): void {
+    this.circular = circularPatternStep(this.circular, { kind: "setAxis", axis }).state;
+    toolChipStore.getState().setAxis(this.circular.axis);
+    this.rebuildCircularGhost();
+  }
+  private onCircularCount(count: number): void {
+    this.circular = circularPatternStep(this.circular, { kind: "setCount", count: clampPatternCount(count) }).state;
+    toolChipStore.getState().setCount(this.circular.count);
+    this.rebuildCircularGhost();
+  }
+  private onCircularAngle(angle: number): void {
+    this.circular = circularPatternStep(this.circular, { kind: "setAngle", angle }).state;
+    toolChipStore.getState().setValue(this.circular.angle);
+    this.rebuildCircularGhost();
+  }
+
+  private rebuildCircularGhost(): void {
+    if (!this.circular.bodyId) return;
+    const entry = getEntry(this.circular.bodyId);
+    if (!entry) return;
+    this.deps.engine.showGhostPreview(
+      entry,
+      circularGhostTransforms([0, 0, 0], WORLD_AXIS[this.circular.axis], this.circular.angle, this.circular.count),
+    );
+  }
+
+  private async commitCircular(): Promise<void> {
+    if (this.circular.phase !== "armed" || !this.circular.bodyId) return;
+    const { bodyId, axis, angle, count } = this.circular;
+    const editFeatureId = this.patternEditFeatureId;
+    this.circular = circularPatternStep(this.circular, { kind: "apply" }).state;
+    const op: OperationOp = {
+      opType: "CircularPattern",
+      featureId: editFeatureId,
+      inputs: [{ primary: { bodyId, kind: "body" } }],
+      params: {
+        sourceBodyId: bodyId,
+        axisOrigin: [0, 0, 0],
+        axisDirection: WORLD_AXIS[axis],
+        angleDeg: angle,
+        count,
+        fuseResult: true,
+      },
+    };
+    await this.commitPattern(op, bodyId, `Circular pattern ×${count}`);
+  }
+
+  // ── mirror body ──────────────────────────────────────────────────────────
+
+  private armMirrorFromSelection(): void {
+    const bodyId = this.firstSelectedBodyId();
+    if (!bodyId) {
+      viewportStore.getState().setStatusHint("Select a body to mirror");
+      return;
+    }
+    this.armMirror(bodyId);
+  }
+
+  private armMirror(bodyId: string, editFeatureId?: string, seedPlane?: MirrorPlane): void {
+    this.patternEditFeatureId = editFeatureId;
+    this.mirror = mirrorStep(mirrorInit(), { kind: "arm", bodyId, plane: seedPlane }).state;
+    toolStore.setState({ phase: "armed" });
+    viewportStore.getState().setStatusHint("Pick a mirror plane, then Apply");
+    this.rebuildMirrorGhost();
+    toolChipStore.getState().showMirror(this.mirror.plane, this.bodyCenter(bodyId), {
+      onPlane: (p) => this.onMirrorPlane(p),
+      onApply: () => void this.commitMirror(),
+    });
+    this.updateDebug();
+  }
+
+  private onMirrorPlane(plane: MirrorPlane): void {
+    this.mirror = mirrorStep(this.mirror, { kind: "setPlane", plane }).state;
+    toolChipStore.getState().setPlane(this.mirror.plane);
+    this.rebuildMirrorGhost();
+  }
+
+  private rebuildMirrorGhost(): void {
+    if (!this.mirror.bodyId) return;
+    const entry = getEntry(this.mirror.bodyId);
+    if (!entry) return;
+    this.deps.engine.showGhostPreview(entry, mirrorGhostTransforms([0, 0, 0], WORLD_PLANE_NORMAL[this.mirror.plane]));
+  }
+
+  private async commitMirror(): Promise<void> {
+    if (this.mirror.phase !== "armed" || !this.mirror.bodyId) return;
+    const { bodyId, plane } = this.mirror;
+    const editFeatureId = this.patternEditFeatureId;
+    this.mirror = mirrorStep(this.mirror, { kind: "apply" }).state;
+    const op: OperationOp = {
+      opType: "MirrorBody",
+      featureId: editFeatureId,
+      inputs: [{ primary: { bodyId, kind: "body" } }],
+      params: {
+        sourceBodyId: bodyId,
+        planePoint: [0, 0, 0],
+        planeNormal: WORLD_PLANE_NORMAL[plane],
+        fuseWithOriginal: false,
+      },
+    };
+    await this.commitPattern(op, bodyId, "Mirrored");
+  }
+
+  /** Shared commit tail for the pattern/mirror ops (apply → select → teardown). */
+  private async commitPattern(op: OperationOp, bodyId: string, doneHint: string): Promise<void> {
+    this.deps.engine.hideGhostPreview();
+    toolChipStore.getState().clear();
+    try {
+      const res = await this.client.applyOperation(op);
+      this.applyResult(res);
+      selectionStore.getState().set([{ kind: "body", id: bodyId }]);
+      viewportStore.getState().setStatusHint(doneHint);
+    } catch (e) {
+      viewportStore.getState().setStatusHint(`Pattern failed: ${errMessage(e)}`);
+    }
+    this.linear = linearPatternInit();
+    this.circular = circularPatternInit();
+    this.mirror = mirrorInit();
+    this.patternEditFeatureId = undefined;
+    toolStore.getState().setTool("select");
+    this.updateDebug();
+  }
+
+  /** Re-arm a pattern/mirror tool on an existing feature (seeds count/plane). */
+  editLinearPatternFeature(featureId: string): void {
+    const bodyId = this.reeditSourceBody(featureId, "linearPattern");
+    if (!bodyId) return;
+    toolStore.getState().setTool("linearPattern");
+    this.armLinear(bodyId, featureId, countFromValueText(this.featureValueText(featureId)));
+  }
+  editCircularPatternFeature(featureId: string): void {
+    const bodyId = this.reeditSourceBody(featureId, "circularPattern");
+    if (!bodyId) return;
+    toolStore.getState().setTool("circularPattern");
+    this.armCircular(bodyId, featureId, countFromValueText(this.featureValueText(featureId)));
+  }
+  editMirrorFeature(featureId: string): void {
+    const bodyId = this.reeditSourceBody(featureId, "mirror");
+    if (!bodyId) return;
+    toolStore.getState().setTool("mirror");
+    this.armMirror(bodyId, featureId);
+  }
+
+  /**
+   * The source body for a pattern/mirror re-edit. The projection does not record
+   * which body a pattern cloned, so we fall back to the currently-selected body,
+   * else the first document body (a mock-lane re-edit seam — a follow-up threads
+   * the real source through the projection).
+   */
+  private reeditSourceBody(featureId: string, kind: string): string | null {
+    const feat = documentStore.getState().features.find((f) => f.id === featureId);
+    if (!feat || feat.kind !== kind) return null;
+    const bodyId = this.firstSelectedBodyId() ?? Object.keys(documentStore.getState().bodies)[0] ?? null;
+    if (!bodyId) viewportStore.getState().setStatusHint("No body to re-pattern");
+    return bodyId;
+  }
+
+  private featureValueText(featureId: string): string {
+    return documentStore.getState().features.find((f) => f.id === featureId)?.valueText ?? "";
+  }
+
+  private firstSelectedBodyId(): string | null {
+    return selectionStore.getState().selected.find((r) => r.kind === "body")?.id ?? null;
+  }
+
   // ── pointer handling ─────────────────────────────────────────────────────────
 
   private onPointerDown = (e: PointerEvent): void => {
@@ -554,6 +957,12 @@ export class ModelToolController {
       this.filletDownY = e.clientY;
       this.filletStartRadius = this.fillet.radius;
       this.fillet = filletStep(this.fillet, { kind: "grabEdge" }).state;
+      toolStore.setState({ phase: "dragging" });
+    } else if (this.shell.phase === "armed") {
+      this.dragging = "shell";
+      this.shellDownY = e.clientY;
+      this.shellStartThickness = this.shell.thickness;
+      this.shell = shellStep(this.shell, { kind: "grab" }).state;
       toolStore.setState({ phase: "dragging" });
     } else if (this.revolve.phase === "armed") {
       // Defer grab to the first move: a plain click (no move) commits 360° instead.
@@ -581,6 +990,11 @@ export class ModelToolController {
       const radius = radiusFromDrag(this.filletStartRadius, dy, { worldPerPx: this.engine.planePixelWorld() });
       this.fillet = filletStep(this.fillet, { kind: "drag", radius }).state;
       toolChipStore.getState().setValue(radius);
+    } else if (this.dragging === "shell") {
+      const dy = this.shellDownY - e.clientY; // up-drag grows the thickness
+      const thickness = radiusFromDrag(this.shellStartThickness, dy, { worldPerPx: this.engine.planePixelWorld() });
+      this.shell = shellStep(this.shell, { kind: "drag", thickness }).state;
+      toolChipStore.getState().setValue(thickness);
     } else if (this.dragging === "revolve") {
       this.applyRevolveDrag(e.clientX);
     } else if (this.revolveArmedDown && this.moved && this.downButton === 0 && this.revolve.phase === "armed") {
@@ -613,6 +1027,12 @@ export class ModelToolController {
       this.dragging = null;
       this.fillet = filletStep(this.fillet, { kind: "release" }).state;
       void this.commitFillet();
+      return;
+    }
+    if (this.dragging === "shell") {
+      this.dragging = null;
+      this.shell = shellStep(this.shell, { kind: "release" }).state;
+      void this.commitShell();
       return;
     }
     if (this.dragging === "revolve") {
@@ -1049,6 +1469,24 @@ export class ModelToolController {
     toolChipStore.getState().clear();
   }
 
+  private cancelShell(): void {
+    this.deps.engine.setOrbitSuppressed(false);
+    this.shell = shellInit();
+    this.shellFaces = [];
+    this.shellEditFeatureId = undefined;
+    if (this.dragging === "shell") this.dragging = null;
+    toolChipStore.getState().clear();
+  }
+
+  private cancelPattern(): void {
+    this.deps.engine.hideGhostPreview();
+    this.linear = linearPatternInit();
+    this.circular = circularPatternInit();
+    this.mirror = mirrorInit();
+    this.patternEditFeatureId = undefined;
+    toolChipStore.getState().clear();
+  }
+
   private cancelRevolve(): void {
     this.commitRevolveBodyUnsub?.();
     this.commitRevolveBodyUnsub = null;
@@ -1070,6 +1508,8 @@ export class ModelToolController {
     this.cancelFillet();
     this.cancelBoolean();
     this.cancelRevolve();
+    this.cancelShell();
+    this.cancelPattern();
     toolChipStore.getState().clear();
     toolStore.setState({ phase: toolStore.getState().modelTool === "select" ? "idle" : "armed" });
     this.updateDebug();

@@ -33,7 +33,11 @@ export type FeatureKind =
   | "extrude"
   | "revolve"
   | "fillet"
-  | "boolean";
+  | "boolean"
+  | "shell"
+  | "linearPattern"
+  | "circularPattern"
+  | "mirror";
 
 export type FeatureStatus = "ok" | "dirty" | "error" | "needsRepair";
 

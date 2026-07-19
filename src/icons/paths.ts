@@ -61,6 +61,14 @@ export const ICON_PATHS = {
   fit: "M4 9V4.5h4.5M20 9V4.5h-4.5M4 15v4.5h4.5M20 15v4.5h-4.5", // zoom to fit (line 273)
   layers: "M12 4l8 4.2-8 4.2-8-4.2L12 4zM4.5 12.5L12 16.4l7.5-3.9M4.5 16.5L12 20.4l7.5-3.9", // view presets (line 274)
   penEdit: "M4.5 19.5l1.2-4L15.5 5.7l2.8 2.8L8.5 18.3l-4 1.2z", // "Editing sketch" badge, pen body only (line 173)
+
+  // ---- M6b model-op tools (authored for this WP, NOT from the prototype) ----
+  // Same conventions as the prototype glyphs: 24×24 grid, single stroked path,
+  // fill none, round caps/joins, weights read cleanly at 14–15px.
+  shell: "M4.5 7.5h15v12h-15zM8 7.5v8.5h8v-8.5", // hollow box, open top (removed face)
+  linearPattern: "M4 8h4v4H4zM10 8h4v4h-4zM16 8h4v4h-4z", // three instances in a row
+  circularPattern: "M18 12a6 6 0 1 1-12 0 6 6 0 0 1 12 0zM11 5h2v2h-2zM5.8 14h2v2h-2zM16.2 14h2v2h-2z", // instances around a circle
+  mirrorBody: "M12 4v16M4 9h4v6H4zM16 9h4v6h-4z", // a body + its reflection across a plane
 } as const;
 
 export type IconName = keyof typeof ICON_PATHS;

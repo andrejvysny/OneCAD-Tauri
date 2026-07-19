@@ -13,8 +13,18 @@ import {
   removeOperationCommand,
   parseRefId,
   editCommandLabel,
+  operationToEditCommand,
+  opLabelFor,
   type CurrentFilletParams,
 } from "./tauriCommandMap";
+import type { OperationOp } from "./types";
+
+/** Extract the AddOperation record's params (the wire `{opType, params}`). */
+function addedParams(op: OperationOp): Record<string, unknown> {
+  const cmd = operationToEditCommand(op);
+  if (cmd.cmd !== "addOperation") throw new Error(`expected addOperation, got ${cmd.cmd}`);
+  return cmd.record.params as unknown as Record<string, unknown>;
+}
 
 describe("parseRefId", () => {
   it("parses '<opId>.input<k>' into opId + index", () => {
@@ -141,6 +151,108 @@ describe("history-affordance command mapping", () => {
     expect(editCommandLabel(rollbackToCursorCommand(2))).toBe("Rollback");
     expect(editCommandLabel(filletEdgeRebindCommand("r", 0, edgeElementRef("b", "e")))).toBe(
       "Repair reference",
+    );
+  });
+});
+
+// ── M6b op wire shapes — pinned against the Rust serde field names ────────────
+//
+// The names/units below are asserted 1:1 against record.rs (camelCase serde):
+//   ShellParams          thickness:Scalar, openFaces:[ElementId], targetBodyId?
+//   LinearPatternParams  sourceBodyId?, direction:Vec3, spacing:Scalar, count:u32, fuseResult
+//   CircularPatternParams sourceBodyId?, axisOrigin:Vec3, axisDirection:Vec3, angleDeg:Scalar, count:u32, fuseResult
+//   MirrorBodyParams     sourceBodyId?, planePoint:Vec3, planeNormal:Vec3, fuseWithOriginal
+// Scalar wire form is `{value}`; Vec3 wire form is the `[x,y,z]` array; count is
+// a BARE number (u32), not a Scalar.
+describe("operationToEditCommand — M6b op wire mappings", () => {
+  it("Shell maps thickness (Scalar) + openFaces + targetBodyId", () => {
+    const op: OperationOp = {
+      opType: "Shell",
+      inputs: [{ primary: { bodyId: "body1", kind: "face" } }],
+      params: { thickness: 2.5, openFaces: ["el_a", "el_b"], targetBodyId: "body1" },
+    };
+    expect(addedParams(op)).toEqual({
+      thickness: { value: 2.5 },
+      openFaces: ["el_a", "el_b"],
+      targetBodyId: "body1",
+    });
+  });
+
+  it("LinearPattern maps direction (Vec3 array) + spacing (Scalar) + count (bare u32) + fuseResult", () => {
+    const op: OperationOp = {
+      opType: "LinearPattern",
+      params: { sourceBodyId: "body1", direction: [1, 0, 0], spacing: 20, count: 4 },
+    };
+    const params = addedParams(op);
+    expect(params).toEqual({
+      sourceBodyId: "body1",
+      direction: [1, 0, 0],
+      spacing: { value: 20 },
+      count: 4,
+      fuseResult: true, // Rust `default_true`
+    });
+    // count is a bare number, NOT a Scalar object.
+    expect(typeof params.count).toBe("number");
+  });
+
+  it("CircularPattern maps axisOrigin/axisDirection (Vec3) + angleDeg (Scalar) + count", () => {
+    const op: OperationOp = {
+      opType: "CircularPattern",
+      params: {
+        sourceBodyId: "body1",
+        axisOrigin: [0, 0, 0],
+        axisDirection: [0, 0, 1],
+        angleDeg: 360,
+        count: 6,
+        fuseResult: false,
+      },
+    };
+    expect(addedParams(op)).toEqual({
+      sourceBodyId: "body1",
+      axisOrigin: [0, 0, 0],
+      axisDirection: [0, 0, 1],
+      angleDeg: { value: 360 },
+      count: 6,
+      fuseResult: false,
+    });
+  });
+
+  it("MirrorBody maps planePoint/planeNormal (Vec3) + fuseWithOriginal (defaults false)", () => {
+    const op: OperationOp = {
+      opType: "MirrorBody",
+      params: { sourceBodyId: "body1", planePoint: [0, 0, 0], planeNormal: [1, 0, 0] },
+    };
+    expect(addedParams(op)).toEqual({
+      sourceBodyId: "body1",
+      planePoint: [0, 0, 0],
+      planeNormal: [1, 0, 0],
+      fuseWithOriginal: false, // Rust default (NOT default_true)
+    });
+  });
+
+  it("a featureId re-targets a pattern op via updateOperationParams (parametric edit)", () => {
+    const op: OperationOp = {
+      opType: "LinearPattern",
+      featureId: "rec-9",
+      params: { sourceBodyId: "body1", direction: [1, 0, 0], spacing: 10, count: 3 },
+    };
+    const cmd = operationToEditCommand(op);
+    expect(cmd).toMatchObject({ cmd: "updateOperationParams", record: "rec-9", op: { opType: "LinearPattern" } });
+  });
+
+  it("opLabelFor gives friendly labels for the M6b ops", () => {
+    expect(opLabelFor({ opType: "Shell", params: { thickness: 1, openFaces: [] } })).toBe("Shell");
+    expect(
+      opLabelFor({ opType: "LinearPattern", params: { direction: [1, 0, 0], spacing: 1, count: 2 } }),
+    ).toBe("Linear Pattern");
+    expect(
+      opLabelFor({
+        opType: "CircularPattern",
+        params: { axisOrigin: [0, 0, 0], axisDirection: [0, 0, 1], angleDeg: 360, count: 2 },
+      }),
+    ).toBe("Circular Pattern");
+    expect(opLabelFor({ opType: "MirrorBody", params: { planePoint: [0, 0, 0], planeNormal: [1, 0, 0] } })).toBe(
+      "Mirror",
     );
   });
 });

@@ -37,6 +37,12 @@ export const MODEL_KEYS: KeyBinding[] = [
   { key: "r", action: { type: "tool", tool: "revolve" } },
   { key: "f", action: { type: "tool", tool: "fillet" } },
   { key: "b", action: { type: "tool", tool: "boolean" } },
+  // M6b model ops (K/P/C/M are free in model mode; C/M also serve sketch tools
+  // in sketch mode, resolved by `mode` exactly as R does — revolve vs rectangle).
+  { key: "k", action: { type: "tool", tool: "shell" } },
+  { key: "p", action: { type: "tool", tool: "linearPattern" } },
+  { key: "c", action: { type: "tool", tool: "circularPattern" } },
+  { key: "m", action: { type: "tool", tool: "mirror" } },
 ];
 
 export const SKETCH_KEYS: KeyBinding[] = [

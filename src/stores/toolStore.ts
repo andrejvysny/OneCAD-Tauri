@@ -23,7 +23,11 @@ export type ModelTool =
   | "extrude"
   | "revolve"
   | "fillet"
-  | "boolean";
+  | "boolean"
+  | "shell"
+  | "linearPattern"
+  | "circularPattern"
+  | "mirror";
 
 export type SketchTool =
   | "select"

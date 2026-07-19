@@ -118,6 +118,61 @@ describe("mockClient operations", () => {
     expect(res.features.some((f) => f.kind === "fillet" && f.valueText === "3.0 mm")).toBe(true);
   });
 
+  it("Shell adds a thickness feature + re-emits the target body; a re-edit updates in place", async () => {
+    const created = await mockClient.applyOperation({
+      opType: "Shell",
+      inputs: [{ primary: { bodyId: "body1", elementId: "el_f", kind: "face" } }],
+      params: { thickness: 2, openFaces: ["el_f"], targetBodyId: "body1" },
+    });
+    expect(created.changedBodies.map((b) => b.bodyId)).toContain("body1");
+    const shell = created.features.find((f) => f.kind === "shell");
+    expect(shell?.valueText).toBe("2.0 mm");
+    expect(created.opLabel).toBe("Shell");
+
+    const edited = await mockClient.applyOperation({
+      opType: "Shell",
+      featureId: shell!.id,
+      inputs: [],
+      params: { thickness: 4, openFaces: [], targetBodyId: "body1" },
+    });
+    const shells = edited.features.filter((f) => f.kind === "shell");
+    expect(shells).toHaveLength(1); // updated, not appended
+    expect(shells[0].valueText).toBe("4.0 mm");
+  });
+
+  it("LinearPattern / CircularPattern add ×count features (documented mock limit)", async () => {
+    const lin = await mockClient.applyOperation({
+      opType: "LinearPattern",
+      inputs: [{ primary: { bodyId: "body1", kind: "body" } }],
+      params: { sourceBodyId: "body1", direction: [1, 0, 0], spacing: 20, count: 4, fuseResult: true },
+    });
+    expect(lin.changedBodies.map((b) => b.bodyId)).toContain("body1");
+    expect(lin.features.some((f) => f.kind === "linearPattern" && f.valueText === "×4")).toBe(true);
+    expect(lin.opLabel).toBe("Linear Pattern");
+
+    const circ = await mockClient.applyOperation({
+      opType: "CircularPattern",
+      inputs: [{ primary: { bodyId: "body1", kind: "body" } }],
+      params: { sourceBodyId: "body1", axisOrigin: [0, 0, 0], axisDirection: [0, 0, 1], angleDeg: 360, count: 6 },
+    });
+    expect(circ.features.some((f) => f.kind === "circularPattern" && f.valueText === "×6")).toBe(true);
+    expect(circ.opLabel).toBe("Circular Pattern");
+  });
+
+  it("MirrorBody adds a mirror feature labelled by the plane; undo removes it", async () => {
+    const res = await mockClient.applyOperation({
+      opType: "MirrorBody",
+      inputs: [{ primary: { bodyId: "body1", kind: "body" } }],
+      params: { sourceBodyId: "body1", planePoint: [0, 0, 0], planeNormal: [1, 0, 0], fuseWithOriginal: false },
+    });
+    const mirror = res.features.find((f) => f.kind === "mirror");
+    expect(mirror?.valueText).toBe("YZ"); // normal +X → YZ plane
+    expect(res.opLabel).toBe("Mirror");
+
+    const undone = await mockClient.undo();
+    expect(undone.features.some((f) => f.kind === "mirror")).toBe(false);
+  });
+
   it("preview session commits with the latest streamed params", async () => {
     const regionId = await seedRegion();
     const session = await mockClient.beginPreview({
