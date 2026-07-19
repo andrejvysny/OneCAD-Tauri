@@ -68,6 +68,10 @@ add_library(worker_core STATIC
     # --- W-WP6: new OCCT ops (Revolve / Fillet / Chamfer) + STEP IO ---
     src/ops/RevolveOp.cpp
     src/ops/FilletChamferOp.cpp
+    # --- M6a: breadth ops (Shell / Linear+Circular pattern / MirrorBody) ---
+    src/ops/ShellOp.cpp
+    src/ops/PatternOp.cpp
+    src/ops/MirrorOp.cpp
     src/io/ExportStep.cpp
     src/io/MeshExport.cpp
     src/io/Checkpoint.cpp

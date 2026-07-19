@@ -16,7 +16,7 @@ stays untouched.
 | FX file/app UX | DONE — save/open/recents/STEP-export UI, worker-status, live constraints |
 | **M4 topology slice (backend + repair UI)** | **DONE, review-closed** (H5-B proven vs real worker) |
 | **M5 lifecycle** (Revolve tool, STL/OBJ, checkpoints, splits, autosave+recovery, onecad-regen CLI, crash drills, drift gate) | **DONE** |
-| M6 hardening + backlog (Shell/Patterns/Loft/Sweep/Mirror, datum, snap parity, e2e) | pending |
+| M6 hardening + backlog | Shell+Patterns+Mirror DONE end-to-end; remaining: snap/autoconstrain parity, datum, Loft/Sweep, e2e |
 
 ## What works end-to-end (real worker, automated gates)
 Sketch (PlaneGCS, dof) → regions → extrude (multi-region by normative FNV id;
@@ -33,11 +33,11 @@ surfacing, history suppress/roll/delete affordances, solver-position
 hydration on sketch re-entry.
 
 ## Suites (all green, orchestrator-verified)
-- Worker: 53/53 ctests (OCCT 7.9.3; region no-match harness incl.)
-- Rust: 358 tests, clippy -D warnings + fmt clean (chaos 14, real-worker 5,
-  m2_gate 2, wire_contract 6, topology_rebind 5 — all vs real binary;
+- Worker: 61/61 ctests (OCCT 7.9.3; breadth ops m6a_ops incl.)
+- Rust: 379 tests, clippy -D warnings + fmt clean (chaos 14, real-worker 5,
+  m2_gate 2, wire_contract 8, topology_rebind 5, breadth_ops 6, checkpoints, regen CLI — vs real binary;
   ONECAD_REQUIRE_WORKER=1 guard in CI prevents vacuous greens)
-- Frontend: 421 vitest, build green, hex-token gate 0
+- Frontend: 481 vitest, build green, hex-token gate 0
 
 ## Architecture decisions log (D-series + session additions)
 - D1: NewBody BodyIds worker-minted `body_<opId>`, Rust adopts+fences
@@ -59,7 +59,7 @@ hydration on sketch re-entry.
 - Autosave+recovery live (30s debounce, startup-only recovery V1); onecad-regen CLI in CI
 - Repair UI seams: resolveRefs sends refId-only; >1-body operated-body derivation;
   candidate viewport highlight = data seam; suppressed flag = optimistic overlay
-- STEP import stub; Shell/Patterns/Loft/Sweep/Mirror UNSUPPORTED at worker — M6
+- STEP import stub; Loft/Sweep UNSUPPORTED at worker (Shell/Patterns/Mirror LIVE end-to-end)
 - Env note: Linux dev container uses conda-forge OCCT 7.9.3 at /opt/occt793
   (apt 7.6.3 too old); CI = macos-14 + Homebrew
 

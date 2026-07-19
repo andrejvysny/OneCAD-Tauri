@@ -1,0 +1,18 @@
+# M6a — ExecutePlan Shell (REAL OCCT): sketch -> extrude NewBody -> Shell. The
+# 20x20 rect extruded 25 makes body_op1; the Shell removes a bare open-face ref
+# (ShellParams carries only bare ElementIds, no descriptor/anchor), so on a fresh
+# box the ref resolves to NO confident candidate -> a CLEAN NeedsRepair STATE
+# (SCHEMA §9, not an error). This proves Shell is DISPATCHED (not UNSUPPORTED) and
+# its open-face resolution runs the ladder. The plan prepares m-1 (the extrude).
+{"expect":{"v":1,"t":"hello","seq":0}}
+{"send":{"v":1,"t":"req","id":1,"verb":"OpenSession","args":{"documentId":"doc_sh","documentRevision":0,"workerEpoch":1,"mode":"determinism"}}}
+{"expect":{"v":1,"t":"resp","id":1,"ok":true,"result":{"sessionOpen":true}}}
+{"send":{"v":1,"t":"req","id":2,"verb":"GetWorkerHead","args":{}}}
+{"expect":{"v":1,"t":"resp","id":2,"ok":true,"result":{"documentRevision":0,"workerEpoch":1,"snapshotId":0,"hasScratch":false}}}
+{"send":{"v":1,"t":"req","id":3,"verb":"ExecutePlan","args":{"jobId":20,"documentRevision":1,"workerEpoch":1,"expectedBaseHash":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","prefixHashes":["1111111111111111111111111111111111111111111111111111111111111111","2222222222222222222222222222222222222222222222222222222222222222","3333333333333333333333333333333333333333333333333333333333333333"],"targetStep":2,"ops":[{"opType":"Sketch","opId":"op0","stepIndex":0,"params":{"sketchId":"sk1","plane":{"kind":"XY"},"entities":[{"id":"e1","type":"Line","p0":[0,0],"p1":[20,0]},{"id":"e2","type":"Line","p0":[20,0],"p1":[20,20]},{"id":"e3","type":"Line","p0":[20,20],"p1":[0,20]},{"id":"e4","type":"Line","p0":[0,20],"p1":[0,0]}],"constraints":[]}},{"opType":"Extrude","opId":"op1","stepIndex":1,"inputs":[{"primary":{"bodyId":"","elementId":"sk1.region.r0","kind":"face"}}],"params":{"sketchId":"sk1","distance":25.0,"extrudeMode":"Blind","booleanMode":"NewBody"}},{"opType":"Shell","opId":"op2","stepIndex":2,"inputs":[{"primary":{"bodyId":"body_op1","elementId":"el_face","kind":"face"}}],"params":{"thickness":2.0,"targetBodyId":"body_op1","openFaces":["el_face"]}}]}}}
+{"expect":{"v":1,"t":"event","id":3,"event":"planStep","stepIndex":0,"jobId":20,"payload":{"stepIndex":0,"bodyEvents":[]}}}
+{"expect":{"v":1,"t":"event","id":3,"event":"planStep","stepIndex":1,"jobId":20,"payload":{"bodyEvents":[{"kind":"created","bodyId":"body_op1"}]}}}
+{"expect":{"v":1,"t":"event","id":3,"event":"planStep","stepIndex":2,"jobId":20,"payload":{"bodyEvents":[],"needsRepair":[{"refId":"$present","reason":"$present"}]}}}
+{"expect":{"v":1,"t":"resp","id":3,"ok":true,"jobId":20,"result":{"planPrepared":true,"lastValidStep":1,"stoppedReason":"needsRepair","perStepResults":[{"stepIndex":0,"status":"ok"},{"stepIndex":1,"status":"ok","bodyIds":["body_op1"]},{"stepIndex":2,"status":"needsRepair","refCount":1}],"historyPrefixHash":"2222222222222222222222222222222222222222222222222222222222222222"}}}
+{"send":{"v":1,"t":"req","id":4,"verb":"Shutdown","args":{}}}
+{"expect":{"v":1,"t":"resp","id":4,"ok":true,"result":{"goodbye":true}}}

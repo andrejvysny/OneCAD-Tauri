@@ -360,6 +360,26 @@ fn wire_op_inputs(op: &PlannedOp) -> Value {
         Operation::Known(KnownOperation::Boolean(p)) => {
             vec![body_input_ref(p.target_body), body_input_ref(p.tool_body)]
         }
+        // Shell: one semantic ref per removed (open) face. ShellParams carries only
+        // bare ElementIds, so these are element-only face refs (mirrors Fillet's
+        // bare-`edge_ids` fallback); the worker resolves each through the ladder or its
+        // partition-tracked binding (§10). The shelled body rides in `params`.
+        Operation::Known(KnownOperation::Shell(p)) => {
+            face_input_refs(&p.open_faces, &op.inputs.bodies)
+        }
+        // Linear/Circular pattern + MirrorBody: a whole-body ref to the SOURCE body
+        // (the axis/plane/spacing ride in `params`; §7.3). Mirrors Boolean's body refs;
+        // the source id is also in `params.sourceBodyId` (auto-covered by
+        // `to_wire_body_form`), so this is the graph-visible input echo.
+        Operation::Known(KnownOperation::LinearPattern(p)) => {
+            p.source_body.map(body_input_ref).into_iter().collect()
+        }
+        Operation::Known(KnownOperation::CircularPattern(p)) => {
+            p.source_body.map(body_input_ref).into_iter().collect()
+        }
+        Operation::Known(KnownOperation::MirrorBody(p)) => {
+            p.source_body.map(body_input_ref).into_iter().collect()
+        }
         Operation::Known(KnownOperation::Extrude(p)) => {
             let mut v = Vec::new();
             if p.mode == ExtrudeMode::ToFace {
@@ -399,6 +419,28 @@ fn edge_input_refs(edges: &[ElementRef], edge_ids: &[ElementId], bodies: &[BodyI
             }
             primary.insert("elementId".into(), json!(id.as_str()));
             primary.insert("kind".into(), json!("edge"));
+            json!({ "primary": Value::Object(primary) })
+        })
+        .collect()
+}
+
+/// Shell open-face refs: a bare `{primary:{bodyId, elementId, kind:"face"}}` per open
+/// face id. `ShellParams` carries only bare [`ElementId`]s (no typed per-face ref), so
+/// no descriptor/anchor rides — this mirrors [`edge_input_refs`]'s element-only fallback.
+/// The shelled body — the op's graph-view `bodies[0]` (`ShellParams` derives it from
+/// `params.targetBodyId`, SCHEMA §7.3) — is attached as `primary.bodyId` in the worker's
+/// `body_<uuid>` form so `ShellOp` can group + resolve the faces (ladder §10, or the
+/// partition-tracked binding). With no body input the ref stays element-only.
+fn face_input_refs(face_ids: &[ElementId], bodies: &[BodyId]) -> Vec<Value> {
+    face_ids
+        .iter()
+        .map(|id| {
+            let mut primary = serde_json::Map::new();
+            if let Some(b) = bodies.first() {
+                primary.insert("bodyId".into(), json!(body_id_wire(*b)));
+            }
+            primary.insert("elementId".into(), json!(id.as_str()));
+            primary.insert("kind".into(), json!("face"));
             json!({ "primary": Value::Object(primary) })
         })
         .collect()

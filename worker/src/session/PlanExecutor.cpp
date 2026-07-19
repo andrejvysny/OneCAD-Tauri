@@ -17,8 +17,11 @@
 #include "ops/BooleanOp.h"
 #include "ops/ExtrudeOp.h"
 #include "ops/FilletChamferOp.h"
+#include "ops/MirrorOp.h"
 #include "ops/OpTypes.h"
+#include "ops/PatternOp.h"
 #include "ops/RevolveOp.h"
+#include "ops/ShellOp.h"
 #include "session/Signatures.h"
 #include "tess/MeshHandle.h"
 #include "tess/Tessellate.h"
@@ -231,7 +234,12 @@ ops::OpOutcome run_single_op(ScratchJob& job, const json& op, const std::string&
     if (op_type == "Revolve") return ops::execute_revolve(octx, op, op_id);
     if (op_type == "Fillet") return ops::execute_fillet(octx, op, op_id);
     if (op_type == "Chamfer") return ops::execute_chamfer(octx, op, op_id);
+    if (op_type == "Shell") return ops::execute_shell(octx, op, op_id);
+    if (op_type == "LinearPattern") return ops::execute_linear_pattern(octx, op, op_id);
+    if (op_type == "CircularPattern") return ops::execute_circular_pattern(octx, op, op_id);
+    if (op_type == "MirrorBody") return ops::execute_mirror_body(octx, op, op_id);
 
+    // Loft / Sweep remain UNSUPPORTED (SCHEMA §8) — Rust freezes the node.
     return ops::OpOutcome::unsupported("unsupported opType: " + op_type);
 }
 

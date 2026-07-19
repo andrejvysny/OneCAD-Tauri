@@ -657,8 +657,10 @@ Each op in `ExecutePlan.ops` is:
 ```
 
 `opType` ∈ `Sketch` | `Extrude` | `Revolve` | `Fillet` | `Chamfer` | `Boolean`
-(vertical slice; more added later on proven rails). Values keep OneCAD-CPP
-`operationTypeName` spelling (PascalCase).
+| `Shell` | `LinearPattern` | `CircularPattern` | `MirrorBody` (the M6a breadth
+ops extend the original vertical slice — see the [Changelog](#14-changelog)).
+`Loft` and `Sweep` remain **`UNSUPPORTED`** ([§8](#8-error-taxonomy)). Values keep
+OneCAD-CPP `operationTypeName` spelling (PascalCase).
 
 **Scalar / dimension fields.** Every dimensional param (`distance`, `radius`,
 `angleDeg`, `thickness`, `spacing`, …) is a **scalar**: it MAY be either a bare
@@ -803,6 +805,79 @@ OneCAD-CPP `BooleanParams` (`operation` ∈ Union/Cut/Intersect; distinct from t
 ```
 
 `operation` ∈ `Union` | `Cut` | `Intersect`.
+
+**Shell** (`op.shell`) — hollow a body, removing (opening) selected faces. Field
+names from OneCAD-CPP `ShellParams`. Added M6a (see the [Changelog](#14-changelog)).
+
+```json
+// inputs: [ semanticRef(face) per open face — kind "face" ]
+// params
+{ "thickness": 2.0, "targetBodyId": "body_1", "openFaces": ["el_…7c", "el_…8d"] }
+```
+
+- `thickness` is the (positive) wall thickness; the worker offsets **inward**
+  (`BRepOffsetAPI_MakeThickSolid::MakeThickSolidByJoin(target, removed,
+  −thickness, …)`, OneCAD-CPP parity). `thickness < 1e-3` ⇒ recoverable
+  `OP_FAILED` ("Shell thickness too small").
+- `openFaces` entries are `ElementId`s (bare). **Unlike Fillet/Chamfer edges, the
+  frozen `ShellParams` carries no per-face typed ref**, so the `inputs[]` face refs
+  are **element-only** (no `intent`/`anchor`). The worker resolves each on the
+  predecessor snapshot via the partition-tracked binding (an id already minted by
+  an earlier op / this plan's `resolve_input_refs`) OR the descriptor+anchor
+  ladder ([§10](#10-resolution-ladder)); a face that resolves via neither ⇒
+  **NeedsRepair** ([§9](#9-needsrepair-payload)), never a wrong bind. The result
+  **replaces** the shelled body (id preserved; OCCT history folds into its
+  partition).
+
+**LinearPattern** (`op.linearPattern`) — `count` copies of a source body translated
+`spacing` along `direction`. Field names from OneCAD-CPP `LinearPatternParams`
+(the C++ flat `dirX/Y/Z` is a single `direction: [x,y,z]`). Added M6a.
+
+```json
+// inputs: [ semanticRef(source body) ]
+// params
+{ "sourceBodyId": "body_1", "direction": [1,0,0], "spacing": 40.0, "count": 3, "fuseResult": true }
+```
+
+- `count ≥ 2` (else recoverable `OP_FAILED`); `|spacing| ≥ 1e-9`; `direction`
+  non-zero (normalized). Instance `i ∈ [1, count)` is translated `direction·spacing·i`.
+- `fuseResult` (default `true`): `true` ⇒ source + instances FUSED into one solid;
+  `false` ⇒ gathered into one compound. **Either way the op produces ONE new body
+  `body_<opId>`** (NewBody lineage — the source body is preserved). The result
+  INCLUDES the source geometry (OneCAD-CPP parity). Empty `elementMapDelta`
+  (ID-on-demand; a pattern face is minted when first referenced).
+
+**CircularPattern** (`op.circularPattern`) — `count` copies rotated about an axis.
+Field names from OneCAD-CPP `CircularPatternParams` (flat `axisX/Y/Z` +
+`axisDirX/Y/Z` → `axisOrigin` + `axisDirection`). Added M6a.
+
+```json
+// inputs: [ semanticRef(source body) ]
+// params
+{ "sourceBodyId": "body_1", "axisOrigin": [0,0,0], "axisDirection": [0,0,1],
+  "angleDeg": 360.0, "count": 3, "fuseResult": true }
+```
+
+- `count ≥ 2`; `axisDirection` non-zero. The per-instance step angle is
+  `angleDeg / count` (OneCAD-CPP parity — divides by `count`, **not** `count−1`);
+  instance `i ∈ [1, count)` is rotated `step·i` about `(axisOrigin, axisDirection)`.
+- `fuseResult` + lineage identical to LinearPattern.
+
+**MirrorBody** (`op.mirrorBody`) — reflect a source body across a plane. Field names
+from OneCAD-CPP `MirrorBodyParams` (flat `planePointX/Y/Z` + `planeNormalX/Y/Z` →
+`planePoint` + `planeNormal`). Added M6a.
+
+```json
+// inputs: [ semanticRef(source body) ]
+// params
+{ "sourceBodyId": "body_1", "planePoint": [0,0,0], "planeNormal": [1,0,0], "fuseWithOriginal": false }
+```
+
+- The mirror plane passes through `planePoint` perpendicular to `planeNormal`
+  (`gp_Trsf::SetMirror(gp_Ax2(planePoint, planeNormal))`).
+- `fuseWithOriginal` (default `false`): `true` ⇒ source + mirror image FUSED into
+  one solid; `false` ⇒ the mirror image alone. Either way ONE new body
+  `body_<opId>` (NewBody lineage; source preserved). Empty `elementMapDelta`.
 
 ### 7.4 Sketch solver lane
 
@@ -1108,7 +1183,7 @@ Errors are returned in a terminal `resp` with `ok:false` and an `error` object:
 | Recoverable op failure | `OP_FAILED` | scratch only — **session intact** | Rust discards scratch; user edits and retries |
 | Reference unresolved | `REF_UNRESOLVED` | scratch only | as above (distinct from NeedsRepair — this is a hard resolve failure, e.g. input body missing) |
 | Invalid geometry produced | `GEOMETRY_INVALID` | scratch only | as above |
-| Unsupported op/param (known verb) | `UNSUPPORTED` | none | Rust falls back / freezes node (e.g. `opType:"Loft"` before Loft ships) |
+| Unsupported op/param (known verb) | `UNSUPPORTED` | none | Rust falls back / freezes node (the remaining un-shipped ops `opType:"Loft"` / `"Sweep"`; the M6a breadth ops Shell/LinearPattern/CircularPattern/MirrorBody are now supported, [§7.3](#73-op-payload-schemas-vertical-slice)) |
 | Cooperative cancellation | `CANCELLED` | in-flight job dropped; session intact | terminal frame always sent ([§3.5](#35-cancel-rust--worker)) |
 | Protocol violation | `PROTOCOL_ERROR` | fatal | **restart worker** (no resync) |
 | Worker crash / abnormal exit | *(no frame)* | fatal | **restart + replay** from last checkpoint/head; crash **circuit breaker** on repeated `(historyPrefixHash, opId, occtFingerprint)` |
@@ -1300,6 +1375,31 @@ edits to version 1 rather than a version bump. They still fall under the
 [§13](#13-versioningchange-policy) change policy (fixture bump + cross-track
 sign-off) once fixtures exist.
 
+- **2026-07-19 — M6a: breadth ops Shell / LinearPattern / CircularPattern /
+  MirrorBody implemented (worker + Rust wire)** (§7.3; **orchestrator sign-off
+  PENDING**). [§7.3](#73-op-payload-schemas-vertical-slice), [§8](#8-error-taxonomy).
+  Additive extension of the §7.3 op catalogue: four op payload schemas derived
+  1:1 from the Rust serde param shapes (`onecad-core` `ShellParams` /
+  `LinearPatternParams` / `CircularPatternParams` / `MirrorBodyParams` — the wire
+  truth). `opType` now also accepts these four; **`Loft`/`Sweep` remain
+  `UNSUPPORTED`** ([§8](#8-error-taxonomy) table updated). The worker ports the
+  OneCAD-CPP `RegenerationEngine` construction verbatim (Shell:
+  `BRepOffsetAPI_MakeThickSolid::MakeThickSolidByJoin` with a **negative** offset;
+  patterns: `BRepBuilderAPI_Transform` + chained `BRepAlgoAPI_Fuse` or a compound,
+  step angle `angleDeg/count`; mirror: `gp_Trsf::SetMirror`). **Shell** replaces
+  its body (Modify lineage; OCCT history → partition) and resolves its **bare**
+  open-face refs (frozen `ShellParams` carries no per-face anchor) via the
+  partition-tracked binding or the [§10](#10-resolution-ladder) ladder — a face
+  that resolves via neither ⇒ NeedsRepair ([§9](#9-needsrepair-payload)).
+  **Patterns/MirrorBody** mint ONE new `body_<opId>` (NewBody lineage; source
+  preserved; empty `elementMapDelta`). No `protocolVersion` bump (still 1 —
+  pre-implementation contract extension). Fixtures:
+  `worker/tests/fixtures/executeplan_linearpattern.ndjson` (full apply),
+  `worker/tests/fixtures/executeplan_shell.ndjson` (bare-ref → NeedsRepair). No
+  canonical `protocol/fixtures/` change. Tests: worker `m6a_ops` (exact box
+  arithmetic — shell 4112, patterns 30000, mirror 20000, guards, NeedsRepair) +
+  Rust `src-tauri/tests/breadth_ops.rs` (real-worker exact volumes, determinism
+  across two processes, upstream-edit re-run).
 - **2026-07-19 — M5a: SaveCheckpoint/RestoreCheckpoint implemented (worker-retained,
   in-session); mesh export (ExportStl/ExportObj) shipped** (§7.7/§7.8;
   **orchestrator-approved 2026-07-19 for the §7.7 divergences**). [§7.7](#77-checkpoints),
