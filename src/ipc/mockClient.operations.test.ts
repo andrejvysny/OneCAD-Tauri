@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { mockClient, resetMockDocument, resetMockSketches, setMockLatency } from "./mockClient";
+import { updateScalarParamsCommand } from "./tauriCommandMap";
 import type { OperationOp, SketchEntity } from "./types";
 
 const CIRCLE: SketchEntity = { id: "e1", type: "Circle", center: [0, 0], radius: 10 };
@@ -14,6 +15,10 @@ async function seedRegion(sketchId = "skA"): Promise<string> {
 
 function extrudeOp(sketchId: string, regionId: string, distance: number): OperationOp {
   return { opType: "Extrude", sketchId, regionId, params: { distance } };
+}
+
+function revolveOp(sketchId: string, regionId: string, angleDeg: number, featureId?: string): OperationOp {
+  return { opType: "Revolve", sketchId, regionId, featureId, params: { angleDeg, booleanMode: "NewBody" } };
 }
 
 describe("mockClient operations", () => {
@@ -78,6 +83,71 @@ describe("mockClient operations", () => {
     expect(res.features.some((f) => f.kind === "boolean" && f.label === "Union")).toBe(true);
   });
 
+  it("applyOperation(Revolve) appends a revolve feature + synthesizes a body", async () => {
+    const regionId = await seedRegion();
+    const res = await mockClient.applyOperation(revolveOp("skA", regionId, 270));
+    expect(res.changedBodies).toHaveLength(1);
+    const feat = res.features.find((f) => f.kind === "revolve");
+    expect(feat).toBeTruthy();
+    expect(feat!.valueText).toBe("270°");
+    expect(res.opLabel).toBe("Revolve");
+    const bodyId = res.changedBodies[0].bodyId;
+    const mesh = await mockClient.getBodyMesh(bodyId, "coarse");
+    expect(mesh.byteLength).toBeGreaterThan(64); // a real MESH1 revolve body
+  });
+
+  it("re-editing a Revolve (featureId) updates the angle + reuses the same body", async () => {
+    const regionId = await seedRegion();
+    const created = await mockClient.applyOperation(revolveOp("skA", regionId, 360));
+    const featureId = created.features.find((f) => f.kind === "revolve")!.id;
+    const bodyId = created.changedBodies[0].bodyId;
+
+    const edited = await mockClient.applyOperation(revolveOp("skA", regionId, 90, featureId));
+    expect(edited.changedBodies.map((b) => b.bodyId)).toContain(bodyId); // rebuilt in place
+    const revFeatures = edited.features.filter((f) => f.kind === "revolve");
+    expect(revFeatures).toHaveLength(1); // no new row — same feature updated
+    expect(revFeatures[0].valueText).toBe("90°");
+  });
+
+  it("get_operation_params returns the stored wire params; a re-edit deep-merge keeps the axis (Findings 3+4)", async () => {
+    const regionId = await seedRegion();
+    // A revolve authored with a NON-DEFAULT axis (the user-picked sketch line).
+    const created = await mockClient.applyOperation({
+      opType: "Revolve",
+      sketchId: "skA",
+      regionId,
+      params: {
+        angleDeg: 360,
+        axis: { kind: "sketchLine", sketchId: "skA", lineId: "line-7" },
+        booleanMode: "NewBody",
+      },
+    });
+    const featureId = created.features.find((f) => f.kind === "revolve")!.id;
+
+    // On re-edit arm, the controller fetches the stored params (wire shape).
+    const stored = await mockClient.getOperationParams(featureId);
+    expect(stored.angleDeg).toEqual({ value: 360 });
+    expect(stored.axis).toEqual({ kind: "sketchLine", sketchId: "skA", lineId: "line-7" });
+    expect(stored.profile).toEqual({ sketchId: "skA", regionId });
+
+    // The angle-only commit deep-merges: the axis + profile survive byte-for-byte.
+    const cmd = updateScalarParamsCommand(featureId, "Revolve", stored, { angleDeg: { value: 90 } });
+    if (cmd.cmd !== "updateOperationParams") throw new Error("unreachable");
+    const p = cmd.op.params as unknown as Record<string, unknown>;
+    expect(p.angleDeg).toEqual({ value: 90 }); // only the scalar changed
+    expect(p.axis).toEqual({ kind: "sketchLine", sketchId: "skA", lineId: "line-7" }); // NOT clobbered
+    expect(p.profile).toEqual({ sketchId: "skA", regionId });
+
+    // Applying it updates the feature's value text without appending a row.
+    const edited = await mockClient.applyEditCommand(cmd);
+    const rev = edited.features.filter((f) => f.kind === "revolve");
+    expect(rev).toHaveLength(1);
+    expect(rev[0].valueText).toBe("90°");
+
+    // get_operation_params on an unknown record rejects.
+    await expect(mockClient.getOperationParams("no-such-record")).rejects.toThrow();
+  });
+
   it("Fillet re-emits the target body + adds a radius feature (documented mock limit)", async () => {
     const res = await mockClient.applyOperation({
       opType: "Fillet",
@@ -86,6 +156,61 @@ describe("mockClient operations", () => {
     });
     expect(res.changedBodies.map((b) => b.bodyId)).toContain("body1");
     expect(res.features.some((f) => f.kind === "fillet" && f.valueText === "3.0 mm")).toBe(true);
+  });
+
+  it("Shell adds a thickness feature + re-emits the target body; a re-edit updates in place", async () => {
+    const created = await mockClient.applyOperation({
+      opType: "Shell",
+      inputs: [{ primary: { bodyId: "body1", elementId: "el_f", kind: "face" } }],
+      params: { thickness: 2, openFaces: ["el_f"], targetBodyId: "body1" },
+    });
+    expect(created.changedBodies.map((b) => b.bodyId)).toContain("body1");
+    const shell = created.features.find((f) => f.kind === "shell");
+    expect(shell?.valueText).toBe("2.0 mm");
+    expect(created.opLabel).toBe("Shell");
+
+    const edited = await mockClient.applyOperation({
+      opType: "Shell",
+      featureId: shell!.id,
+      inputs: [],
+      params: { thickness: 4, openFaces: [], targetBodyId: "body1" },
+    });
+    const shells = edited.features.filter((f) => f.kind === "shell");
+    expect(shells).toHaveLength(1); // updated, not appended
+    expect(shells[0].valueText).toBe("4.0 mm");
+  });
+
+  it("LinearPattern / CircularPattern add ×count features (documented mock limit)", async () => {
+    const lin = await mockClient.applyOperation({
+      opType: "LinearPattern",
+      inputs: [{ primary: { bodyId: "body1", kind: "body" } }],
+      params: { sourceBodyId: "body1", direction: [1, 0, 0], spacing: 20, count: 4, fuseResult: true },
+    });
+    expect(lin.changedBodies.map((b) => b.bodyId)).toContain("body1");
+    expect(lin.features.some((f) => f.kind === "linearPattern" && f.valueText === "×4")).toBe(true);
+    expect(lin.opLabel).toBe("Linear Pattern");
+
+    const circ = await mockClient.applyOperation({
+      opType: "CircularPattern",
+      inputs: [{ primary: { bodyId: "body1", kind: "body" } }],
+      params: { sourceBodyId: "body1", axisOrigin: [0, 0, 0], axisDirection: [0, 0, 1], angleDeg: 360, count: 6 },
+    });
+    expect(circ.features.some((f) => f.kind === "circularPattern" && f.valueText === "×6")).toBe(true);
+    expect(circ.opLabel).toBe("Circular Pattern");
+  });
+
+  it("MirrorBody adds a mirror feature labelled by the plane; undo removes it", async () => {
+    const res = await mockClient.applyOperation({
+      opType: "MirrorBody",
+      inputs: [{ primary: { bodyId: "body1", kind: "body" } }],
+      params: { sourceBodyId: "body1", planePoint: [0, 0, 0], planeNormal: [1, 0, 0], fuseWithOriginal: false },
+    });
+    const mirror = res.features.find((f) => f.kind === "mirror");
+    expect(mirror?.valueText).toBe("YZ"); // normal +X → YZ plane
+    expect(res.opLabel).toBe("Mirror");
+
+    const undone = await mockClient.undo();
+    expect(undone.features.some((f) => f.kind === "mirror")).toBe(false);
   });
 
   it("preview session commits with the latest streamed params", async () => {

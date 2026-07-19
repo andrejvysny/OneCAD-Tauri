@@ -37,6 +37,28 @@ import type {
   SketchPlaneKind,
 } from "./types";
 
+/** The 18 constraint-type tokens the worker wire emits (== `SketchConstraintType`). */
+const CONSTRAINT_TYPES: ReadonlySet<string> = new Set<SketchConstraintType>([
+  "Coincident",
+  "Horizontal",
+  "Vertical",
+  "Fixed",
+  "Midpoint",
+  "OnCurve",
+  "Parallel",
+  "Perpendicular",
+  "Tangent",
+  "Concentric",
+  "Equal",
+  "Distance",
+  "HorizontalDistance",
+  "VerticalDistance",
+  "Angle",
+  "Radius",
+  "Diameter",
+  "Symmetric",
+]);
+
 // ── Rust typed doc wire shapes (SketchEditOp target) ──────────────────────────
 
 /** A dimension value on the wire (Rust `Scalar {value, expr?}`). */
@@ -463,6 +485,140 @@ export function frontendEntitiesFromDto(dtoEntities: unknown): SketchEntity[] {
         }
         break;
     }
+  }
+  return out;
+}
+
+// ── Solved-positions reverse map (F-WP9: "solvedPositions reverse map missing") ─
+//
+// The worker keys `solvedPositions` (SketchUpsert/EndGesture) by backend POINT-
+// entity UUID (dto.rs `solved_positions` "keyed by the point entity id"). The
+// frontend never had a reverse map, so a solve/drag write-back never moved the
+// geometry. These two pure steps close it: (1) re-key backend UUID → frontend
+// `entityId.Position` via the id-map's `point` map; (2) apply those to the
+// frontend entities (move line endpoints / circle+arc centers / points).
+
+/**
+ * Re-key backend-UUID-keyed `solvedPositions` to the frontend `entityId.Position`
+ * keys the entities carry, using `map.point` (frontend `"entityId.Position"` →
+ * backend point UUID). Keys not in the id-map are skipped silently with a dev
+ * warn (common on re-entry, before the id-map is seeded — the DTO entities are
+ * already solved there, so no movement is needed).
+ */
+export function frontendSolvedPositions(
+  map: SketchIdMap,
+  dtoPositions: Record<string, [number, number]> | undefined | null,
+): Record<string, [number, number]> {
+  const out: Record<string, [number, number]> = {};
+  if (!dtoPositions) return out;
+  // Reverse map.point: backend point UUID → frontend "entityId.Position".
+  const byUuid = new Map<string, string>();
+  for (const [frontendKey, uuid] of map.point) if (!byUuid.has(uuid)) byUuid.set(uuid, frontendKey);
+  const unknown: string[] = [];
+  for (const [uuid, xy] of Object.entries(dtoPositions)) {
+    const key = byUuid.get(uuid);
+    if (key) out[key] = xy;
+    else unknown.push(uuid);
+  }
+  if (unknown.length > 0 && typeof import.meta !== "undefined" && import.meta.env?.DEV) {
+    // eslint-disable-next-line no-console
+    console.warn(`[sketchWireMap] solvedPositions: ${unknown.length} unmapped point key(s) skipped`);
+  }
+  return out;
+}
+
+/**
+ * Apply frontend-keyed (`"entityId.Position"`) solved positions to the sketch
+ * entities, moving each entity's geometry per kind (Line Start/End → p0/p1;
+ * Circle/Arc Center → center; Point Start/Center → p0). Pure: returns a NEW array
+ * only when something moved (else the same reference — no React churn). Positions
+ * for unknown entity ids are ignored.
+ */
+export function applySolvedPositions(
+  entities: SketchEntity[],
+  positions: Record<string, [number, number]>,
+): SketchEntity[] {
+  const keys = Object.keys(positions);
+  if (keys.length === 0) return entities;
+  // Group positions by frontend entity id.
+  const byEntity = new Map<string, Record<string, [number, number]>>();
+  for (const key of keys) {
+    const dot = key.lastIndexOf(".");
+    if (dot < 0) continue;
+    const entityId = key.slice(0, dot);
+    const position = key.slice(dot + 1);
+    const g = byEntity.get(entityId) ?? {};
+    g[position] = positions[key];
+    byEntity.set(entityId, g);
+  }
+  let changed = false;
+  const out = entities.map((e) => {
+    const g = byEntity.get(e.id);
+    if (!g) return e;
+    const moved = moveEntity(e, g);
+    if (moved !== e) changed = true;
+    return moved;
+  });
+  return changed ? out : entities;
+}
+
+/** Move one entity's coordinates per its solved point positions (immutable). */
+function moveEntity(e: SketchEntity, g: Record<string, [number, number]>): SketchEntity {
+  switch (e.type) {
+    case "Point": {
+      const p0 = g.Start ?? g.Center;
+      return p0 ? { ...e, p0 } : e;
+    }
+    case "Line": {
+      if (!g.Start && !g.End) return e;
+      return { ...e, p0: g.Start ?? e.p0, p1: g.End ?? e.p1 };
+    }
+    case "Circle":
+    case "Arc":
+      return g.Center ? { ...e, center: g.Center } : e;
+    default:
+      return e;
+  }
+}
+
+/** One constraint from the worker wire form (`enter_sketch` returns these — the
+ *  Rust `wire_constraint` shape: `{id, type, entities, positions?, value?}`). */
+interface WireDtoConstraint {
+  id: string;
+  type: string;
+  entities: string[];
+  positions?: string[];
+  value?: number;
+}
+
+/**
+ * Reverse-map the worker-wire constraints `enter_sketch` returns into the frontend
+ * `SketchConstraint` form. The wire shape is field-identical to the frontend type
+ * (id / PascalCase type / entity refs / optional positions + value), so this is a
+ * validated pass-through: entries with an unknown `type` or a missing id/entities
+ * are dropped. The referenced ids are backend UUIDs (kept verbatim); the inspector
+ * summarizes constraints by type, and the marshaller only re-adds constraints it
+ * has NOT already seen, so re-entry constraints hydrate the panel without churn.
+ */
+export function frontendConstraintsFromDto(dtoConstraints: unknown): SketchConstraint[] {
+  if (!Array.isArray(dtoConstraints)) return [];
+  const out: SketchConstraint[] = [];
+  for (const raw of dtoConstraints as WireDtoConstraint[]) {
+    if (!raw || typeof raw.id !== "string" || !CONSTRAINT_TYPES.has(raw.type)) continue;
+    if (!Array.isArray(raw.entities)) continue;
+    const c: SketchConstraint = {
+      id: raw.id,
+      type: raw.type as SketchConstraintType,
+      entities: raw.entities,
+    };
+    if (Array.isArray(raw.positions)) {
+      c.positions = raw.positions.filter(
+        (p): p is ConstraintPosition =>
+          p === "Start" || p === "End" || p === "Center" || p === "Midpoint",
+      );
+    }
+    if (typeof raw.value === "number") c.value = raw.value;
+    out.push(c);
   }
   return out;
 }

@@ -33,7 +33,11 @@ export type FeatureKind =
   | "extrude"
   | "revolve"
   | "fillet"
-  | "boolean";
+  | "boolean"
+  | "shell"
+  | "linearPattern"
+  | "circularPattern"
+  | "mirror";
 
 export type FeatureStatus = "ok" | "dirty" | "error" | "needsRepair";
 
@@ -118,8 +122,32 @@ export function seedMockDocument(): DocumentProjection {
   };
 }
 
+/** The "no document open" projection (mirrors Rust `DocumentProjection::empty`). */
+export function emptyDocument(): DocumentProjection {
+  return {
+    status: "empty",
+    revision: 0,
+    title: "",
+    dirty: false,
+    bodies: {},
+    sketches: {},
+    features: [],
+  };
+}
+
+/**
+ * The store's initial projection. Under a real Tauri webview the app starts EMPTY
+ * and hydrates from the backend's first `projection-updated` (no mock document);
+ * in a plain browser / vitest / Playwright there is no backend, so the
+ * `seedMockDocument()` demo drives the whole UI (tests depend on the seed).
+ */
+function initialDocument(): DocumentProjection {
+  const underTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  return underTauri ? emptyDocument() : seedMockDocument();
+}
+
 export const documentStore = createStore<DocumentState>()((set) => ({
-  ...seedMockDocument(),
+  ...initialDocument(),
 
   applySnapshot(snapshot) {
     set(snapshot);

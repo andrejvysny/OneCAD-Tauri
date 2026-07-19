@@ -69,7 +69,7 @@ use super::engine::{PlanArtifacts, PlanRequest, PlannedOp, PolicyVersions};
 /// A deterministic fingerprint of a timeline prefix — SHA-256 over canonical
 /// record lines, lowercase hex (SCHEMA §7.2 `expectedBaseHash` / §7.7
 /// `historyPrefixHash`). See the module docs.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct HistoryPrefixHash(pub String);
 
 impl HistoryPrefixHash {
@@ -314,6 +314,10 @@ impl RegenPlan {
             expected_base_hash: self.expected_base_hash,
             prefix_hashes: self.prefix_hashes,
             base_checkpoint: self.restore,
+            // The app attaches the stored artifacts post-plan (the pure planner has no
+            // store); `None` here ⇒ the executor's restore reports `restored:false`
+            // and falls back to replay-from-0 unless the app fills it in.
+            base_checkpoint_artifacts: None,
             ops: self.planned_ops,
             policy_versions,
             target_step: self.target_step,

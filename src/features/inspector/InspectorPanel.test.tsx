@@ -3,7 +3,21 @@ import { render, screen, act } from "@testing-library/react";
 import { InspectorPanel } from "./InspectorPanel";
 import { selectionStore } from "@/stores/selectionStore";
 import { toolStore } from "@/stores/toolStore";
+import { sketchStore } from "@/stores/sketchStore";
 import { resetStores } from "@/test/resetStores";
+import type { SketchConstraint, SketchSession } from "@/ipc/types";
+
+/** A live sketch session carrying the constraints the inspector summarizes. */
+function sessionWithConstraints(constraints: SketchConstraint[]): SketchSession {
+  return {
+    sketchId: "sketch2",
+    plane: { kind: "XY", origin: [0, 0, 0], xAxis: [0, 1, 0], yAxis: [-1, 0, 0], normal: [0, 0, 1] },
+    entities: [],
+    constraints,
+    dof: 3,
+    status: "UnderConstrained",
+  };
+}
 
 describe("InspectorPanel", () => {
   beforeEach(() => resetStores());
@@ -36,9 +50,22 @@ describe("InspectorPanel", () => {
     expect(screen.getByText("Nothing selected")).toBeInTheDocument();
   });
 
-  it("shows the SKETCH state (DOF card + constraints) in sketch mode", () => {
+  it("shows the SKETCH state (DOF card + live constraints) in sketch mode", () => {
     render(<InspectorPanel />);
-    act(() => toolStore.getState().setMode("sketch"));
+    act(() => {
+      toolStore.getState().setMode("sketch");
+      // Live sketch session drives the CONSTRAINTS panel (no hardcoded demo data).
+      sketchStore.getState().setSession(
+        sessionWithConstraints([
+          { id: "c1", type: "Coincident", entities: ["p1", "p2"] },
+          { id: "c2", type: "Coincident", entities: ["p3", "p4"] },
+          { id: "c3", type: "Coincident", entities: ["p5", "p6"] },
+          { id: "c4", type: "Coincident", entities: ["p7", "p8"] },
+          { id: "c5", type: "Horizontal", entities: ["l1"] },
+          { id: "c6", type: "Distance", entities: ["p1", "p2"], value: 90 },
+        ]),
+      );
+    });
 
     expect(screen.getByText("Sketch 2")).toBeInTheDocument();
     expect(screen.getByText("Under-constrained · DOF 3")).toBeInTheDocument();
@@ -49,5 +76,15 @@ describe("InspectorPanel", () => {
     expect(
       screen.getByText(/degrees of freedom remain/),
     ).toBeInTheDocument();
+  });
+
+  it("shows the empty-constraints hint when the sketch has none", () => {
+    render(<InspectorPanel />);
+    act(() => {
+      toolStore.getState().setMode("sketch");
+      sketchStore.getState().setSession(sessionWithConstraints([]));
+    });
+    expect(screen.getByText("No constraints yet.")).toBeInTheDocument();
+    expect(screen.queryByText("Coincident")).toBeNull();
   });
 });

@@ -16,8 +16,63 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use crate::ids::{BodyId, RecordId};
+
+/// Domain-separation prefix for deriving a boolean split-child `BodyId` uuid from its
+/// `body_<opId>:<k>` wire form (SCHEMA §2, M5a). MUST stay byte-identical to the wire
+/// layer's renderer (`worker/wire.rs`), which calls [`split_child_uuid`].
+const SPLIT_NS: &[u8] = b"onecad.body.split.v1:";
+
+/// The maximum split-child ordinal probed when recovering a body's `(opId, k)` origin
+/// at fold time (a boolean rarely yields more solids than this; bounded so the probe
+/// is O(1)).
+pub const MAX_SPLIT_CHILDREN: usize = 256;
+
+/// The deterministic derived uuid for split child `k` of `op`: the first 16 bytes of
+/// `SHA-256(SPLIT_NS ‖ "<op>:<k>")` (a uuid5-style stable hash). A pure function ⇒
+/// replay- and persistence-stable. The wire layer renders the `body_<op>:<k>` string
+/// for this uuid via its interner; the core owns the derivation so [`BodyRegistry`]
+/// can record + reload the split identity (`splitOf`).
+#[must_use]
+pub fn split_child_uuid(op: Uuid, k: usize) -> Uuid {
+    let mut hasher = Sha256::new();
+    hasher.update(SPLIT_NS);
+    hasher.update(format!("{op}:{k}").as_bytes());
+    let digest = hasher.finalize();
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    Uuid::from_bytes(bytes)
+}
+
+/// The `(opId, ordinal)` a `BodyId` was minted as a boolean split child of, if any.
+/// Recovered by probing [`split_child_uuid`] against the producing op — the body is a
+/// split child iff its uuid equals `split_child_uuid(by, k)` for some `k`.
+fn split_origin(body: BodyId, by: RecordId) -> Option<SplitOrigin> {
+    // Fast path: a NewBody id IS the opId uuid (never a split child).
+    if body.as_uuid() == by.as_uuid() {
+        return None;
+    }
+    (0..MAX_SPLIT_CHILDREN)
+        .find(|&k| split_child_uuid(by.as_uuid(), k) == body.as_uuid())
+        .map(|k| SplitOrigin { op: by, k })
+}
+
+/// The boolean-split origin of a body (SCHEMA §2 `body_<opId>:<k>`), persisted so the
+/// wire layer's split-id interner can be **repopulated on document open / checkpoint
+/// restore** — before any plan compiles a downstream op that references the child
+/// (which would otherwise render a bare derived uuid the worker never minted). Additive
+/// + skip-when-`None`, so a document with no splits serializes byte-identically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitOrigin {
+    /// The producing op's record id (`opId` in `body_<opId>:<k>`).
+    pub op: RecordId,
+    /// The deterministic split ordinal `k`.
+    pub k: usize,
+}
 
 /// Per-body document metadata (identity + name + visibility + provenance).
 ///
@@ -34,10 +89,16 @@ pub struct BodyMeta {
     pub visible: bool,
     /// The op that first produced this body.
     pub created_by: RecordId,
+    /// The boolean-split origin (SCHEMA §2 `body_<opId>:<k>`), when this body was
+    /// minted as a split child. Persisted so the wire interner can be repopulated on
+    /// open/restore (see [`SplitOrigin`]). Absent (skipped) for a normal body ⇒ no
+    /// document.json shape change for existing snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_of: Option<SplitOrigin>,
 }
 
 impl BodyMeta {
-    /// A visible body with the given name and producer.
+    /// A visible body with the given name and producer (no split origin).
     #[must_use]
     pub fn new(id: BodyId, name: impl Into<String>, created_by: RecordId) -> Self {
         Self {
@@ -45,6 +106,7 @@ impl BodyMeta {
             name: name.into(),
             visible: true,
             created_by,
+            split_of: None,
         }
     }
 }
@@ -346,6 +408,7 @@ impl BodyRegistry {
                         name: pm.name.clone(),
                         visible: pm.visible,
                         created_by: pm.created_by,
+                        split_of: None, // the survivor inherits the parent identity
                     }),
                     _ => self.ensure_fresh(child, by),
                 }
@@ -368,6 +431,7 @@ impl BodyRegistry {
                     name: m.name,
                     visible: m.visible,
                     created_by: m.created_by,
+                    split_of: None, // merge winner keeps its own identity
                 },
                 None => BodyMeta::new(winner, self.default_name(), by),
             };
@@ -382,10 +446,15 @@ impl BodyRegistry {
     }
 
     /// Registers a fresh visible body with a generated name if the id is absent.
+    /// Records the boolean-split origin (`splitOf`) when `id` is a `body_<by>:<k>`
+    /// child of the producing op `by`, so the wire interner can be repopulated on a
+    /// later open/restore.
     fn ensure_fresh(&mut self, id: BodyId, by: RecordId) {
         if !self.contains(id) {
             let name = self.default_name();
-            self.bodies.push(BodyMeta::new(id, name, by));
+            let mut meta = BodyMeta::new(id, name, by);
+            meta.split_of = split_origin(id, by);
+            self.bodies.push(meta);
         }
     }
 

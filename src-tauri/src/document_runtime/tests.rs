@@ -15,7 +15,8 @@ use uuid::Uuid;
 
 use onecad_core::document::body::BodyLifecycleEvent;
 use onecad_core::document::record::{
-    BooleanMode, ExtrudeMode, ExtrudeParams, KnownOperation, Operation, OperationRecord,
+    BooleanMode, ExtrudeMode, ExtrudeParams, FilletParams, KnownOperation, Operation,
+    OperationRecord, RevolveParams,
 };
 use onecad_core::document::variables::Scalar;
 use onecad_core::edit::EditCommand;
@@ -30,9 +31,9 @@ use onecad_core::regen::{
     StoppedReason, TessellateRequest, TessellateResult, WorkerElementEvidence, WorkerHead,
 };
 
-use onecad_core::document::refs::AnchorIntent;
-use onecad_core::ids::{EntityId, SketchId, TopoKey};
-use onecad_core::math::Vec2;
+use onecad_core::document::refs::{AnchorIntent, AxisRef, ElementKind, ElementRef, PrimaryRef};
+use onecad_core::ids::{ElementId, EntityId, SketchId, TopoKey};
+use onecad_core::math::{Vec2, Vec3};
 use onecad_core::sketch::{Sketch, SketchEntity, WorldPlane};
 
 use super::*;
@@ -136,6 +137,7 @@ impl GeometryEngine for FakeBackend {
                     step_index: step,
                     status: StepStatus::Ok,
                     body_ids,
+                    message: String::new(),
                 });
                 last_valid = Some(step);
             }
@@ -369,6 +371,55 @@ fn add_extrude(seed: u128, distance: f64) -> EditCommand {
         record: extrude_record(seed, distance),
         at_cursor: true,
     }
+}
+
+/// A revolve record carrying a NON-DEFAULT sketch-line axis (the re-edit case whose
+/// axis a whole-params replace would clobber).
+fn revolve_record(seed: u128, angle: f64, line: u128) -> OperationRecord {
+    let op = Operation::Known(KnownOperation::Revolve(RevolveParams {
+        profile: None,
+        angle_deg: Scalar::new(angle),
+        axis: Some(AxisRef::SketchLine {
+            sketch: SketchId(Uuid::from_u128(0x5c)),
+            line: EntityId(Uuid::from_u128(line)),
+            extra: Default::default(),
+        }),
+        boolean_mode: BooleanMode::NewBody,
+        target_body: None,
+        extra: Default::default(),
+    }));
+    OperationRecord::new(RecordId(Uuid::from_u128(seed)), 0, "Revolve", op)
+}
+
+/// A single-edge fillet record (a typed edge ref: `primary.element` == `edge_ids[0]`
+/// + a world-midpoint anchor) — the SCHEMA §7.3 `inputs[]` shape.
+fn fillet_record(seed: u128, body: BodyId, edge: &str, anchor: Vec3) -> OperationRecord {
+    let el = ElementId::new(edge);
+    let edge_ref = ElementRef {
+        primary: Some(PrimaryRef {
+            body,
+            element: el.clone(),
+            kind: ElementKind::Edge,
+            extra: Default::default(),
+        }),
+        intent: None,
+        anchor: Some(AnchorIntent {
+            world_point: anchor,
+            surface_uv: None,
+            local_frame: None,
+            adjacency_hint: None,
+            extra: Default::default(),
+        }),
+        extra: Default::default(),
+    };
+    let op = Operation::Known(KnownOperation::Fillet(FilletParams {
+        radius: Scalar::new(2.0),
+        edge_ids: vec![el],
+        edges: vec![edge_ref],
+        chain_tangent_edges: false,
+        extra: Default::default(),
+    }));
+    OperationRecord::new(RecordId(Uuid::from_u128(seed)), 0, "Fillet", op)
 }
 
 fn runtime_with(backend: Arc<FakeBackend>) -> DocumentRuntime {
@@ -749,6 +800,86 @@ async fn promote_selection_mints_ids_and_is_stable() {
         again[0].element_id, ids[0].element_id,
         "re-pick reuses the id (Invariant 1)"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// get_operation_params (re-edit deep-merge source; Findings 3+4) + refId-only
+// resolve_refs hydration (Finding 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn operation_params_returns_the_stored_params_for_a_reedit() {
+    let mut rt = runtime_with(Arc::new(FakeBackend::new()));
+    rt.apply(EditCommand::AddOperation {
+        record: revolve_record(0x1234, 90.0, 0x77),
+        at_cursor: true,
+    })
+    .unwrap();
+
+    // The stored params carry the NON-scalar axis a scalar re-edit must preserve.
+    let params = rt
+        .operation_params(RecordId(Uuid::from_u128(0x1234)))
+        .expect("params for a known revolve record");
+    assert_eq!(params["angleDeg"]["value"].as_f64(), Some(90.0));
+    assert_eq!(params["axis"]["kind"], "sketchLine");
+    assert_eq!(
+        params["axis"]["lineId"],
+        serde_json::json!(EntityId(Uuid::from_u128(0x77)).to_string())
+    );
+
+    // An unknown record yields None (→ the command surfaces an InvalidCommand error).
+    assert!(rt
+        .operation_params(RecordId(Uuid::from_u128(0xDEAD)))
+        .is_none());
+}
+
+#[test]
+fn parse_input_ref_id_and_element_ref_input() {
+    // refId grammar `<recordId>.input<k>` (worker PlanExecutor mints `<opId>.input<i>`).
+    let rec = RecordId(Uuid::from_u128(0xF11));
+    assert_eq!(parse_input_ref_id(&format!("{rec}.input0")), Some((rec, 0)));
+    assert_eq!(parse_input_ref_id(&format!("{rec}.input3")), Some((rec, 3)));
+    assert!(parse_input_ref_id("not-a-uuid.input0").is_none());
+    assert!(parse_input_ref_id(&format!("{rec}.face0")).is_none());
+
+    // A fillet op's input0 is edges[0]; there is no input1 (single edge).
+    let body = BodyId(Uuid::from_u128(0xB2));
+    let rec2 = fillet_record(0xF11, body, "e:5", Vec3::new_unchecked(1.0, 2.0, 3.0));
+    let r = element_ref_input(&rec2.op, 0).expect("edge 0 ref");
+    assert_eq!(r.primary.as_ref().unwrap().element.as_str(), "e:5");
+    assert!(element_ref_input(&rec2.op, 1).is_none());
+}
+
+#[tokio::test]
+async fn resolve_refs_hydrates_a_refid_only_request_from_the_stored_ref() {
+    let mut rt = runtime_with(Arc::new(FakeBackend::new()));
+    let rec = RecordId(Uuid::from_u128(0xF12));
+    let body = BodyId(Uuid::from_u128(0xB3));
+    let anchor = Vec3::new_unchecked(4.0, 5.0, 6.0);
+    rt.apply(EditCommand::AddOperation {
+        record: fillet_record(0xF12, body, "e:5", anchor),
+        at_cursor: true,
+    })
+    .unwrap();
+
+    // A lean refId-only request (an empty ElementRef) hydrates from the stored edge.
+    let hydrated = rt
+        .stored_input_ref(&format!("{rec}.input0"))
+        .expect("hydrated from the stored fillet edge");
+    let primary = hydrated.primary.expect("primary");
+    assert_eq!(primary.element.as_str(), "e:5");
+    assert_eq!(primary.body, body);
+    assert_eq!(
+        hydrated.anchor.expect("anchor").world_point,
+        anchor,
+        "the stored anchor rides so the ladder resolves the edge"
+    );
+
+    // A refId naming no known record does not hydrate (fails soft to the empty ref).
+    let bogus = format!("{}.input0", RecordId(Uuid::from_u128(0xFEE)));
+    assert!(rt.stored_input_ref(&bogus).is_none());
+    // An out-of-range slot (only one edge) does not hydrate.
+    assert!(rt.stored_input_ref(&format!("{rec}.input9")).is_none());
 }
 
 #[tokio::test]

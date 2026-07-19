@@ -4,6 +4,7 @@ import { MonoValue } from "@/ui/MonoValue";
 import { useToolStore } from "@/stores/toolStore";
 import { useSelectionStore, primarySelection } from "@/stores/selectionStore";
 import { useDocumentStore } from "@/stores/documentStore";
+import { useWorkerStore, type WorkerLifecycleState } from "@/stores/workerStore";
 import {
   useViewportStore,
   formatCursor,
@@ -23,6 +24,7 @@ export function StatusBar() {
   const cursor = useViewportStore((s) => s.cursor);
   const dofBadge = useViewportStore((s) => s.dofBadge);
   const statusHint = useViewportStore((s) => s.statusHint);
+  const workerState = useWorkerStore((s) => s.state);
   const activeSketchId = useViewportStore((s) => s.activeSketchId);
   const activeSketch = useDocumentStore((s) =>
     activeSketchId ? s.sketches[activeSketchId] : undefined,
@@ -46,6 +48,7 @@ export function StatusBar() {
           <span className="text-ink-5">{statusHint}</span>
         </>
       )}
+      <WorkerStatusIndicator state={workerState} />
       <span aria-hidden="true" className="h-[14px] w-px bg-border" />
       <span className={cn("font-medium", showDof ? "text-warn" : "text-ink-6")}>
         {dofText}
@@ -73,5 +76,31 @@ export function StatusBar() {
         {formatCursor(cursor)}
       </MonoValue>
     </div>
+  );
+}
+
+/**
+ * Worker-status indicator (a small dot + label). Shown ONLY for the attention
+ * states — the sidecar restarting (amber) or failed (red); the healthy
+ * starting/ready path stays quiet. The mock never emits, so this renders nothing
+ * in a plain browser / vitest.
+ */
+function WorkerStatusIndicator({ state }: { state: WorkerLifecycleState }) {
+  if (state !== "restarting" && state !== "failed") return null;
+  const failed = state === "failed";
+  return (
+    <>
+      <span aria-hidden="true" className="h-[14px] w-px bg-border" />
+      <span
+        role="status"
+        className={cn("flex items-center gap-1.5", failed ? "text-traffic-close" : "text-warn")}
+      >
+        <span
+          aria-hidden="true"
+          className={cn("h-[7px] w-[7px] rounded-full", failed ? "bg-traffic-close" : "bg-warn")}
+        />
+        {failed ? "Worker offline" : "Worker restarting…"}
+      </span>
+    </>
   );
 }

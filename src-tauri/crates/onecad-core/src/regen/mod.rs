@@ -45,7 +45,7 @@ pub mod snapshot;
 pub use checkpoint::{
     CheckpointArtifact, CheckpointArtifacts, CheckpointEnvelope, CheckpointId, CheckpointMeta,
     CheckpointRef, CheckpointStore, DriftDetail, DriftSignature, InMemoryCheckpointStore,
-    RestoreResult, StoredCheckpoint,
+    RestoreResult, StoredCheckpoint, ARTIFACT_SCHEMA_VERSION,
 };
 pub use engine::{
     mint_element_ids, AcceptResult, AcquireRequest, BodySelector, Diagnostic, ElementMapDelta,

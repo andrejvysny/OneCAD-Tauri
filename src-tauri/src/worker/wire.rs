@@ -30,11 +30,12 @@ use onecad_core::ids::{
     BodyId, DocumentRevision, ElementId, EntityId, JobId, SnapshotId, TopoKey, WorkerEpoch,
 };
 use onecad_core::regen::{
-    AcceptResult, AcquireRequest, BodySelector, Diagnostic, ElementMapDelta, ElementMapEntry,
-    EngineError, HistoryPrefixHash, OpFailureCode, OpenSessionRequest, PlanPrepared, PlanRequest,
-    PlanStepEvent, PlannedOp, RefResolution, ResolveOutcome, ResolveRequest, SessionMode, Severity,
-    Signature, StepResult, StepSignatures, StepStatus, StoppedReason, TessellateRequest,
-    WorkerElementEvidence, WorkerHead,
+    AcceptResult, AcquireRequest, BodySelector, CheckpointArtifact, CheckpointArtifacts,
+    CheckpointEnvelope, Diagnostic, ElementMapDelta, ElementMapEntry, EngineError,
+    HistoryPrefixHash, OpFailureCode, OpenSessionRequest, PlanPrepared, PlanRequest, PlanStepEvent,
+    PlannedOp, RefResolution, ResolveOutcome, ResolveRequest, RestoreRequest, SessionMode,
+    Severity, Signature, StepResult, StepSignatures, StepStatus, StoppedReason, TessellateRequest,
+    WorkerElementEvidence, WorkerHead, ARTIFACT_SCHEMA_VERSION,
 };
 use onecad_core::sketch::WorldPlane;
 use onecad_core::sketch::{Constraint, CurvePosition, Sketch, SketchAttachment, SketchEntity};
@@ -51,25 +52,108 @@ use super::lod_str;
 // BodyId ↔ wire (`body_<opId>`)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The wire form of a [`BodyId`]: `body_<uuid>` (SCHEMA §2 — a NewBody id is
-/// `body_<opId>`, the `opId` being the Rust-minted record-id uuid).
+// ── Split-child BodyId representation (M5a, SCHEMA §2 / §14) ──────────────────
+//
+// A NewBody id is `body_<opId>` and maps 1:1 to `BodyId(opId uuid)`. A boolean SPLIT
+// mints `body_<opId>:<k>` (deterministic `k`-ordering; see the worker `ordered_solids`).
+// `BodyId` is a `Uuid` newtype, so a `:<k>` child cannot reuse the opId uuid — it maps
+// to a **deterministic derived uuid** `uuid5(SPLIT_NS, "<opId>:<k>")` (pure function ⇒
+// replay-stable + persistence-stable: the doc stores the derived uuid, a from-0 replay
+// re-mints the SAME id). Because that uuid5 is one-way, `body_id_wire` cannot rebuild
+// the `body_<opId>:<k>` string from the uuid alone; the [`split_interner`] records
+// `derived → "body_<opId>:<k>"` at [`parse_body_id`] time (the worker ALWAYS mints a
+// child, so Rust parses it, BEFORE Rust ever renders it back over the wire — tessellate,
+// export, a downstream op input). The interner is a bounded, append-only, deterministic
+// map (identical strings ⇒ identical uuids ⇒ identical strings), so it is self-healing
+// across reopen and cannot be cross-contaminated between documents/tests.
+
+use std::collections::HashMap;
+use std::sync::{OnceLock, RwLock};
+
+use onecad_core::document::body::split_child_uuid;
+
+/// `derived split-child BodyId uuid → its "body_<opId>:<k>" wire string`. See the
+/// section header for why the reverse map is needed + why it is sound. Repopulated
+/// on document open / checkpoint restore from the persisted `BodyMeta.split_of`
+/// ([`intern_split_child`]) so a downstream reference to a child renders correctly in
+/// a **fresh process** — before the plan compiles, when nothing has been parsed yet.
+fn split_interner() -> &'static RwLock<HashMap<Uuid, String>> {
+    static INTERNER: OnceLock<RwLock<HashMap<Uuid, String>>> = OnceLock::new();
+    INTERNER.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Interns split child `k` of op `op`: computes the deterministic derived uuid
+/// (core [`split_child_uuid`]) and records `derived → "body_<op>:<k>"` so
+/// [`body_id_wire`] renders the exact form the worker keys its BodyStore by. Returns
+/// the child [`BodyId`]. Called at document open / checkpoint restore from the
+/// persisted `split_of` so the interner is warm before any plan compiles (the
+/// cross-process fix).
+pub fn intern_split_child(op: Uuid, k: usize) -> BodyId {
+    let derived = split_child_uuid(op, k);
+    if let Ok(mut map) = split_interner().write() {
+        map.insert(derived, format!("body_{op}:{k}"));
+    }
+    BodyId(derived)
+}
+
+/// Clears the split-id interner — TEST SUPPORT ONLY (simulates a fresh process so a
+/// test can prove the persisted-`split_of` re-intern path, not a warm interner).
+#[doc(hidden)]
+pub fn clear_split_interner_for_test() {
+    if let Ok(mut map) = split_interner().write() {
+        map.clear();
+    }
+}
+
+/// The interned `body_<opId>:<k>` wire string for a split-child [`BodyId`], if it is
+/// one (i.e. it was produced by [`parse_body_id`]). `None` for a plain `body_<opId>`.
+#[must_use]
+pub fn split_wire(body: BodyId) -> Option<String> {
+    split_interner().read().ok()?.get(&body.0).cloned()
+}
+
+/// The `(opId, ordinal)` a split-child [`BodyId`] was derived from, if it is one.
+/// Used by adoption ([`validate_created`](super::validate_created)) to re-check the
+/// opId against the plan + the `k`-contiguity.
+#[must_use]
+pub fn split_parts(body: BodyId) -> Option<(Uuid, usize)> {
+    let s = split_wire(body)?;
+    let rest = s.strip_prefix("body_")?;
+    let (op, k) = rest.split_once(':')?;
+    Some((Uuid::parse_str(op).ok()?, k.parse().ok()?))
+}
+
+/// The wire form of a [`BodyId`]: `body_<opId>:<k>` for a split child (from the
+/// interner), else `body_<uuid>` (SCHEMA §2 — a NewBody id is `body_<opId>`, the
+/// `opId` being the Rust-minted record-id uuid).
 #[must_use]
 pub fn body_id_wire(body: BodyId) -> String {
+    if let Some(s) = split_wire(body) {
+        return s;
+    }
     format!("body_{}", body.0)
 }
 
-/// Parses a worker `body_<opId>` string back to a core [`BodyId`] (R-WP10 flag):
-/// strip the `body_` prefix and parse the remainder as the op uuid. Split children
-/// (`body_<opId>:<k>`) are deferred (W-WP6) and rejected here.
+/// Parses a worker `body_<opId>` (or split `body_<opId>:<k>`) string back to a core
+/// [`BodyId`] (SCHEMA §2, D1). A plain id maps to `BodyId(opId uuid)`; a split child
+/// maps to the deterministic derived uuid [`split_child_uuid`] and INTERNS the reverse
+/// mapping so [`body_id_wire`] can rebuild the exact `body_<opId>:<k>` string.
 ///
 /// # Errors
-/// A human reason on a missing prefix, a split-child form, or a non-uuid opId.
+/// A human reason on a missing prefix, a non-uuid opId, or a non-integer ordinal.
 pub fn parse_body_id(s: &str) -> Result<BodyId, String> {
     let op = s
         .strip_prefix("body_")
         .ok_or_else(|| format!("bodyId {s:?} missing 'body_' prefix (D1)"))?;
-    if op.contains(':') {
-        return Err(format!("split-child bodyId {s:?} deferred to W-WP6"));
+    if let Some((op_str, k_str)) = op.split_once(':') {
+        let op_uuid = Uuid::parse_str(op_str)
+            .map_err(|e| format!("split-child bodyId {s:?} opId is not a uuid: {e}"))?;
+        let k: usize = k_str
+            .parse()
+            .map_err(|e| format!("split-child bodyId {s:?} ordinal is not an integer: {e}"))?;
+        // Interns the CANONICAL reconstruction so `body_id_wire` always emits the exact
+        // form the worker keys its BodyStore by (lowercase uuid + ordinal).
+        return Ok(intern_split_child(op_uuid, k));
     }
     Uuid::parse_str(op)
         .map(BodyId)
@@ -139,9 +223,15 @@ pub fn execute_plan_args(req: &PlanRequest) -> Value {
 /// One op in `ExecutePlan.ops` (SCHEMA §7.3): `{opType, opId, inputs, params,
 /// determinism}`. `opType`/`params` come from the typed [`Operation`] (same split
 /// the planner hashes over); `inputs`/`determinism` serialize their core structs.
+///
+/// `params` is rendered through [`to_wire_body_form`] so every body-bearing field
+/// (`targetBodyId`/`toolBodyId`/`axis.bodyId`/…) crosses the wire in the worker's
+/// `body_<uuid>` form: the core serde emits a [`BodyId`] transparently as a bare
+/// uuid, but the worker keys its `BodyStore` by `body_<opId>`, so a bare uuid would
+/// never resolve (REF_UNRESOLVED / "target body not found").
 fn wire_op(op: &PlannedOp) -> Value {
     let op_val = serde_json::to_value(&op.operation).unwrap_or(Value::Null);
-    let (op_type, params) = match &op.operation {
+    let (op_type, mut params) = match &op.operation {
         Operation::Known(_) => (
             op_val.get("opType").cloned().unwrap_or(Value::Null),
             op_val.get("params").cloned().unwrap_or(Value::Null),
@@ -152,13 +242,101 @@ fn wire_op(op: &PlannedOp) -> Value {
             (t, Value::Object(obj))
         }
     };
+    to_wire_body_form(&mut params);
+    lift_profile_to_params(&mut params);
     json!({
         "opType": op_type,
         "opId": op.record_id.to_string(),
-        "inputs": wire_op_inputs(&op.operation),
+        // The op's TIMELINE step index (SCHEMA §7.3). Load-bearing for an INCREMENTAL
+        // plan (start_step > 0): the worker keys `lastValidStep` / `perStepResults` on
+        // it, and Rust's prefix-echo verification maps `lastValidStep` back through
+        // `planned_steps`. Omitting it made the worker fall back to the execution-order
+        // index (0-based), so an incremental plan mis-reported its last valid step (a
+        // from-0 plan's exec index equals its step index, so the bug was latent until
+        // checkpoints enabled incremental plans, M5a).
+        "stepIndex": op.step_index,
+        "inputs": wire_op_inputs(op),
         "params": params,
         "determinism": serde_json::to_value(&op.determinism).unwrap_or(Value::Null),
     })
+}
+
+/// Lifts the Rust-core `profile` (`{sketchId, regionId}`, a `SketchRegionRef`) to
+/// **top-level** `params.sketchId` + `params.regionId` and drops the `profile`
+/// wrapper (SCHEMA §7.3 carries no `profile`).
+///
+/// The worker reads the profile source there: `ExtrudeOp`/`RevolveOp` `find_sketch`
+/// selects the sketch by `params.sketchId` (else `last_sketch_id`), and
+/// `build_profile_face` selects the region by matching `params.regionId` against each
+/// detected region's normative FNV id (SCHEMA §7.4). This is what closes the
+/// multi-region / multi-sketch profile-binding gap (M2 flag `last_sketch_id` +
+/// first-region fallback): a non-empty `regionId` now picks a specific region; an
+/// empty/absent one keeps the first-region fallback. Ops without a `profile` object
+/// are untouched.
+///
+/// **Sweep note:** this also fires on a `Sweep` op's `profile` (it has the same
+/// `SketchRegionRef` shape). Sweep has no worker handler yet; when one lands it MUST
+/// read the lifted top-level `params.sketchId`/`params.regionId` (as Extrude/Revolve
+/// do), NOT a nested `params.profile`, which this lift removes.
+fn lift_profile_to_params(params: &mut Value) {
+    let Some(map) = params.as_object_mut() else {
+        return;
+    };
+    let Some(profile) = map.remove("profile") else {
+        return;
+    };
+    let Some(pobj) = profile.as_object() else {
+        return;
+    };
+    if let Some(sid) = pobj.get("sketchId") {
+        map.insert("sketchId".into(), sid.clone());
+    }
+    // Only forward a non-empty regionId — an empty one keeps the worker's
+    // first-region fallback (backward compat with placeholder/legacy region ids).
+    if let Some(rid) = pobj
+        .get("regionId")
+        .filter(|v| v.as_str().is_some_and(|s| !s.is_empty()))
+    {
+        map.insert("regionId".into(), rid.clone());
+    }
+}
+
+/// Rewrites every body-bearing field of `value` — a key exactly `"bodyId"` or ending
+/// in `"BodyId"` (`targetBodyId`, `toolBodyId`, `sourceBodyId`, …) — whose value is a
+/// bare [`Uuid`] string into the worker's `body_<uuid>` wire form (SCHEMA §2),
+/// recursing through nested objects and arrays.
+///
+/// The core serde emits a [`BodyId`] transparently as a **bare uuid** (the frozen
+/// v2 file schema); this wire layer owns rendering it as `body_<uuid>`, the id form
+/// the worker's `BodyStore` is keyed by (a NewBody body is `body_<opId>`).
+/// **Idempotent** — an already-prefixed value (`body_…`) fails the uuid parse and is
+/// left untouched, as is the empty string (`""` = "no body", the NewBody case).
+/// **Scoped to body keys only** — `sketchId`/`opId`/`elementId`/`edgeIds`/… never
+/// match, so a non-body id is never rewritten. **`intent` subtrees are skipped
+/// wholesale**: an [`ElementRef`]'s `intent` is worker-authored frozen evidence
+/// (descriptor + metadata) that must round-trip verbatim — any body reference the
+/// worker ever puts there is already in wire form, and the wire layer must not
+/// rewrite worker-owned bytes (independent-review NOTE, 2026-07-19).
+fn to_wire_body_form(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for (key, v) in map.iter_mut() {
+                if key == "intent" {
+                    continue;
+                }
+                if key == "bodyId" || key.ends_with("BodyId") {
+                    if let Value::String(s) = v {
+                        if let Ok(u) = Uuid::parse_str(s) {
+                            *s = body_id_wire(BodyId(u));
+                        }
+                    }
+                }
+                to_wire_body_form(v);
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(to_wire_body_form),
+        _ => {}
+    }
 }
 
 /// The SCHEMA §7.3 `inputs[]` semantic-ref ARRAY for an op, built from its typed
@@ -171,12 +349,36 @@ fn wire_op(op: &PlannedOp) -> Value {
 /// `bodyId` is rendered in the worker's `body_<uuid>` wire form (SCHEMA §2). The
 /// extrude *profile* rides in `params` (`sketchId`/first region) — the worker reads
 /// it there — so a Blind/NewBody extrude carries no `inputs`.
-fn wire_op_inputs(op: &Operation) -> Value {
-    let refs: Vec<Value> = match op {
-        Operation::Known(KnownOperation::Fillet(p)) => edge_input_refs(&p.edges, &p.edge_ids),
-        Operation::Known(KnownOperation::Chamfer(p)) => edge_input_refs(&p.edges, &p.edge_ids),
+fn wire_op_inputs(op: &PlannedOp) -> Value {
+    let refs: Vec<Value> = match &op.operation {
+        Operation::Known(KnownOperation::Fillet(p)) => {
+            edge_input_refs(&p.edges, &p.edge_ids, &op.inputs.bodies)
+        }
+        Operation::Known(KnownOperation::Chamfer(p)) => {
+            edge_input_refs(&p.edges, &p.edge_ids, &op.inputs.bodies)
+        }
         Operation::Known(KnownOperation::Boolean(p)) => {
             vec![body_input_ref(p.target_body), body_input_ref(p.tool_body)]
+        }
+        // Shell: one semantic ref per removed (open) face. ShellParams carries only
+        // bare ElementIds, so these are element-only face refs (mirrors Fillet's
+        // bare-`edge_ids` fallback); the worker resolves each through the ladder or its
+        // partition-tracked binding (§10). The shelled body rides in `params`.
+        Operation::Known(KnownOperation::Shell(p)) => {
+            face_input_refs(&p.open_faces, &op.inputs.bodies)
+        }
+        // Linear/Circular pattern + MirrorBody: a whole-body ref to the SOURCE body
+        // (the axis/plane/spacing ride in `params`; §7.3). Mirrors Boolean's body refs;
+        // the source id is also in `params.sourceBodyId` (auto-covered by
+        // `to_wire_body_form`), so this is the graph-visible input echo.
+        Operation::Known(KnownOperation::LinearPattern(p)) => {
+            p.source_body.map(body_input_ref).into_iter().collect()
+        }
+        Operation::Known(KnownOperation::CircularPattern(p)) => {
+            p.source_body.map(body_input_ref).into_iter().collect()
+        }
+        Operation::Known(KnownOperation::MirrorBody(p)) => {
+            p.source_body.map(body_input_ref).into_iter().collect()
         }
         Operation::Known(KnownOperation::Extrude(p)) => {
             let mut v = Vec::new();
@@ -198,15 +400,49 @@ fn wire_op_inputs(op: &Operation) -> Value {
 }
 
 /// Fillet/Chamfer edge refs: prefer the typed per-edge [`ElementRef`]s (they carry
-/// the operated body + anchor/descriptor evidence); fall back to bare `edge_ids`
-/// (element-only, no body — the operated body is bound at regen time).
-fn edge_input_refs(edges: &[ElementRef], edge_ids: &[ElementId]) -> Vec<Value> {
+/// the operated body + anchor/descriptor evidence). Fall back to bare `edge_ids`
+/// (element-only), attaching the operated body — the op's graph-view `bodies[0]`
+/// (`FilletParams` derives the operated body from its edge refs; SCHEMA §7.3) — as
+/// `primary.bodyId` in the worker's `body_<uuid>` form so `FilletChamferOp`'s
+/// `target_body_of()` can bind the body. With no body input the ref stays
+/// element-only (a clear worker-side "requires body input" error, not a silent miss).
+fn edge_input_refs(edges: &[ElementRef], edge_ids: &[ElementId], bodies: &[BodyId]) -> Vec<Value> {
     if !edges.is_empty() {
         return edges.iter().map(element_ref_wire).collect();
     }
     edge_ids
         .iter()
-        .map(|id| json!({ "primary": { "elementId": id.as_str(), "kind": "edge" } }))
+        .map(|id| {
+            let mut primary = serde_json::Map::new();
+            if let Some(b) = bodies.first() {
+                primary.insert("bodyId".into(), json!(body_id_wire(*b)));
+            }
+            primary.insert("elementId".into(), json!(id.as_str()));
+            primary.insert("kind".into(), json!("edge"));
+            json!({ "primary": Value::Object(primary) })
+        })
+        .collect()
+}
+
+/// Shell open-face refs: a bare `{primary:{bodyId, elementId, kind:"face"}}` per open
+/// face id. `ShellParams` carries only bare [`ElementId`]s (no typed per-face ref), so
+/// no descriptor/anchor rides — this mirrors [`edge_input_refs`]'s element-only fallback.
+/// The shelled body — the op's graph-view `bodies[0]` (`ShellParams` derives it from
+/// `params.targetBodyId`, SCHEMA §7.3) — is attached as `primary.bodyId` in the worker's
+/// `body_<uuid>` form so `ShellOp` can group + resolve the faces (ladder §10, or the
+/// partition-tracked binding). With no body input the ref stays element-only.
+fn face_input_refs(face_ids: &[ElementId], bodies: &[BodyId]) -> Vec<Value> {
+    face_ids
+        .iter()
+        .map(|id| {
+            let mut primary = serde_json::Map::new();
+            if let Some(b) = bodies.first() {
+                primary.insert("bodyId".into(), json!(body_id_wire(*b)));
+            }
+            primary.insert("elementId".into(), json!(id.as_str()));
+            primary.insert("kind".into(), json!("face"));
+            json!({ "primary": Value::Object(primary) })
+        })
         .collect()
 }
 
@@ -216,39 +452,19 @@ fn body_input_ref(b: BodyId) -> Value {
     json!({ "primary": { "bodyId": body_id_wire(b), "elementId": body_id_wire(b), "kind": "body" } })
 }
 
-/// Render an [`ElementRef`] to the SCHEMA §7.3 semantic-ref JSON, with `bodyId` in
-/// the worker's `body_<uuid>` wire form (the default serde emits the bare uuid).
+/// Render an [`ElementRef`] to the SCHEMA §7.3 semantic-ref JSON (`{primary, intent,
+/// anchor}`), with body-bearing fields in the worker's `body_<uuid>` wire form.
+///
+/// Serializes the typed ref directly (rather than hand-rolling the object), so the
+/// `#[serde(flatten)] extra` forward-compat maps that a hand-rolled builder would
+/// drop survive; `primary.kind` serializes lowercase (`face`/`edge`/`vertex`) via
+/// [`ElementKind`]'s serde derive. [`to_wire_body_form`] then rewrites `primary.bodyId`
+/// (a bare uuid from core serde) into `body_<uuid>` — the form the worker reads in
+/// `OpCommon`/`FilletChamferOp`/`ExtrudeOp::resolve_to_face`.
 fn element_ref_wire(r: &ElementRef) -> Value {
-    let mut o = serde_json::Map::new();
-    if let Some(pr) = &r.primary {
-        o.insert(
-            "primary".into(),
-            json!({
-                "bodyId": body_id_wire(pr.body),
-                "elementId": pr.element.as_str(),
-                "kind": element_kind_str(pr.kind),
-            }),
-        );
-    }
-    if let Some(anchor) = &r.anchor {
-        o.insert("anchor".into(), anchor_to_wire(anchor));
-    }
-    if let Some(intent) = &r.intent {
-        o.insert(
-            "intent".into(),
-            serde_json::to_value(intent).unwrap_or(Value::Null),
-        );
-    }
-    Value::Object(o)
-}
-
-/// The SCHEMA §2 wire kind char-word for an [`ElementKind`].
-fn element_kind_str(kind: ElementKind) -> &'static str {
-    match kind {
-        ElementKind::Face => "face",
-        ElementKind::Edge => "edge",
-        ElementKind::Vertex => "vertex",
-    }
+    let mut v = serde_json::to_value(r).unwrap_or_else(|_| json!({}));
+    to_wire_body_form(&mut v);
+    v
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -446,6 +662,11 @@ fn parse_per_step(v: Option<&Value>) -> Result<Vec<StepResult>, String> {
                     _ => StepStatus::Ok,
                 },
                 body_ids: body_array(r.get("bodyIds"))?,
+                message: r
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
             })
         })
         .collect()
@@ -553,6 +774,151 @@ pub fn export_step_args(path: &str, bodies: &[BodyId], schema: &str) -> Value {
         "bodyIds": bodies.iter().map(|b| body_id_wire(*b)).collect::<Vec<_>>(),
         "schema": schema,
     })
+}
+
+/// `ExportStl.args` (SCHEMA §7.8): `{path, bodyIds, binary, lod}`.
+#[must_use]
+pub fn export_stl_args(path: &str, bodies: &[BodyId], binary: bool, lod: &str) -> Value {
+    json!({
+        "path": path,
+        "bodyIds": bodies.iter().map(|b| body_id_wire(*b)).collect::<Vec<_>>(),
+        "binary": binary,
+        "lod": lod,
+    })
+}
+
+/// `ExportObj.args` (SCHEMA §7.8): `{path, bodyIds, lod}`.
+#[must_use]
+pub fn export_obj_args(path: &str, bodies: &[BodyId], lod: &str) -> Value {
+    json!({
+        "path": path,
+        "bodyIds": bodies.iter().map(|b| body_id_wire(*b)).collect::<Vec<_>>(),
+        "lod": lod,
+    })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Checkpoints (SCHEMA §7.7)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `SaveCheckpoint.args` (SCHEMA §7.7): `{stepIndex}`.
+#[must_use]
+pub fn save_checkpoint_args(step_index: usize) -> Value {
+    json!({ "stepIndex": step_index })
+}
+
+/// `RestoreCheckpoint.args` (SCHEMA §7.7 + `workerEpoch` for D4 fencing +
+/// `stepIndex` so the worker keys its in-session retained checkpoint).
+#[must_use]
+pub fn restore_checkpoint_args(req: &RestoreRequest, worker_epoch: WorkerEpoch) -> Value {
+    json!({
+        "checkpointId": req.checkpoint.checkpoint_id.as_str(),
+        "stepIndex": req.checkpoint.step_index,
+        "expectedHistoryPrefixHash": req.expected_history_prefix_hash.as_str(),
+        "workerEpoch": worker_epoch.0,
+    })
+}
+
+/// Extracts the bytes of a named `bin` section from a resp's binary tail.
+fn extract_bin_section(
+    name: Option<&Value>,
+    sections: &[BinSection],
+    tail: &[u8],
+) -> Result<Vec<u8>, String> {
+    let name = name
+        .and_then(Value::as_str)
+        .ok_or("checkpoint artifact missing 'bin' name")?;
+    let sec = sections
+        .iter()
+        .find(|s| s.name == name)
+        .ok_or_else(|| format!("checkpoint bin section {name:?} missing"))?;
+    let (start, end) = (sec.off as usize, (sec.off + sec.len) as usize);
+    tail.get(start..end)
+        .map(<[u8]>::to_vec)
+        .ok_or_else(|| format!("checkpoint bin section {name:?} out of range"))
+}
+
+/// Parses a `SaveCheckpoint` resp + its binary tail into core
+/// [`CheckpointArtifacts`] (SCHEMA §7.7). Envelope version axes come from the
+/// current policy (`occt_fingerprint` + version 1s), so a later regen validates the
+/// checkpoint against the running worker's fingerprint (Invariant 7).
+pub fn parse_save_checkpoint(
+    result: &Value,
+    sections: &[BinSection],
+    tail: &[u8],
+    occt_fingerprint: &str,
+) -> Result<CheckpointArtifacts, String> {
+    let step = result.get("stepIndex").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let history_prefix_hash = HistoryPrefixHash::new(
+        result
+            .get("historyPrefixHash")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+    );
+    let signatures = parse_signatures(result.get("signatures"));
+    let mut artifacts = Vec::new();
+    if let Some(arr) = result.get("artifacts").and_then(Value::as_array) {
+        for a in arr {
+            let body = parse_body_id(a.get("bodyId").and_then(Value::as_str).unwrap_or(""))?;
+            let bytes = extract_bin_section(a.get("bin"), sections, tail)?;
+            let content_hash = a
+                .get("contentHash")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let envelope = CheckpointEnvelope {
+                artifact_schema_version: ARTIFACT_SCHEMA_VERSION,
+                body,
+                step,
+                history_prefix_hash: history_prefix_hash.clone(),
+                brep_content_hash: content_hash.clone(),
+                occt_fingerprint: occt_fingerprint.to_string(),
+                descriptor_version: 1,
+                resolver_version: 1,
+                quantization_version: 1,
+                signature_version: 1,
+                codec: a
+                    .get("codec")
+                    .and_then(Value::as_str)
+                    .unwrap_or("brep-bintools")
+                    .to_string(),
+                size: bytes.len() as u64,
+                content_hash,
+            };
+            artifacts.push(CheckpointArtifact { envelope, bytes });
+        }
+    }
+    let element_map_partition = result
+        .get("elementMapPartition")
+        .and_then(|p| extract_bin_section(p.get("bin"), sections, tail).ok())
+        .unwrap_or_default();
+    Ok(CheckpointArtifacts {
+        step,
+        artifacts,
+        element_map_partition,
+        signatures,
+        history_prefix_hash,
+    })
+}
+
+/// The `(restored, drift_detected, snapshot_id)` a `RestoreCheckpoint` resp reports.
+#[must_use]
+pub fn parse_restore_checkpoint(result: &Value) -> (bool, bool, u64) {
+    (
+        result
+            .get("restored")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        result
+            .get("driftDetected")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        result
+            .get("snapshotId")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -821,13 +1187,19 @@ pub fn parse_acquire_evidence(result: &Value, fallback_body: BodyId) -> Vec<Work
 }
 
 /// `ResolveRefs.args` (SCHEMA §7.5) — dry-run ladder for repair dialogs.
+///
+/// Each ref is rendered through [`element_ref_wire`] so its `primary.bodyId` crosses
+/// in the worker's `body_<uuid>` form (SCHEMA §2) — the worker's `BodyStore` is keyed
+/// `body_<opId>`, so a bare core-serde uuid would miss (`referenced body not found`,
+/// the same body-form class as the M2 op-`params` defect; this path went un-exercised
+/// against a real body until the M4a re-resolve gate).
 #[must_use]
 pub fn resolve_refs_args(req: &ResolveRequest) -> Value {
     let refs: Vec<Value> = req
         .refs
         .iter()
         .map(|r| {
-            let mut o = serde_json::to_value(&r.element).unwrap_or_else(|_| json!({}));
+            let mut o = element_ref_wire(&r.element);
             if let Some(map) = o.as_object_mut() {
                 map.insert("refId".to_string(), json!(r.ref_id));
             }
@@ -837,9 +1209,12 @@ pub fn resolve_refs_args(req: &ResolveRequest) -> Value {
     json!({ "snapshotId": req.snapshot_id.0, "refs": refs })
 }
 
-/// Parses a `ResolveRefs` result into core [`RefResolution`]s. The worker returns
-/// a `topoKey` for `autoBind` (Rust mints/binds the real id at bind time); it is
-/// carried as the ref's evidence id here (dry-run — nothing is bound). `needsRepair`
+/// Parses a `ResolveRefs` result into core [`RefResolution`]s (SCHEMA §7.5).
+///
+/// `autoBind` carries the Rust-minted `elementId` in its own slot (empty when the
+/// resolved element is unminted) plus the bound `topoKey` as evidence (SCHEMA §9 —
+/// M4a autoBind-conformance fix; the worker no longer puts the topoKey in the
+/// elementId slot). `unchanged` echoes the ref's bound `elementId`. `needsRepair`
 /// carries the full [`RepairItem`] evidence.
 #[must_use]
 pub fn parse_resolve_refs(result: &Value) -> Vec<RefResolution> {
@@ -850,24 +1225,36 @@ pub fn parse_resolve_refs(result: &Value) -> Vec<RefResolution> {
         .unwrap_or_default()
 }
 
+/// Reads a non-empty string field as an [`ElementId`] (empty/absent ⇒ `None`).
+fn opt_element_id(r: &Value, key: &str) -> Option<ElementId> {
+    r.get(key)
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(ElementId::new)
+}
+
 fn parse_one_resolution(r: &Value) -> Option<RefResolution> {
     let ref_id = r.get("refId").and_then(Value::as_str)?.to_string();
     let outcome = match r.get("outcome").and_then(Value::as_str)? {
         "autoBind" => {
-            // The worker echoes `topoKey` (dry-run — Rust binds the real id later);
-            // `elementId` is used when present (an already-bound `unchanged`-like hit).
-            let id = r
-                .get("elementId")
-                .or_else(|| r.get("topoKey"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
+            // SCHEMA §7.5 strict slot: `elementId` is the bound Rust-minted id (empty
+            // ⇒ None here). The bound `topoKey` rides as EVIDENCE (SCHEMA §9). A
+            // one-release tolerance: a legacy worker that emitted only `topoKey` (no
+            // `elementId`) still parses — the topoKey lands as evidence, elementId None.
             ResolveOutcome::AutoBind {
-                element_id: ElementId::new(id),
+                element_id: opt_element_id(r, "elementId").unwrap_or_else(|| ElementId::new("")),
                 score: r.get("score").and_then(Value::as_f64).unwrap_or(0.0),
                 margin: r.get("margin").and_then(Value::as_f64).unwrap_or(0.0),
+                topo_key: r
+                    .get("topoKey")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(TopoKey::new),
             }
         }
-        "unchanged" => ResolveOutcome::Unchanged,
+        "unchanged" => ResolveOutcome::Unchanged {
+            element_id: opt_element_id(r, "elementId"),
+        },
         "needsRepair" => {
             let mut obj = r.get("needsRepair").cloned().unwrap_or_else(|| json!({}));
             if let Some(map) = obj.as_object_mut() {
@@ -1186,9 +1573,81 @@ mod tests {
         assert!(parse_body_id("body_not-a-uuid").is_err());
         assert!(parse_body_id("7").is_err(), "missing prefix");
         assert!(
-            parse_body_id("body_00000000-0000-0000-0000-000000000001:0").is_err(),
-            "split child deferred"
+            parse_body_id("body_00000000-0000-0000-0000-000000000001:x").is_err(),
+            "non-integer ordinal"
         );
+        assert!(
+            parse_body_id("body_not-a-uuid:0").is_err(),
+            "split child with non-uuid opId"
+        );
+    }
+
+    // Serializes the interner-mutating tests: the split interner is a process-global,
+    // and `clear_split_interner_for_test` wipes it, so two such tests must not race.
+    static INTERNER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn split_child_body_id_round_trips_and_is_deterministic() {
+        let _guard = INTERNER_TEST_LOCK.lock().unwrap();
+        // A split child parses to a DERIVED uuid (not the opId), and body_id_wire
+        // rebuilds the EXACT `body_<opId>:<k>` string via the interner (SCHEMA §2).
+        let op = Uuid::from_u128(0xABCD);
+        let s0 = format!("body_{op}:0");
+        let s1 = format!("body_{op}:1");
+        let child0 = parse_body_id(&s0).unwrap();
+        let child1 = parse_body_id(&s1).unwrap();
+        assert_ne!(child0, child1, "distinct ordinals → distinct ids");
+        assert_ne!(child0, BodyId(op), "child id is NOT the opId uuid");
+        assert_eq!(
+            body_id_wire(child0),
+            s0,
+            "round-trips to the exact wire form"
+        );
+        assert_eq!(body_id_wire(child1), s1);
+        // Deterministic (pure function of opId + k) — a re-parse yields the same id.
+        assert_eq!(parse_body_id(&s0).unwrap(), child0);
+        // split_parts recovers (opId, k) for adoption.
+        assert_eq!(split_parts(child0), Some((op, 0)));
+        assert_eq!(split_parts(child1), Some((op, 1)));
+        assert_eq!(
+            split_parts(BodyId(op)),
+            None,
+            "a plain NewBody id is not a split child"
+        );
+    }
+
+    #[test]
+    fn split_child_reinterns_after_fresh_process_simulation() {
+        let _guard = INTERNER_TEST_LOCK.lock().unwrap();
+        // A worker mint parses the child + interns it (the warm-process path).
+        let op = Uuid::from_u128(0xF00D);
+        let child = parse_body_id(&format!("body_{op}:1")).unwrap();
+        assert_eq!(body_id_wire(child), format!("body_{op}:1"));
+
+        // Simulate a FRESH PROCESS: nothing parsed yet, interner empty.
+        clear_split_interner_for_test();
+        // PRE-FIX behavior (the gap): body_id_wire MISSES and renders the bare derived
+        // uuid — an id the worker never minted ⇒ REF_UNRESOLVED for any downstream ref.
+        assert_eq!(
+            body_id_wire(child),
+            format!("body_{}", child.0),
+            "pre-fix: a cold interner renders the wrong (bare-uuid) id"
+        );
+        assert_ne!(body_id_wire(child), format!("body_{op}:1"));
+
+        // THE FIX: re-intern from the persisted split_of (opId, k) — exactly what
+        // DocumentRuntime does at open — and the render is correct again.
+        let rederived = intern_split_child(op, 1);
+        assert_eq!(
+            rederived, child,
+            "re-intern derives the SAME BodyId (deterministic)"
+        );
+        assert_eq!(
+            body_id_wire(child),
+            format!("body_{op}:1"),
+            "fixed: the persisted split_of repopulates the interner"
+        );
+        clear_split_interner_for_test(); // leave the interner clean for other tests
     }
 
     #[test]
@@ -1467,17 +1926,351 @@ mod solver_wire_tests {
     #[test]
     fn resolve_refs_parses_all_three_outcomes() {
         let result = json!({ "resolutions": [
-            { "refId": "op_5.input0", "outcome": "autoBind", "topoKey": "f:1", "score": 0.94, "margin": 0.31 },
+            // M4a shape: `elementId` in its own slot (Rust-minted), `topoKey` = evidence.
+            { "refId": "op_5.input0", "outcome": "autoBind", "elementId": "el_top", "topoKey": "f:1", "score": 0.94, "margin": 0.31 },
             { "refId": "op_5.input1", "outcome": "unchanged", "elementId": "el_9", "topoKey": "f:2" },
             { "refId": "op_5.input2", "outcome": "needsRepair",
-              "needsRepair": { "refId": "op_5.input2", "ladderFailed": "descriptor", "reason": "ambiguous", "candidates": [] } }
+              "needsRepair": { "refId": "op_5.input2", "ladderFailed": "descriptor", "reason": "ambiguous", "candidates": [] } },
+            // Unminted dry-run autoBind: empty elementId, topoKey still rides as evidence.
+            { "refId": "op_5.input3", "outcome": "autoBind", "elementId": "", "topoKey": "f:3", "score": 0.9, "margin": 0.2 }
         ]});
         let res = parse_resolve_refs(&result);
-        assert_eq!(res.len(), 3);
-        assert!(
-            matches!(res[0].outcome, ResolveOutcome::AutoBind { score, .. } if (score - 0.94).abs() < 1e-9)
-        );
-        assert!(matches!(res[1].outcome, ResolveOutcome::Unchanged));
+        assert_eq!(res.len(), 4);
+        match &res[0].outcome {
+            ResolveOutcome::AutoBind {
+                element_id,
+                score,
+                topo_key,
+                ..
+            } => {
+                assert_eq!(element_id.as_str(), "el_top", "elementId in its own slot");
+                assert!((score - 0.94).abs() < 1e-9);
+                assert_eq!(
+                    topo_key.as_ref().map(TopoKey::as_str),
+                    Some("f:1"),
+                    "topoKey rides as evidence"
+                );
+            }
+            other => panic!("expected AutoBind, got {other:?}"),
+        }
+        assert!(matches!(
+            &res[1].outcome,
+            ResolveOutcome::Unchanged { element_id } if element_id.as_ref().map(ElementId::as_str) == Some("el_9")
+        ));
         assert!(matches!(res[2].outcome, ResolveOutcome::NeedsRepair(_)));
+        // Unminted autoBind: empty elementId, topoKey preserved as evidence.
+        match &res[3].outcome {
+            ResolveOutcome::AutoBind {
+                element_id,
+                topo_key,
+                ..
+            } => {
+                assert!(element_id.as_str().is_empty(), "unminted ⇒ empty elementId");
+                assert_eq!(topo_key.as_ref().map(TopoKey::as_str), Some("f:3"));
+            }
+            other => panic!("expected AutoBind, got {other:?}"),
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BodyId wire-form rendering (M2 code-review defects 1–6) — the params/inputs body
+// fields must cross the wire as `body_<uuid>` (SCHEMA §2), never a bare core-serde
+// uuid (which the worker's BodyStore, keyed `body_<opId>`, would never resolve).
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod body_wire_tests {
+    use super::*;
+    use onecad_core::document::record::{
+        BooleanMode, BooleanOp, BooleanParams, DeterminismSettings, ExtrudeParams, FilletParams,
+        OperationInputs, RevolveParams,
+    };
+    use onecad_core::document::refs::{AxisRef, ElementKind, ElementRef, Extra, PrimaryRef};
+    use onecad_core::document::variables::Scalar;
+    use onecad_core::ids::RecordId;
+
+    fn planned(op: Operation, inputs: OperationInputs) -> PlannedOp {
+        PlannedOp {
+            record_id: RecordId(Uuid::from_u128(0xE0)),
+            step_index: 1,
+            operation: op,
+            inputs,
+            determinism: DeterminismSettings::default(),
+        }
+    }
+
+    fn extrude_cut(target: BodyId) -> ExtrudeParams {
+        ExtrudeParams {
+            profile: None,
+            distance: Scalar::new(5.0),
+            draft_angle_deg: Scalar::new(0.0),
+            mode: ExtrudeMode::Blind,
+            boolean_mode: BooleanMode::Cut,
+            target_body: Some(target),
+            target_face: None,
+            two_directions: false,
+            mode2: ExtrudeMode::Blind,
+            distance2: Scalar::new(0.0),
+            target_face2: None,
+            extra: Default::default(),
+        }
+    }
+
+    #[test]
+    fn to_wire_body_form_rewrites_only_body_keys() {
+        let u = Uuid::from_u128(0xABC);
+        let bare = u.to_string();
+        let mut v = json!({
+            "targetBodyId": bare,
+            "toolBodyId": bare,
+            "sourceBodyId": bare,
+            "bodyId": bare,
+            "sketchId": bare,        // not a body key
+            "elementId": "el_1",
+            "bodyIdList": bare,      // contains but does not END with BodyId
+            "nested": { "axis": { "bodyId": bare } },
+            "already": { "targetBodyId": format!("body_{u}") },  // idempotent
+            "empty": { "targetBodyId": "" },                     // NewBody
+            // Worker-authored frozen evidence: round-trips verbatim, never rewritten.
+            "intent": { "bodyId": bare, "descriptor": { "refBodyId": bare } },
+        });
+        to_wire_body_form(&mut v);
+        let want = format!("body_{u}");
+        for k in ["targetBodyId", "toolBodyId", "sourceBodyId", "bodyId"] {
+            assert_eq!(v[k], json!(want), "{k} → body_<uuid>");
+        }
+        assert_eq!(v["sketchId"], json!(bare), "sketchId is not a body key");
+        assert_eq!(
+            v["bodyIdList"],
+            json!(bare),
+            "suffix match only (not substring)"
+        );
+        assert_eq!(v["nested"]["axis"]["bodyId"], json!(want), "recurses");
+        assert_eq!(
+            v["already"]["targetBodyId"],
+            json!(want),
+            "already-prefixed is left as-is (idempotent)"
+        );
+        assert_eq!(v["empty"]["targetBodyId"], json!(""), "empty stays empty");
+        assert_eq!(
+            v["intent"],
+            json!({ "bodyId": bare, "descriptor": { "refBodyId": bare } }),
+            "intent subtree (worker-authored evidence) round-trips verbatim"
+        );
+    }
+
+    #[test]
+    fn wire_op_boolean_renders_body_wire_form() {
+        let target = BodyId(Uuid::from_u128(0x11));
+        let tool = BodyId(Uuid::from_u128(0x22));
+        let op = Operation::Known(KnownOperation::Boolean(BooleanParams {
+            operation: BooleanOp::Cut,
+            target_body: target,
+            tool_body: tool,
+            extra: Default::default(),
+        }));
+        let inputs = op.derive_inputs();
+        let w = wire_op(&planned(op, inputs));
+        assert_eq!(w["params"]["targetBodyId"], json!(body_id_wire(target)));
+        assert_eq!(w["params"]["toolBodyId"], json!(body_id_wire(tool)));
+        // inputs[] whole-body refs carry the same wire form + kind "body".
+        assert_eq!(
+            w["inputs"][0]["primary"]["bodyId"],
+            json!(body_id_wire(target))
+        );
+        assert_eq!(w["inputs"][0]["primary"]["kind"], json!("body"));
+        assert_eq!(
+            w["inputs"][1]["primary"]["bodyId"],
+            json!(body_id_wire(tool))
+        );
+    }
+
+    #[test]
+    fn wire_op_extrude_cut_renders_target_body_wire_form() {
+        let target = BodyId(Uuid::from_u128(0x33));
+        let op = Operation::Known(KnownOperation::Extrude(extrude_cut(target)));
+        let inputs = op.derive_inputs();
+        let w = wire_op(&planned(op, inputs));
+        assert_eq!(w["params"]["targetBodyId"], json!(body_id_wire(target)));
+    }
+
+    #[test]
+    fn element_ref_wire_body_form_kind_and_extra_survive() {
+        let body = BodyId(Uuid::from_u128(0x44));
+        let mut extra = Extra::new();
+        extra.insert("alienRefKey".into(), json!({ "keep": true }));
+        let r = ElementRef {
+            primary: Some(PrimaryRef {
+                body,
+                element: ElementId::new("el_9"),
+                kind: ElementKind::Face,
+                extra: Default::default(),
+            }),
+            intent: None,
+            anchor: None,
+            extra,
+        };
+        let w = element_ref_wire(&r);
+        assert_eq!(w["primary"]["bodyId"], json!(body_id_wire(body)));
+        assert_eq!(w["primary"]["elementId"], json!("el_9"));
+        assert_eq!(
+            w["primary"]["kind"],
+            json!("face"),
+            "kind lowercases via derive"
+        );
+        assert_eq!(
+            w["alienRefKey"],
+            json!({ "keep": true }),
+            "serde-flattened extra preserved (hand-rolled builder dropped it)"
+        );
+    }
+
+    #[test]
+    fn edge_input_refs_bare_fallback_attaches_operated_body() {
+        let body = BodyId(Uuid::from_u128(0x55));
+        let ids = vec![ElementId::new("e:5"), ElementId::new("e:6")];
+        let with_body = edge_input_refs(&[], &ids, &[body]);
+        assert_eq!(
+            with_body[0]["primary"]["bodyId"],
+            json!(body_id_wire(body)),
+            "bare fallback attaches the operated body (defect 5)"
+        );
+        assert_eq!(with_body[0]["primary"]["elementId"], json!("e:5"));
+        assert_eq!(with_body[0]["primary"]["kind"], json!("edge"));
+        // No body input ⇒ element-only (a clear worker-side "requires body input").
+        let no_body = edge_input_refs(&[], &ids, &[]);
+        assert!(no_body[0]["primary"].get("bodyId").is_none());
+        assert_eq!(no_body[0]["primary"]["elementId"], json!("e:5"));
+    }
+
+    #[test]
+    fn wire_op_fillet_bare_edge_ids_carries_operated_body() {
+        let body = BodyId(Uuid::from_u128(0x66));
+        let op = Operation::Known(KnownOperation::Fillet(FilletParams {
+            radius: Scalar::new(2.0),
+            edge_ids: vec![ElementId::new("e:14")],
+            edges: vec![],
+            chain_tangent_edges: false,
+            extra: Default::default(),
+        }));
+        // The graph-view carries the operated body at bodies[0] (as the plan would
+        // when the fillet's body input is known), exercising the bare-fallback attach.
+        let mut inputs = OperationInputs::default();
+        inputs.bodies.push(body);
+        inputs.elements.push(ElementId::new("e:14"));
+        let w = wire_op(&planned(op, inputs));
+        assert_eq!(
+            w["inputs"][0]["primary"]["bodyId"],
+            json!(body_id_wire(body))
+        );
+        assert_eq!(w["inputs"][0]["primary"]["kind"], json!("edge"));
+    }
+
+    #[test]
+    fn wire_op_lifts_profile_to_sketch_and_region_for_extrude_and_revolve() {
+        use onecad_core::document::refs::SketchRegionRef;
+        use onecad_core::ids::{RegionId, SketchId};
+
+        let sid = SketchId(Uuid::from_u128(0x5c));
+        let region = "r_0123456789abcdef";
+        let profile = SketchRegionRef {
+            sketch: sid,
+            region: RegionId::new(region),
+            extra: Default::default(),
+        };
+
+        // Extrude: profile {sketchId, regionId} is lifted to top-level params; the
+        // core-only `profile` wrapper (SCHEMA §7.3 has none) is dropped.
+        let ex = Operation::Known(KnownOperation::Extrude(ExtrudeParams {
+            profile: Some(profile.clone()),
+            distance: Scalar::new(5.0),
+            draft_angle_deg: Scalar::new(0.0),
+            mode: ExtrudeMode::Blind,
+            boolean_mode: BooleanMode::NewBody,
+            target_body: None,
+            target_face: None,
+            two_directions: false,
+            mode2: ExtrudeMode::Blind,
+            distance2: Scalar::new(0.0),
+            target_face2: None,
+            extra: Default::default(),
+        }));
+        let w = wire_op(&planned(ex.clone(), ex.derive_inputs()));
+        assert_eq!(w["params"]["sketchId"], json!(sid.to_string()));
+        assert_eq!(w["params"]["regionId"], json!(region));
+        assert!(
+            w["params"].get("profile").is_none(),
+            "the core-only `profile` wrapper is dropped from the wire"
+        );
+
+        // Revolve: same lift (the frontend Revolve WP now sends a profile too; the
+        // worker's RevolveOp reads params.sketchId/regionId via the SAME find_sketch +
+        // build_profile_face path as Extrude).
+        let rev = Operation::Known(KnownOperation::Revolve(RevolveParams {
+            profile: Some(profile),
+            angle_deg: Scalar::new(360.0),
+            axis: None,
+            boolean_mode: BooleanMode::NewBody,
+            target_body: None,
+            extra: Default::default(),
+        }));
+        let w = wire_op(&planned(rev.clone(), rev.derive_inputs()));
+        assert_eq!(w["params"]["sketchId"], json!(sid.to_string()));
+        assert_eq!(w["params"]["regionId"], json!(region));
+        assert!(w["params"].get("profile").is_none());
+
+        // An EMPTY regionId is NOT forwarded (keeps the worker's first-region fallback).
+        let ex_empty = Operation::Known(KnownOperation::Extrude(ExtrudeParams {
+            profile: Some(SketchRegionRef {
+                sketch: sid,
+                region: RegionId::new(""),
+                extra: Default::default(),
+            }),
+            distance: Scalar::new(5.0),
+            draft_angle_deg: Scalar::new(0.0),
+            mode: ExtrudeMode::Blind,
+            boolean_mode: BooleanMode::NewBody,
+            target_body: None,
+            target_face: None,
+            two_directions: false,
+            mode2: ExtrudeMode::Blind,
+            distance2: Scalar::new(0.0),
+            target_face2: None,
+            extra: Default::default(),
+        }));
+        let w = wire_op(&planned(ex_empty.clone(), ex_empty.derive_inputs()));
+        assert_eq!(w["params"]["sketchId"], json!(sid.to_string()));
+        assert!(
+            w["params"].get("regionId").is_none(),
+            "empty regionId is not forwarded (first-region fallback)"
+        );
+    }
+
+    #[test]
+    fn wire_op_revolve_renders_axis_and_target_body_wire_form() {
+        let axis_body = BodyId(Uuid::from_u128(0x77));
+        let target = BodyId(Uuid::from_u128(0x88));
+        let op = Operation::Known(KnownOperation::Revolve(RevolveParams {
+            profile: None,
+            angle_deg: Scalar::new(90.0),
+            axis: Some(AxisRef::Element {
+                body: axis_body,
+                edge: ElementId::new("e:2"),
+                extra: Default::default(),
+            }),
+            boolean_mode: BooleanMode::Cut,
+            target_body: Some(target),
+            extra: Default::default(),
+        }));
+        let inputs = op.derive_inputs();
+        let w = wire_op(&planned(op, inputs));
+        // Both body-bearing params fields (edge-axis body + boolean target) → wire form
+        // via to_wire_body_form; the worker reads them from params (no inputs branch).
+        assert_eq!(
+            w["params"]["axis"]["bodyId"],
+            json!(body_id_wire(axis_body)),
+            "edge-axis body → wire form (defect 4)"
+        );
+        assert_eq!(w["params"]["targetBodyId"], json!(body_id_wire(target)));
     }
 }

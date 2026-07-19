@@ -26,6 +26,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -64,6 +65,26 @@ struct AcceptOutcome {
     protocol::ErrorInfo error;      // when !ok
     std::uint64_t snapshot_id = 0;
     std::uint64_t document_revision = 0;
+};
+
+// One in-session checkpoint (SCHEMA §7.7): the head state at a step, retained so a
+// later incremental regen can restore it WITHOUT the geometry crossing the wire again
+// (the transport carries no request-binary). Persistence to the .onecad container is
+// Rust-side (SaveCheckpoint also serializes these to the resp for durability); on a
+// worker restart the map is empty ⇒ RestoreCheckpoint reports restored=false ⇒ Rust
+// replays from 0 (Invariant 7 — the cache degrades to replay, never a wrong result).
+struct CheckpointState {
+    BodyStore bodies;
+    elementmap::ElementMapPartition partition;
+    std::string history_prefix_hash;
+};
+
+// Outcome of RestoreCheckpoint.
+struct RestoreOutcome {
+    bool restored = false;          // false ⇒ no such in-session checkpoint (replay-from-0)
+    bool drift_detected = false;    // stored hash != expected (staleness)
+    std::uint64_t snapshot_id = 0;
+    std::string stored_hash;        // the checkpoint's history-prefix hash
 };
 
 class Session {
@@ -133,6 +154,16 @@ public:
 
     bool has_scratch() const;
 
+    // --- Checkpoints (SCHEMA §7.7) ---
+    // Save the current head as an in-session checkpoint at `step`. Returns a copy of
+    // the saved state (bodies + partition + hash) so the caller can serialize it for
+    // Rust-side persistence. A later save at the same step supersedes.
+    CheckpointState save_checkpoint(std::uint64_t step);
+    // Restore the in-session checkpoint at `step` as the head (bumps snapshotId, sets
+    // historyPrefixHash). `restored=false` when absent (⇒ Rust replays from 0);
+    // `drift_detected=true` when the stored hash != `expected_hash` (staleness).
+    RestoreOutcome restore_checkpoint(std::uint64_t step, const std::string& expected_hash);
+
 private:
     mutable std::mutex mu_;
     bool open_ = false;
@@ -148,6 +179,7 @@ private:
     SketchStore sketches_;                      // self-locked, shared with solver lane
     std::optional<ScratchJob> scratch_;         // the single prepared job
     std::uint64_t snapshot_counter_ = 0;        // monotonic prepared-snapshot ids
+    std::map<std::uint64_t, CheckpointState> checkpoints_;  // step → retained head (§7.7)
 };
 
 }  // namespace onecad::session

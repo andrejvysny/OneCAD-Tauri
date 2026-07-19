@@ -1,0 +1,17 @@
+# M6a — ExecutePlan LinearPattern (REAL OCCT): sketch -> extrude NewBody ->
+# LinearPattern (3 disjoint copies, fused). 20x20 rect extruded 25 (NewBody
+# body_op1); the pattern makes a NEW body body_op2 (the source body_op1 is
+# preserved). prefixHashes[] are opaque Rust-minted tokens; the worker echoes
+# prefixHashes[lastExecutedIdx].
+{"expect":{"v":1,"t":"hello","seq":0}}
+{"send":{"v":1,"t":"req","id":1,"verb":"OpenSession","args":{"documentId":"doc_lp","documentRevision":0,"workerEpoch":1,"mode":"determinism"}}}
+{"expect":{"v":1,"t":"resp","id":1,"ok":true,"result":{"sessionOpen":true}}}
+{"send":{"v":1,"t":"req","id":2,"verb":"GetWorkerHead","args":{}}}
+{"expect":{"v":1,"t":"resp","id":2,"ok":true,"result":{"documentRevision":0,"workerEpoch":1,"snapshotId":0,"historyPrefixHash":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","hasScratch":false}}}
+{"send":{"v":1,"t":"req","id":3,"verb":"ExecutePlan","args":{"jobId":10,"documentRevision":1,"workerEpoch":1,"expectedBaseHash":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","prefixHashes":["1111111111111111111111111111111111111111111111111111111111111111","2222222222222222222222222222222222222222222222222222222222222222","3333333333333333333333333333333333333333333333333333333333333333"],"targetStep":2,"ops":[{"opType":"Sketch","opId":"op0","stepIndex":0,"params":{"sketchId":"sk1","plane":{"kind":"XY"},"entities":[{"id":"e1","type":"Line","p0":[0,0],"p1":[20,0]},{"id":"e2","type":"Line","p0":[20,0],"p1":[20,20]},{"id":"e3","type":"Line","p0":[20,20],"p1":[0,20]},{"id":"e4","type":"Line","p0":[0,20],"p1":[0,0]}],"constraints":[]}},{"opType":"Extrude","opId":"op1","stepIndex":1,"inputs":[{"primary":{"bodyId":"","elementId":"sk1.region.r0","kind":"face"}}],"params":{"sketchId":"sk1","distance":25.0,"extrudeMode":"Blind","booleanMode":"NewBody"}},{"opType":"LinearPattern","opId":"op2","stepIndex":2,"inputs":[{"primary":{"bodyId":"body_op1","elementId":"body_op1","kind":"body"}}],"params":{"sourceBodyId":"body_op1","direction":[0,1,0],"spacing":40.0,"count":3,"fuseResult":true}}]}}}
+{"expect":{"v":1,"t":"event","id":3,"event":"planStep","stepIndex":0,"jobId":10,"payload":{"stepIndex":0,"bodyEvents":[]}}}
+{"expect":{"v":1,"t":"event","id":3,"event":"planStep","stepIndex":1,"jobId":10,"payload":{"bodyEvents":[{"kind":"created","bodyId":"body_op1"}],"signatures":{"geometry":"$hex64"}}}}
+{"expect":{"v":1,"t":"event","id":3,"event":"planStep","stepIndex":2,"jobId":10,"payload":{"bodyEvents":[{"kind":"created","bodyId":"body_op2"}],"signatures":{"geometry":"$hex64"}}}}
+{"expect":{"v":1,"t":"resp","id":3,"ok":true,"jobId":10,"result":{"planPrepared":true,"preparedSnapshotId":1,"lastValidStep":2,"stoppedReason":"completed","perStepResults":[{"stepIndex":0,"status":"ok"},{"stepIndex":1,"status":"ok","bodyIds":["body_op1"]},{"stepIndex":2,"status":"ok","bodyIds":["body_op2"]}],"historyPrefixHash":"3333333333333333333333333333333333333333333333333333333333333333"}}}
+{"send":{"v":1,"t":"req","id":4,"verb":"Shutdown","args":{}}}
+{"expect":{"v":1,"t":"resp","id":4,"ok":true,"result":{"goodbye":true}}}

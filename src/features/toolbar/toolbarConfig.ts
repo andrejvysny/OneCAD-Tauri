@@ -31,6 +31,11 @@ export const MODEL_TOOLS: ToolEntry[] = [
   { id: "revolve", icon: "revolve", label: "Revolve", shortcut: "R" },
   { id: "fillet", icon: "fillet", label: "Fillet", shortcut: "F" },
   { id: "boolean", icon: "boolean", label: "Combine", shortcut: "B" },
+  { sep: true },
+  { id: "shell", icon: "shell", label: "Shell", shortcut: "K" },
+  { id: "linearPattern", icon: "linearPattern", label: "Linear pattern", shortcut: "P" },
+  { id: "circularPattern", icon: "circularPattern", label: "Circular pattern", shortcut: "C" },
+  { id: "mirror", icon: "mirrorBody", label: "Mirror", shortcut: "M" },
 ];
 
 export const SKETCH_TOOLS: ToolEntry[] = [

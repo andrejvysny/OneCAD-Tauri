@@ -19,13 +19,22 @@ import type {
   DocumentSnapshot,
   FeatureRecord,
   Lod,
+  NeedsRepairEvent,
   OperationOp,
   PromotedElement,
   PromotePick,
   RecentProject,
+  RecoveryInfo,
+  ResolveCandidate,
+  ResolveRefRequest,
+  ResolveRefResult,
   Unsubscribe,
+  WorkerStatus,
 } from "./types";
-import { makeBoxMesh, makeCylinderMesh, makeExtrudeBodyMesh } from "./mockMeshes";
+import type { WireEditCommand } from "./tauriCommandMap";
+import { wireParamsOf } from "./tauriCommandMap";
+import { makeBoxMesh, makeCylinderMesh, makeExtrudeBodyMesh, makeRevolveBodyMesh } from "./mockMeshes";
+import type { LatheAxis } from "@/tools/preview/lathePreview";
 import { createLocalSolverLane } from "./localSolver";
 
 const LATENCY_MS = 120;
@@ -98,6 +107,18 @@ const RECENTS: RecentProject[] = [
   },
 ];
 
+// ── Crash recovery (start screen) — test-seeded seam ────────────────────────
+//
+// DEFAULT NONE so the start screen shows no recovery banner unless a test opts in
+// (existing StartScreen/App tests stay green). `setMockRecovery` seeds/clears it;
+// `checkRecovery` reports it; `recoverDocument` accepts (restore) or discards it.
+let mockRecovery: RecoveryInfo | null = null;
+
+/** Test seam: seed (or clear) the crash-recovery offer the start screen checks. */
+export function setMockRecovery(r: RecoveryInfo | null): void {
+  mockRecovery = r ? { ...r } : null;
+}
+
 // ── Mesh + document-changed emitter (mock backend surface) ──────────────────
 
 /** Which synthesized body geometry a given bodyId serves. */
@@ -118,6 +139,15 @@ const docChangeListeners = new Set<(c: DocumentChange) => void>();
  */
 export function emitMockDocumentChanged(change: DocumentChange): void {
   for (const cb of [...docChangeListeners]) cb(change);
+}
+
+// ── Topology repair (M4b) — needs-repair emitter + canned resolveRefs ──────────
+
+const needsRepairListeners = new Set<(e: NeedsRepairEvent) => void>();
+
+/** Test seam: push a `needs-repair` event through the mock (drives the banner). */
+export function emitMockNeedsRepair(event: NeedsRepairEvent): void {
+  for (const cb of [...needsRepairListeners]) cb(event);
 }
 
 // ── Mock document model: synthetic bodies + feature timeline + undo/redo ───────
@@ -148,6 +178,9 @@ let nextFeatureSeq = 100;
 
 /** featureId → bodyId, so a parametric edit rebuilds the SAME body. */
 const featureBodies = new Map<string, string>();
+
+/** featureId → last committed wire params (the `get_operation_params` source). */
+const featureParams = new Map<string, Record<string, unknown>>();
 
 interface DocSnap {
   label: string;
@@ -195,8 +228,27 @@ function nextFeatureId(): string {
   return `mf${nextFeatureSeq++}`;
 }
 
+/** A deterministic axis just left of a profile (so a re-edit with no axis still forms a body). */
+function fallbackRevolveAxis(ring: [number, number][]): LatheAxis {
+  let minU = Infinity;
+  let minV = Infinity;
+  let maxV = -Infinity;
+  for (const [u, v] of ring) {
+    if (u < minU) minU = u;
+    if (v < minV) minV = v;
+    if (v > maxV) maxV = v;
+  }
+  const x = minU - 1;
+  return { a: [x, minV], b: [x, maxV] };
+}
+
 /** Apply one op forward (mutates features + bodies); returns the body diff. */
-function mutateOp(op: OperationOp): { changed: string[]; removed: string[]; label: string } {
+function mutateOp(op: OperationOp): {
+  changed: string[];
+  removed: string[];
+  label: string;
+  featureId: string;
+} {
   if (op.opType === "Extrude") {
     const { plane, profile } = lane.resolveExtrudeInput(op.sketchId, op.regionId);
     const distance = op.params.distance ?? 10;
@@ -211,7 +263,30 @@ function mutateOp(op: OperationOp): { changed: string[]; removed: string[]; labe
     } else {
       mockFeatures = [...mockFeatures, { id: featureId, kind: "extrude", label: "Extrude", valueText, status: "ok" }];
     }
-    return { changed: [bodyId], removed: [], label: "Extrude" };
+    return { changed: [bodyId], removed: [], label: "Extrude", featureId };
+  }
+  if (op.opType === "Revolve") {
+    const { plane, profile } = lane.resolveExtrudeInput(op.sketchId, op.regionId);
+    const angle = op.params.angleDeg ?? 360;
+    const axisLine =
+      op.params.axis?.kind === "sketchLine"
+        ? lane.resolveSketchLine(op.sketchId, op.params.axis.lineId)
+        : null;
+    // Fall back to a vertical axis just left of the profile so a body still forms
+    // (re-edit carries no axis; the mock only needs a deterministic revolve).
+    const axis = axisLine ?? fallbackRevolveAxis(profile.ring);
+    const editing = op.featureId !== undefined && featureBodies.has(op.featureId);
+    const featureId = op.featureId ?? nextFeatureId();
+    const bodyId = editing ? featureBodies.get(featureId)! : nextBodyId();
+    syntheticBodies.set(bodyId, makeRevolveBodyMesh(profile.ring, axis, plane, angle));
+    featureBodies.set(featureId, bodyId);
+    const valueText = `${Math.round(Math.abs(angle))}°`;
+    if (editing) {
+      mockFeatures = mockFeatures.map((f) => (f.id === featureId ? { ...f, valueText } : f));
+    } else {
+      mockFeatures = [...mockFeatures, { id: featureId, kind: "revolve", label: "Revolve", valueText, status: "ok" }];
+    }
+    return { changed: [bodyId], removed: [], label: "Revolve", featureId };
   }
   if (op.opType === "Fillet") {
     // MOCK LIMIT: no real rounding — re-emit the target body + add a feature.
@@ -219,7 +294,64 @@ function mutateOp(op: OperationOp): { changed: string[]; removed: string[]; labe
     const featureId = op.featureId ?? nextFeatureId();
     const valueText = `${op.params.radius.toFixed(1)} mm`;
     mockFeatures = [...mockFeatures, { id: featureId, kind: "fillet", label: "Fillet", valueText, status: "ok" }];
-    return { changed: [bodyId], removed: [], label: "Fillet" };
+    return { changed: [bodyId], removed: [], label: "Fillet", featureId };
+  }
+  if (op.opType === "Shell") {
+    // MOCK LIMIT: no real hollowing — re-emit the shelled body + a feature. A
+    // re-edit (featureId of an existing shell) just updates the thickness text.
+    const bodyId = op.params.targetBodyId ?? op.inputs?.[0]?.primary.bodyId ?? "body1";
+    const featureId = op.featureId ?? nextFeatureId();
+    const valueText = `${op.params.thickness.toFixed(1)} mm`;
+    const editing = op.featureId !== undefined && mockFeatures.some((f) => f.id === featureId);
+    if (editing) {
+      mockFeatures = mockFeatures.map((f) => (f.id === featureId ? { ...f, valueText } : f));
+    } else {
+      mockFeatures = [...mockFeatures, { id: featureId, kind: "shell", label: "Shell", valueText, status: "ok" }];
+    }
+    return { changed: [bodyId], removed: [], label: "Shell", featureId };
+  }
+  if (op.opType === "LinearPattern") {
+    // MOCK LIMIT: no real instancing — re-emit the source body + a feature.
+    const bodyId = op.params.sourceBodyId ?? op.inputs?.[0]?.primary.bodyId ?? "body1";
+    const featureId = op.featureId ?? nextFeatureId();
+    const valueText = `×${op.params.count}`;
+    const editing = op.featureId !== undefined && mockFeatures.some((f) => f.id === featureId);
+    if (editing) {
+      mockFeatures = mockFeatures.map((f) => (f.id === featureId ? { ...f, valueText } : f));
+    } else {
+      mockFeatures = [
+        ...mockFeatures,
+        { id: featureId, kind: "linearPattern", label: "Linear Pattern", valueText, status: "ok" },
+      ];
+    }
+    return { changed: [bodyId], removed: [], label: "Linear Pattern", featureId };
+  }
+  if (op.opType === "CircularPattern") {
+    const bodyId = op.params.sourceBodyId ?? op.inputs?.[0]?.primary.bodyId ?? "body1";
+    const featureId = op.featureId ?? nextFeatureId();
+    const valueText = `×${op.params.count}`;
+    const editing = op.featureId !== undefined && mockFeatures.some((f) => f.id === featureId);
+    if (editing) {
+      mockFeatures = mockFeatures.map((f) => (f.id === featureId ? { ...f, valueText } : f));
+    } else {
+      mockFeatures = [
+        ...mockFeatures,
+        { id: featureId, kind: "circularPattern", label: "Circular Pattern", valueText, status: "ok" },
+      ];
+    }
+    return { changed: [bodyId], removed: [], label: "Circular Pattern", featureId };
+  }
+  if (op.opType === "MirrorBody") {
+    const bodyId = op.params.sourceBodyId ?? op.inputs?.[0]?.primary.bodyId ?? "body1";
+    const featureId = op.featureId ?? nextFeatureId();
+    const valueText = planeLabelForNormal(op.params.planeNormal);
+    const editing = op.featureId !== undefined && mockFeatures.some((f) => f.id === featureId);
+    if (editing) {
+      mockFeatures = mockFeatures.map((f) => (f.id === featureId ? { ...f, valueText } : f));
+    } else {
+      mockFeatures = [...mockFeatures, { id: featureId, kind: "mirror", label: "Mirror", valueText, status: "ok" }];
+    }
+    return { changed: [bodyId], removed: [], label: "Mirror", featureId };
   }
   // Boolean: MOCK removes the tool body, keeps the target (no real fusion).
   const { targetBodyId, toolBodyId, operation } = op.params;
@@ -229,14 +361,17 @@ function mutateOp(op: OperationOp): { changed: string[]; removed: string[]; labe
     ...mockFeatures,
     { id: featureId, kind: "boolean", label: operation, valueText: "", status: "ok" },
   ];
-  return { changed: [targetBodyId], removed: [toolBodyId], label: operation };
+  return { changed: [targetBodyId], removed: [toolBodyId], label: operation, featureId };
 }
 
 /** Commit an op: push undo, mutate, bump revision, build the result. */
 function commitOp(op: OperationOp): ApplyOperationResult {
   undoStack.push(snap(labelForOp(op)));
   redoStack.length = 0;
-  const { changed, removed, label } = mutateOp(op);
+  const { changed, removed, label, featureId } = mutateOp(op);
+  // Remember the committed wire params so `getOperationParams` can serve a re-edit
+  // its non-scalar inputs (axis / openFaces / edges) verbatim.
+  featureParams.set(featureId, wireParamsOf(op));
   mockRevision += 1;
   return {
     revision: mockRevision,
@@ -275,6 +410,144 @@ function commitAndEmit(op: OperationOp): Promise<ApplyOperationResult> {
   });
 }
 
+/** Canned repair candidates for a ref (deterministic; descending score). */
+function mockResolveRefs(refs: ResolveRefRequest[]): ResolveRefResult[] {
+  return refs.map((r) => {
+    const h = mockElementHash(r.refId);
+    const candidates: ResolveCandidate[] = [
+      {
+        topoKey: `e:${(parseInt(h.slice(0, 2), 16) % 40) + 1}`,
+        score: 0.91,
+        margin: 0.02,
+        worldPos: [12, 3.5, 0],
+        summary: "linear edge, len≈40mm",
+      },
+      {
+        topoKey: `e:${(parseInt(h.slice(2, 4), 16) % 40) + 1}`,
+        score: 0.89,
+        margin: 0.02,
+        worldPos: [12, -3.5, 0],
+        summary: "linear edge, len≈40mm",
+      },
+    ];
+    return {
+      refId: r.refId,
+      outcome: "needsRepair",
+      ladderFailed: "descriptor",
+      reason: "ambiguous",
+      scoringVersion: 1,
+      uiLabel: "Fillet edge",
+      candidates,
+    };
+  });
+}
+
+/** The numeric value of a wire `Scalar` (`{value}`), or `undefined` if not one. */
+function scalarValue(v: unknown): number | undefined {
+  if (v && typeof v === "object" && "value" in (v as Record<string, unknown>)) {
+    const n = (v as { value: unknown }).value;
+    if (typeof n === "number") return n;
+  }
+  return undefined;
+}
+
+/** The feature-chip value text for a re-edited op's wire params (mirrors mutateOp). */
+function valueTextForFeature(
+  kind: FeatureRecord["kind"],
+  params: Record<string, unknown>,
+): string | undefined {
+  switch (kind) {
+    case "extrude": {
+      const d = scalarValue(params.distance);
+      return d === undefined ? undefined : `${Math.abs(d).toFixed(1)} mm`;
+    }
+    case "revolve": {
+      const a = scalarValue(params.angleDeg);
+      return a === undefined ? undefined : `${Math.round(Math.abs(a))}°`;
+    }
+    case "fillet": {
+      const r = scalarValue(params.radius);
+      return r === undefined ? undefined : `${r.toFixed(1)} mm`;
+    }
+    case "shell": {
+      const t = scalarValue(params.thickness);
+      return t === undefined ? undefined : `${t.toFixed(1)} mm`;
+    }
+    case "linearPattern":
+    case "circularPattern":
+      return typeof params.count === "number" ? `×${params.count}` : undefined;
+    default:
+      return undefined;
+  }
+}
+
+/** Apply one raw EditCommand against the mock document model (M4b). */
+async function mockApplyEditCommand(command: WireEditCommand): Promise<ApplyOperationResult> {
+  await wait();
+  switch (command.cmd) {
+    case "removeOperation": {
+      undoStack.push(snap("Delete feature"));
+      redoStack.length = 0;
+      mockFeatures = mockFeatures.filter((f) => f.id !== command.record);
+      mockRevision += 1;
+      const res: ApplyOperationResult = {
+        revision: mockRevision,
+        changedBodies: [],
+        removedBodies: [],
+        features: mockFeatures.map(cloneFeature),
+        opLabel: "Delete",
+      };
+      emitMockDocumentChanged({ revision: res.revision, changedBodies: [], removedBodies: [] });
+      return res;
+    }
+    case "updateOperationParams": {
+      // A parametric re-edit deep-merged the scalar into the stored params at the
+      // mapper (preserving axis / openFaces / edges). Reflect it: store the merged
+      // params, refresh the feature's value text from the changed scalar, and re-emit
+      // its body (the lean mock keeps the same mesh — a documented geometry limit).
+      const feat = mockFeatures.find((f) => f.id === command.record);
+      const params = command.op.params as unknown as Record<string, unknown>;
+      if (feat) {
+        undoStack.push(snap("Update"));
+        redoStack.length = 0;
+        featureParams.set(command.record, { ...(featureParams.get(command.record) ?? {}), ...params });
+        const valueText = valueTextForFeature(feat.kind, params);
+        if (valueText !== undefined) {
+          mockFeatures = mockFeatures.map((f) => (f.id === command.record ? { ...f, valueText } : f));
+        }
+      }
+      mockRevision += 1;
+      const bodyId = featureBodies.get(command.record);
+      const changedBodies = bodyId ? [bodyRef(bodyId)] : [];
+      const res: ApplyOperationResult = {
+        revision: mockRevision,
+        changedBodies,
+        removedBodies: [],
+        features: mockFeatures.map(cloneFeature),
+        opLabel: "Update",
+      };
+      emitMockDocumentChanged({ revision: res.revision, changedBodies, removedBodies: [] });
+      return res;
+    }
+    case "editOperationInput": {
+      // Rebind: no structural change in the lean mock, but bump the revision + emit
+      // document-changed so the regen correlation resolves.
+      mockRevision += 1;
+      const res = noopResult();
+      emitMockDocumentChanged({ revision: res.revision, changedBodies: [], removedBodies: [] });
+      return res;
+    }
+    case "setOperationSuppression":
+    case "setRollback":
+    default:
+      // Suppression / rollback carry no distinct projection signal in the lean mock
+      // (the real projection maps Suppressed→dirty; the frontend tracks an optimistic
+      // overlay for dimming — see historyStore). Return a valid no-op result.
+      mockRevision += 1;
+      return { ...noopResult(), opLabel: "Edit" };
+  }
+}
+
 // ── Shared sketch-solver + preview lane (F-WP8 seam; same module the tauri
 //    client uses). Commit routes into the local document model above. ──────────
 const lane = createLocalSolverLane({ commit: commitAndEmit, latencyMs: () => mockLatency });
@@ -288,6 +561,7 @@ export function resetMockSketches(): void {
 export function resetMockDocument(): void {
   syntheticBodies.clear();
   featureBodies.clear();
+  featureParams.clear();
   lane.resetPreview();
   mockFeatures = MOCK_BASE_FEATURES.map(cloneFeature);
   mockRevision = 5;
@@ -295,6 +569,7 @@ export function resetMockDocument(): void {
   nextFeatureSeq = 100;
   undoStack.length = 0;
   redoStack.length = 0;
+  mockRecovery = null;
 }
 
 export const mockClient: CadClient = {
@@ -315,10 +590,51 @@ export const mockClient: CadClient = {
     await wait();
     return snapshot(basename(path));
   },
+  async checkRecovery() {
+    await wait();
+    return mockRecovery ? { ...mockRecovery } : null;
+  },
+  async recoverDocument(accept: boolean) {
+    await wait();
+    if (!accept) {
+      mockRecovery = null;
+      return null;
+    }
+    const snap = snapshot(mockRecovery?.originalPath ? basename(mockRecovery.originalPath) : "Recovered");
+    mockRecovery = null;
+    return snap;
+  },
   async openFileDialog() {
     await wait(40);
     // Rust returns the real chosen path in F-WP8; here we fake a pick.
     return "/Users/andrej/CAD/Projects/Imported.onecad";
+  },
+
+  // Save/export are Rust-owned in the real app; the mock keeps them deterministic
+  // (no filesystem): saveDocument is a no-op, Save As / Export return fake paths.
+  async saveDocument(_path?: string) {
+    await wait(40);
+  },
+  async saveDocumentAs() {
+    await wait(40);
+    return "/Users/andrej/CAD/Projects/Untitled.onecad";
+  },
+  async exportStep() {
+    await wait(40);
+    return "/Users/andrej/CAD/Projects/Untitled.step";
+  },
+  async exportStl() {
+    await wait(40);
+    return "/Users/andrej/CAD/Projects/Untitled.stl";
+  },
+  async exportObj() {
+    await wait(40);
+    return "/Users/andrej/CAD/Projects/Untitled.obj";
+  },
+
+  // The mock has no worker, so it never emits worker-status (no-op unsubscribe).
+  onWorkerStatus(_cb: (status: WorkerStatus) => void): Unsubscribe {
+    return () => {};
   },
 
   async getBodyMesh(bodyId, _lod) {
@@ -347,6 +663,27 @@ export const mockClient: CadClient = {
       kind: p.topoKey.startsWith("e:") ? "edge" : "face",
       bodyId,
     }));
+  },
+
+  // ── Topology repair (M4b) ──────────────────────────────────────────────────
+  onNeedsRepair(cb: (e: NeedsRepairEvent) => void): Unsubscribe {
+    needsRepairListeners.add(cb);
+    return () => needsRepairListeners.delete(cb);
+  },
+  async resolveRefs(refs: ResolveRefRequest[]): Promise<ResolveRefResult[]> {
+    await wait(MESH_LATENCY_MS);
+    return mockResolveRefs(refs);
+  },
+  applyEditCommand(command: WireEditCommand): Promise<ApplyOperationResult> {
+    return mockApplyEditCommand(command);
+  },
+
+  async getOperationParams(recordId: string): Promise<Record<string, unknown>> {
+    await wait();
+    const params = featureParams.get(recordId);
+    if (!params) throw new Error(`get_operation_params: unknown record ${recordId}`);
+    // Deep clone so a caller's deep-merge never mutates the stored params.
+    return JSON.parse(JSON.stringify(params)) as Record<string, unknown>;
   },
 
   // ── Model operations (SCHEMA §7.3) — the mock's local document model ───────
@@ -417,4 +754,13 @@ function mockElementHash(s: string): string {
 function basename(path: string): string {
   const file = path.split(/[\\/]/).pop() ?? path;
   return file.replace(/\.[^.]+$/, "");
+}
+
+/** Short mirror-plane label from a world plane normal (mock feature valueText). */
+function planeLabelForNormal(n: [number, number, number]): string {
+  const [x, y, z] = n.map((c) => Math.abs(c));
+  if (z > x && z > y) return "XY";
+  if (y > x && y > z) return "XZ";
+  if (x > y && x > z) return "YZ";
+  return "";
 }

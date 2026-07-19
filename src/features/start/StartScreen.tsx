@@ -7,6 +7,7 @@ import { Icon } from "@/icons/Icon";
 import { useAppStore } from "@/stores/appStore";
 import type { RecentProject } from "@/ipc/types";
 import { RecentGrid } from "./RecentGrid";
+import { RecoveryCard } from "./RecoveryCard";
 import { SortMenu, type SortKey } from "./SortMenu";
 
 const APP_VERSION = "v0.1.0";
@@ -39,6 +40,11 @@ export function StartScreen() {
   const openProject = useAppStore((s) => s.openProject);
   const openDialogAndOpen = useAppStore((s) => s.openDialogAndOpen);
   const importStep = useAppStore((s) => s.importStep);
+  const recovery = useAppStore((s) => s.recovery);
+  const recoveryStatus = useAppStore((s) => s.recoveryStatus);
+  const checkRecovery = useAppStore((s) => s.checkRecovery);
+  const recoverDocument = useAppStore((s) => s.recoverDocument);
+  const discardRecovery = useAppStore((s) => s.discardRecovery);
 
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortKey>("date");
@@ -46,6 +52,10 @@ export function StartScreen() {
   useEffect(() => {
     if (recentsStatus === "idle") void loadRecents();
   }, [recentsStatus, loadRecents]);
+
+  useEffect(() => {
+    if (recoveryStatus === "idle") void checkRecovery();
+  }, [recoveryStatus, checkRecovery]);
 
   const list = useMemo(
     () => filterSort(recents, query, sort),
@@ -79,6 +89,15 @@ export function StartScreen() {
             Import STEP…
           </Button>
         </div>
+
+        {/* Crash-recovery offer (a crashed session left an autosave) */}
+        {recovery && (
+          <RecoveryCard
+            recovery={recovery}
+            onRestore={recoverDocument}
+            onDiscard={discardRecovery}
+          />
+        )}
 
         {/* Recent header: label · search · sort */}
         <div className="mb-[14px] flex items-center gap-2.5">

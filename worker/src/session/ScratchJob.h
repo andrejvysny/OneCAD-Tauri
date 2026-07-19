@@ -42,6 +42,7 @@ struct StepResult {
     std::string status;                  // "ok" | "opFailed" | "needsRepair"
     std::vector<std::string> body_ids;   // bodies present/produced at this step
     std::optional<std::uint64_t> ref_count;  // needsRepair: number of unresolved refs
+    std::string message;                 // opFailed: the §8 recoverable message (why)
 };
 
 struct ScratchJob {

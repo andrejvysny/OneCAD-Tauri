@@ -28,6 +28,71 @@ interface SnapIndicatorDeps {
   invalidate: () => void;
 }
 
+/** Marker glyph shapes, one per snap-type family (constant screen size). */
+type MarkerGlyph = "dot" | "diamond" | "cross" | "ring";
+
+/** Map a snap kind to its marker glyph. New M6c types get distinct shapes so the
+ *  marker (not just the hint chip) tells endpoint/quadrant/intersection/onCurve
+ *  apart, matching the legacy per-type snap markers. */
+function glyphFor(kind: SnapResult["kind"]): MarkerGlyph {
+  switch (kind) {
+    case "quadrant":
+      return "diamond";
+    case "intersection":
+      return "cross";
+    case "onCurve":
+      return "ring";
+    default:
+      return "dot"; // endpoint / midpoint / center / grid / align*
+  }
+}
+
+/** Render a 32×32 glyph sprite (white on transparent; tinted by the material). */
+function makeGlyphTexture(glyph: MarkerGlyph): THREE.Texture | null {
+  const size = 32;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null; // jsdom / no 2D context — fall back to a plain point
+  // White mask — the PointsMaterial tints it with the (token-derived) marker
+  // color; the CSS keyword keeps the tokens-only hex gate clean.
+  ctx.strokeStyle = "white";
+  ctx.fillStyle = "white";
+  ctx.lineWidth = 3;
+  const c = size / 2;
+  const r = 9;
+  ctx.beginPath();
+  switch (glyph) {
+    case "dot":
+      ctx.arc(c, c, r * 0.7, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    case "diamond":
+      ctx.moveTo(c, c - r);
+      ctx.lineTo(c + r, c);
+      ctx.lineTo(c, c + r);
+      ctx.lineTo(c - r, c);
+      ctx.closePath();
+      ctx.stroke();
+      break;
+    case "cross":
+      ctx.moveTo(c - r, c - r);
+      ctx.lineTo(c + r, c + r);
+      ctx.moveTo(c + r, c - r);
+      ctx.lineTo(c - r, c + r);
+      ctx.stroke();
+      break;
+    case "ring":
+      ctx.arc(c, c, r, 0, Math.PI * 2);
+      ctx.stroke();
+      break;
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+
 export class SnapIndicator {
   private readonly group = new THREE.Group();
   private readonly marker: THREE.Points;
@@ -36,6 +101,8 @@ export class SnapIndicator {
   private readonly guideMat: THREE.LineDashedMaterial;
   private readonly hintEl: HTMLElement;
   private readonly _basis = new THREE.Matrix4();
+  private readonly glyphTextures: Partial<Record<MarkerGlyph, THREE.Texture | null>> = {};
+  private currentGlyph: MarkerGlyph | null = null;
   private plane: SketchPlane | null = null;
   private hintRegistered = false;
 
@@ -47,10 +114,11 @@ export class SnapIndicator {
 
     this.markerMat = new THREE.PointsMaterial({
       color: palette.sketchUnder(),
-      size: 10,
+      size: 11,
       sizeAttenuation: false,
       depthTest: false,
       transparent: true,
+      alphaTest: 0.4,
     });
     this.marker = new THREE.Points(
       new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0], 3)),
@@ -58,6 +126,7 @@ export class SnapIndicator {
     );
     this.marker.renderOrder = 6;
     this.group.add(this.marker);
+    this.setGlyph("dot");
 
     this.guideMat = new THREE.LineDashedMaterial({
       color: palette.sketchUnder(),
@@ -91,6 +160,15 @@ export class SnapIndicator {
     this.group.matrixWorldNeedsUpdate = true;
   }
 
+  /** Swap the marker sprite to the given glyph (lazily building its texture). */
+  private setGlyph(glyph: MarkerGlyph): void {
+    if (this.currentGlyph === glyph) return;
+    if (!(glyph in this.glyphTextures)) this.glyphTextures[glyph] = makeGlyphTexture(glyph);
+    this.markerMat.map = this.glyphTextures[glyph] ?? null;
+    this.markerMat.needsUpdate = true;
+    this.currentGlyph = glyph;
+  }
+
   /** Update from a snap result. `showHints` gates the hint chip only. */
   show(snap: SnapResult, showHints: boolean): void {
     if (!this.plane || !snap.snapped) {
@@ -98,6 +176,7 @@ export class SnapIndicator {
       return;
     }
     this.group.visible = true;
+    this.setGlyph(glyphFor(snap.kind));
 
     // Marker (plane-local).
     const pos = this.marker.geometry.getAttribute("position") as THREE.BufferAttribute;
@@ -143,6 +222,7 @@ export class SnapIndicator {
 
   dispose(): void {
     this.marker.geometry.dispose();
+    for (const tex of Object.values(this.glyphTextures)) tex?.dispose();
     this.markerMat.dispose();
     this.guides.geometry.dispose();
     this.guideMat.dispose();

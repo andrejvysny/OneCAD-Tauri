@@ -9,6 +9,7 @@
  */
 import { FLAG, SEC } from "@/viewport/mesh/parseMeshPayload";
 import { prismLocal, type PrismProfile } from "@/tools/preview/prismPreview";
+import { latheLocal, type LatheAxis } from "@/tools/preview/lathePreview";
 import type { SketchPlane } from "./types";
 
 const HEADER_BYTES = 64;
@@ -426,4 +427,90 @@ export function makeExtrudeBodyMesh(
   }));
 
   return encodeMesh1({ positions: worldPositions, normals: worldNormals, faces, edges, lod });
+}
+
+// ── Revolve body (profile ring swept around an in-plane axis) — the mock L2 body ─
+
+/**
+ * Synthesize a coarse revolve body: sweep the profile ring around the sketch-line
+ * axis (shared plane-local lathe topology from lathePreview), transform to WORLD
+ * via the sketch-plane basis, smooth per-vertex normals from the triangles, and
+ * encode as MESH1 under a single face `f:0` + the two profile-boundary edges.
+ *
+ * MOCK LIMIT: this is a deterministic stand-in — no OCCT solid, no booleanMode
+ * fusion; the real revolve (BRepPrimAPI_MakeRevol) is the worker's job. A
+ * degenerate/near-zero angle is floored so a body still forms.
+ */
+export function makeRevolveBodyMesh(
+  ring: [number, number][],
+  axis: LatheAxis,
+  plane: SketchPlane,
+  angleDeg: number,
+  lod = 0,
+): ArrayBuffer {
+  const a = Math.abs(angleDeg) < 1 ? 1 : Math.min(360, angleDeg);
+  const local = latheLocal(ring, axis, a);
+  const [ox, oy, oz] = plane.origin;
+  const [xx, xy, xz] = plane.xAxis;
+  const [yx, yy, yz] = plane.yAxis;
+  const [nx, ny, nz] = plane.normal;
+
+  const P = local.positions.length / 3;
+  const worldPositions: number[] = new Array(P * 3);
+  for (let i = 0; i < P; i++) {
+    const u = local.positions[i * 3];
+    const v = local.positions[i * 3 + 1];
+    const w = local.positions[i * 3 + 2];
+    worldPositions[i * 3] = ox + u * xx + v * yx + w * nx;
+    worldPositions[i * 3 + 1] = oy + u * xy + v * yy + w * ny;
+    worldPositions[i * 3 + 2] = oz + u * xz + v * yz + w * nz;
+  }
+
+  // Smooth normals: accumulate each triangle's face normal onto its vertices.
+  const normals = new Array<number>(P * 3).fill(0);
+  const idx = local.indices;
+  for (let t = 0; t + 2 < idx.length; t += 3) {
+    const ia = idx[t];
+    const ib = idx[t + 1];
+    const ic = idx[t + 2];
+    const ax0 = worldPositions[ia * 3], ay0 = worldPositions[ia * 3 + 1], az0 = worldPositions[ia * 3 + 2];
+    const e1x = worldPositions[ib * 3] - ax0, e1y = worldPositions[ib * 3 + 1] - ay0, e1z = worldPositions[ib * 3 + 2] - az0;
+    const e2x = worldPositions[ic * 3] - ax0, e2y = worldPositions[ic * 3 + 1] - ay0, e2z = worldPositions[ic * 3 + 2] - az0;
+    const nxT = e1y * e2z - e1z * e2y;
+    const nyT = e1z * e2x - e1x * e2z;
+    const nzT = e1x * e2y - e1y * e2x;
+    for (const vi of [ia, ib, ic]) {
+      normals[vi * 3] += nxT;
+      normals[vi * 3 + 1] += nyT;
+      normals[vi * 3 + 2] += nzT;
+    }
+  }
+  for (let i = 0; i < P; i++) {
+    const len = Math.hypot(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]) || 1;
+    normals[i * 3] /= len;
+    normals[i * 3 + 1] /= len;
+    normals[i * 3 + 2] /= len;
+  }
+
+  const triangles: [number, number, number][] = [];
+  for (let t = 0; t + 2 < idx.length; t += 3) triangles.push([idx[t], idx[t + 1], idx[t + 2]]);
+  const faces: FaceSource[] = [{ triangles, id: "f:0" }];
+
+  // Edges: the two profile-boundary rings (start θ=0, end θ=angle).
+  const ringN = local.ringCount;
+  const endBase = local.segments * ringN;
+  const loopPoints = (base: number): [number, number, number][] => {
+    const pts: [number, number, number][] = [];
+    for (let i = 0; i <= ringN; i++) {
+      const vi = base + (i % ringN);
+      pts.push([worldPositions[vi * 3], worldPositions[vi * 3 + 1], worldPositions[vi * 3 + 2]]);
+    }
+    return pts;
+  };
+  const edges: EdgeSource[] = [
+    { points: loopPoints(0), id: "e:0" },
+    { points: loopPoints(endBase), id: "e:1" },
+  ];
+
+  return encodeMesh1({ positions: worldPositions, normals, faces, edges, lod });
 }

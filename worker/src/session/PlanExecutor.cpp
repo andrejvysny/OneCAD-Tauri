@@ -17,9 +17,13 @@
 #include "ops/BooleanOp.h"
 #include "ops/ExtrudeOp.h"
 #include "ops/FilletChamferOp.h"
+#include "ops/MirrorOp.h"
 #include "ops/OpTypes.h"
+#include "ops/PatternOp.h"
 #include "ops/RevolveOp.h"
+#include "ops/ShellOp.h"
 #include "session/Signatures.h"
+#include "tess/MeshHandle.h"
 #include "tess/Tessellate.h"
 #include "util/Hashing.h"
 #include "util/Log.h"
@@ -230,7 +234,12 @@ ops::OpOutcome run_single_op(ScratchJob& job, const json& op, const std::string&
     if (op_type == "Revolve") return ops::execute_revolve(octx, op, op_id);
     if (op_type == "Fillet") return ops::execute_fillet(octx, op, op_id);
     if (op_type == "Chamfer") return ops::execute_chamfer(octx, op, op_id);
+    if (op_type == "Shell") return ops::execute_shell(octx, op, op_id);
+    if (op_type == "LinearPattern") return ops::execute_linear_pattern(octx, op, op_id);
+    if (op_type == "CircularPattern") return ops::execute_circular_pattern(octx, op, op_id);
+    if (op_type == "MirrorBody") return ops::execute_mirror_body(octx, op, op_id);
 
+    // Loft / Sweep remain UNSUPPORTED (SCHEMA §8) — Rust freezes the node.
     return ops::OpOutcome::unsupported("unsupported opType: " + op_type);
 }
 
@@ -352,6 +361,9 @@ ExecResult execute_ops(ScratchJob& job, const json& ops, std::uint64_t job_id, s
             StepResult r;
             r.step_index = step_index;
             r.status = "opFailed";
+            // Carry the op's §8 message into perStepResults (the failed step emits no
+            // planStep, so this is the only channel to Rust — see the emit below).
+            if (!diagnostics.empty()) r.message = diagnostics.back().value("message", "");
             job.per_step.push_back(std::move(r));
             job.stopped_reason = "opFailed";
             job.last_valid_step = last_ok_step;  // publish ≤ m-1 (Invariant 6)
@@ -385,17 +397,12 @@ json attach_tessellate(const ScratchJob& job, const json& artifacts, Envelope& r
         resp.out_bin.insert(resp.out_bin.end(), bm.blob.begin(), bm.blob.end());
         const std::string section = "mesh:" + bid;
         resp.bin.push_back(protocol::BinSection{section, off, bm.blob.size()});
-        meshes.push_back(json{
-            {"bodyId", bid},
-            {"format", "MESH1"},
-            // SCHEMA §5.2/§7.6 normative inline-handle key is "bin" (see main.cpp
-            // handle_tessellate + SolverLane region handle). Was "section" (M2 fix).
-            {"bin", section},
-            {"lod", lod},
-            {"totalBytes", bm.blob.size()},
-            {"triangleCount", bm.triangle_count},
-            {"sha256", hashing::sha256_hex(bm.blob.data(), bm.blob.size())},
-        });
+        // Shared §7.6 handle builder (identical shape as the Tessellate verb —
+        // MeshHandle.h). `snapshotId` is the prepared scratch snapshot the artifact
+        // belongs to (reconciled to the §7.6 superset; was previously omitted here).
+        meshes.push_back(tess::mesh_handle_json(
+            bid, section, lod, bm.blob.size(), bm.triangle_count,
+            hashing::sha256_hex(bm.blob.data(), bm.blob.size()), job.prepared_snapshot_id));
     }
     return json{{"meshes", std::move(meshes)}};
 }
@@ -461,6 +468,10 @@ Envelope handle_execute_plan(Session& session, const Envelope& req, HandlerConte
         json e = {{"stepIndex", ps.step_index}, {"status", ps.status}};
         if (!ps.body_ids.empty()) e["bodyIds"] = ps.body_ids;
         if (ps.ref_count.has_value()) e["refCount"] = *ps.ref_count;
+        // Surface a failed op's recoverable message (§8) so Rust can report WHY —
+        // a failed step emits no planStep event, so its diagnostic would otherwise be
+        // worker-local. Additive (readers ignore unknown keys; §4).
+        if (!ps.message.empty()) e["message"] = ps.message;
         per_step.push_back(std::move(e));
     }
     json last_valid = job.last_valid_step.has_value() ? json(*job.last_valid_step) : json(nullptr);

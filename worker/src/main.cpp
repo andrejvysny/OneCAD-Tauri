@@ -21,13 +21,16 @@
 #include <Message_PrinterOStream.hxx>
 #include <Standard_Version.hxx>
 
+#include "io/Checkpoint.h"
 #include "io/ExportStep.h"
+#include "io/MeshExport.h"
 #include "protocol/Dispatcher.h"
 #include "protocol/Envelope.h"
 #include "protocol/SolverLane.h"
 #include "session/ElementIdentity.h"
 #include "session/PlanExecutor.h"
 #include "session/Session.h"
+#include "tess/MeshHandle.h"
 #include "tess/Tessellate.h"
 #include "util/Hashing.h"
 #include "util/LittleEndian.h"
@@ -174,19 +177,11 @@ Envelope handle_tessellate(Session& session, const Envelope& req) {
         resp.out_bin.insert(resp.out_bin.end(), bm.blob.begin(), bm.blob.end());
         const std::string section = "mesh:" + bid;
         resp.bin.push_back(onecad::protocol::BinSection{section, off, bm.blob.size()});
-        meshes.push_back(nlohmann::json{
-            {"bodyId", bid},
-            {"format", "MESH1"},
-            // SCHEMA §5.2/§7.6: the inline handle references the resp-tail section by
-            // the normative key "bin" (matches SolverLane's region handle + the Rust
-            // `assemble_mesh` reader). Was "section" (M2 gate fix — SCHEMA violation).
-            {"bin", section},
-            {"lod", lod},
-            {"totalBytes", bm.blob.size()},
-            {"triangleCount", bm.triangle_count},
-            {"sha256", onecad::hashing::sha256_hex(bm.blob.data(), bm.blob.size())},
-            {"snapshotId", snapshot_id},
-        });
+        // Shared §7.6 handle builder (identical shape as ExecutePlan's inline artifact
+        // — MeshHandle.h). The inline handle keys the resp-tail section by "bin".
+        meshes.push_back(onecad::tess::mesh_handle_json(
+            bid, section, lod, bm.blob.size(), bm.triangle_count,
+            onecad::hashing::sha256_hex(bm.blob.data(), bm.blob.size()), snapshot_id));
     }
     resp.result = nlohmann::json{{"meshes", std::move(meshes)}};
     return resp;
@@ -281,6 +276,28 @@ void register_verbs(Dispatcher& dispatcher, SolverLane& solver_lane, Session& se
         "ExportStep",
         [&session](const Envelope& r, const std::vector<std::uint8_t>&, HandlerContext&) {
             return onecad::io::handle_export_step(session, r);
+        });
+    // --- M5a: mesh export (STL / OBJ, SCHEMA §7.8) ---
+    dispatcher.register_verb(
+        "ExportStl",
+        [&session](const Envelope& r, const std::vector<std::uint8_t>&, HandlerContext&) {
+            return onecad::io::handle_export_stl(session, r);
+        });
+    dispatcher.register_verb(
+        "ExportObj",
+        [&session](const Envelope& r, const std::vector<std::uint8_t>&, HandlerContext&) {
+            return onecad::io::handle_export_obj(session, r);
+        });
+    // --- M5a: checkpoints (SCHEMA §7.7) ---
+    dispatcher.register_verb(
+        "SaveCheckpoint",
+        [&session](const Envelope& r, const std::vector<std::uint8_t>&, HandlerContext&) {
+            return onecad::io::handle_save_checkpoint(session, r);
+        });
+    dispatcher.register_verb(
+        "RestoreCheckpoint",
+        [&session](const Envelope& r, const std::vector<std::uint8_t>&, HandlerContext&) {
+            return onecad::io::handle_restore_checkpoint(session, r);
         });
     dispatcher.register_verb("Shutdown", handle_shutdown);
     dispatcher.register_verb("Debug.Busy", handle_debug_busy);

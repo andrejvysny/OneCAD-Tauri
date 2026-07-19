@@ -449,6 +449,7 @@ impl<E: GeometryEngine> RegenExecutor<E> {
                 .restore_checkpoint(RestoreRequest {
                     checkpoint,
                     expected_history_prefix_hash: expected_base_hash.clone(),
+                    artifacts: request.base_checkpoint_artifacts.clone(),
                 })
                 .await
             {
@@ -652,12 +653,23 @@ impl<E: GeometryEngine> RegenExecutor<E> {
             .iter()
             .map(|r| (r.step_index, r.status))
             .collect();
+        // A failed step emits no planStep event (its diagnostics never arrive), so the
+        // authoritative failure reason rides on its `perStepResults.message` instead.
+        let message_by_step: BTreeMap<usize, &str> = prepared
+            .per_step
+            .iter()
+            .filter(|r| !r.message.is_empty())
+            .map(|r| (r.step_index, r.message.as_str()))
+            .collect();
         for &step in planned_steps {
             let state = match status_by_step.get(&step) {
                 Some(StepStatus::Ok) => StepState::Valid,
                 Some(StepStatus::NeedsRepair) => StepState::NeedsRepair,
                 Some(StepStatus::OpFailed) => StepState::Error {
-                    reason: error_reason(step, &scratch.diagnostics_by_step),
+                    reason: message_by_step.get(&step).map_or_else(
+                        || error_reason(step, &scratch.diagnostics_by_step),
+                        |m| (*m).to_string(),
+                    ),
                 },
                 // Beyond the last valid step: not executed ⇒ Dirty (Invariant 6).
                 None => StepState::Dirty,

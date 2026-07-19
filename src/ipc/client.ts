@@ -19,6 +19,7 @@ import type {
   EnterSketchTarget,
   FinishSketchResult,
   Lod,
+  NeedsRepairEvent,
   OperationOp,
   PreviewDraft,
   PreviewParams,
@@ -27,12 +28,17 @@ import type {
   PromotedElement,
   PromotePick,
   RecentProject,
+  RecoveryInfo,
+  ResolveRefRequest,
+  ResolveRefResult,
   SketchConstraint,
   SketchEntity,
   SketchSession,
   SketchUpsertResult,
   Unsubscribe,
+  WorkerStatus,
 } from "./types";
+import type { WireEditCommand } from "./tauriCommandMap";
 import { mockClient } from "./mockClient";
 import { createTauriClient } from "./tauriClient";
 
@@ -51,6 +57,42 @@ export interface CadClient {
    * webview gets zero fs/dialog capability); the mock returns a fake path.
    */
   openFileDialog(): Promise<string | null>;
+
+  /**
+   * Save the open document. `path` `undefined` reuses the last save path; a
+   * never-saved document then rejects (io error) and the caller falls back to
+   * Save As. Rust owns the filesystem write.
+   */
+  saveDocument(path?: string): Promise<void>;
+  /**
+   * Save As: show a native save dialog (`.onecad`), save to the chosen path, and
+   * return it — or null if the dialog was cancelled.
+   */
+  saveDocumentAs(): Promise<string | null>;
+  /**
+   * Export every body at head to a STEP file. Rust owns the `.step` save dialog +
+   * the worker ExportStep verb; resolves to the written path, or null on cancel.
+   */
+  exportStep(): Promise<string | null>;
+  /**
+   * Export every body at head to a binary STL file. Rust owns the `.stl` save
+   * dialog + the worker ExportStl verb; resolves to the written path, or null on
+   * cancel.
+   */
+  exportStl(): Promise<string | null>;
+  /**
+   * Export every body at head to an ASCII OBJ file. Rust owns the `.obj` save
+   * dialog + the worker ExportObj verb; resolves to the written path, or null on
+   * cancel.
+   */
+  exportObj(): Promise<string | null>;
+
+  /**
+   * Subscribe to worker-lifecycle `worker-status` events (starting / ready /
+   * restarting / failed). The real event arrives from the C++ sidecar supervisor;
+   * the mock never emits (returns a no-op unsubscribe).
+   */
+  onWorkerStatus(cb: (status: WorkerStatus) => void): Unsubscribe;
 
   /**
    * Fetch a body's MESH1 blob at `lod` (pull model). The real client returns a
@@ -122,6 +164,40 @@ export interface CadClient {
    */
   promoteSelection(bodyId: string, picks: PromotePick[]): Promise<PromotedElement[]>;
 
+  // ── Topology repair (SCHEMA §9; M4b) ──────────────────────────────────────
+
+  /**
+   * Subscribe to `needs-repair` events (emitted after every published regen —
+   * empty `items` means repairs cleared). The real event arrives from Rust; the
+   * mock exposes a test seam (`emitMockNeedsRepair`). Returns an unsubscribe.
+   */
+  onNeedsRepair(cb: (event: NeedsRepairEvent) => void): Unsubscribe;
+
+  /**
+   * Dry-run the resolution ladder for repair refs (`resolve_refs`; binds
+   * nothing). Returns the full un-lossy resolution per ref (candidates + reason +
+   * anchor on `needsRepair`). The mock returns canned candidates.
+   */
+  resolveRefs(refs: ResolveRefRequest[]): Promise<ResolveRefResult[]>;
+
+  /**
+   * Apply one RAW `EditCommand` (repair rebind + history affordances — suppress /
+   * rollback / delete). Returns the correlated regen result (same shape as
+   * `applyOperation`). The real client routes to `apply_edit_command`; the mock
+   * mutates its local document model.
+   */
+  applyEditCommand(command: WireEditCommand): Promise<ApplyOperationResult>;
+
+  /**
+   * Fetch a stored operation's params (the EditCommand `op.params` serde shape),
+   * keyed by its record id. A parametric re-edit that changes ONE scalar (revolve
+   * angle / shell thickness / fillet radius) fetches these on arm and deep-merges
+   * the scalar on commit, so it preserves the non-scalar inputs the projection does
+   * not expose (axis / openFaces / edges). The real client routes to
+   * `get_operation_params`; the mock returns the op's stored params.
+   */
+  getOperationParams(recordId: string): Promise<Record<string, unknown>>;
+
   // ── Model operations + two-level preview (SCHEMA §7.3 / NEW_SPEC §15) ──────
   // The real client routes these to the worker's ExecutePlan (op) + solver-style
   // preview lane; the mock synthesizes bodies + a feature timeline locally.
@@ -170,6 +246,23 @@ export interface CadClient {
   undo(): Promise<ApplyOperationResult>;
   /** Redo the last undone op. */
   redo(): Promise<ApplyOperationResult>;
+
+  // ── Crash recovery (start screen) ─────────────────────────────────────────
+  // A crashed session may leave an autosave behind; the start screen offers to
+  // restore it. Rust owns the autosave sidecar + the crash detection; the mock
+  // exposes a test-seeded seam (`setMockRecovery`).
+
+  /**
+   * Check whether a crashed session left an autosave to offer. Resolves the
+   * recovery info, or null when there is nothing to recover.
+   */
+  checkRecovery(): Promise<RecoveryInfo | null>;
+
+  /**
+   * Resolve a pending recovery. `accept:true` restores the autosave and opens the
+   * recovered document (returns a snapshot); `accept:false` discards it (returns null).
+   */
+  recoverDocument(accept: boolean): Promise<DocumentSnapshot | null>;
 }
 
 /**

@@ -1,6 +1,7 @@
 import { SegmentedToggle } from "@/ui/SegmentedToggle";
 import { useDocumentStore } from "@/stores/documentStore";
 import { useToolStore, type EditorMode } from "@/stores/toolStore";
+import { FileMenu } from "./FileMenu";
 
 /**
  * 44px overlay title bar (prototype 1c). Reserves the left inset for the native
@@ -21,6 +22,7 @@ export function TitleBar() {
     >
       {/* Native traffic-light reservation (OS-drawn in overlay mode). */}
       <span data-tauri-drag-region aria-hidden="true" className="w-[54px] flex-none" />
+      <FileMenu />
       <span
         data-tauri-drag-region
         className="flex items-center gap-2 text-[13px] font-semibold text-titlebar-text"

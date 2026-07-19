@@ -38,8 +38,10 @@ use onecad_protocol::client::{ProtocolClient, WorkerEvent};
 use onecad_protocol::messages::{HelloResult, Lane};
 use onecad_protocol::ProtocolError;
 
+use onecad_core::document::body::{BodyMeta, BodyRegistry};
+use onecad_core::document::element_index::ElementIndex;
 use onecad_core::ids::{
-    BodyId, DocumentId, DocumentRevision, EntityId, JobId, SnapshotId, WorkerEpoch,
+    BodyId, DocumentId, DocumentRevision, EntityId, JobId, RecordId, SnapshotId, WorkerEpoch,
 };
 use onecad_core::regen::{
     AcceptResult, AcquireRequest, BodySelector, CheckpointArtifacts, EngineError, Fencing,
@@ -301,6 +303,45 @@ impl WorkerManager {
         let args = wire::export_step_args(path, bodies, schema);
         let resp = client
             .request("ExportStep", args)
+            .await
+            .map_err(protocol_err)?;
+        ok_result(resp).map(|r| r.get("bytes").and_then(Value::as_u64).unwrap_or(0))
+    }
+
+    /// `ExportStl` verb passthrough (SCHEMA §7.8). Returns bytes written.
+    ///
+    /// # Errors
+    /// [`EngineError`] on a disconnected worker or a worker-side failure.
+    pub async fn export_stl(
+        &self,
+        path: &str,
+        bodies: &[BodyId],
+        binary: bool,
+        lod: &str,
+    ) -> Result<u64, EngineError> {
+        let client = self.client_or_err()?;
+        let args = wire::export_stl_args(path, bodies, binary, lod);
+        let resp = client
+            .request("ExportStl", args)
+            .await
+            .map_err(protocol_err)?;
+        ok_result(resp).map(|r| r.get("bytes").and_then(Value::as_u64).unwrap_or(0))
+    }
+
+    /// `ExportObj` verb passthrough (SCHEMA §7.8). Returns bytes written.
+    ///
+    /// # Errors
+    /// [`EngineError`] on a disconnected worker or a worker-side failure.
+    pub async fn export_obj(
+        &self,
+        path: &str,
+        bodies: &[BodyId],
+        lod: &str,
+    ) -> Result<u64, EngineError> {
+        let client = self.client_or_err()?;
+        let args = wire::export_obj_args(path, bodies, lod);
+        let resp = client
+            .request("ExportObj", args)
             .await
             .map_err(protocol_err)?;
         ok_result(resp).map(|r| r.get("bytes").and_then(Value::as_u64).unwrap_or(0))
@@ -627,17 +668,52 @@ impl GeometryEngine for WorkerManager {
         Ok(TessellateResult { meshes: vec![] })
     }
 
-    async fn save_checkpoint(
-        &self,
-        _step_index: usize,
-    ) -> Result<CheckpointArtifacts, EngineError> {
-        Err(unsupported("SaveCheckpoint not wired in V1"))
+    async fn save_checkpoint(&self, step_index: usize) -> Result<CheckpointArtifacts, EngineError> {
+        // SaveCheckpoint (SCHEMA §7.7): the worker serializes its head (per-body BREP
+        // via BinTools + signatures + historyPrefixHash) into the resp binary tail;
+        // Rust stores the bytes + parsed envelope metadata for its checkpoint cache.
+        let client = self.client_or_err()?;
+        let inflight = client
+            .start_request(
+                "SaveCheckpoint",
+                wire::save_checkpoint_args(step_index),
+                Lane::Control,
+            )
+            .await
+            .map_err(protocol_err)?;
+        let (resp, tail) = inflight.response_with_bin().await.map_err(protocol_err)?;
+        let sections = resp.bin.clone().unwrap_or_default();
+        let result = ok_result(resp)?;
+        wire::parse_save_checkpoint(&result, &sections, &tail, &self.shared.fingerprint())
+            .map_err(|message| EngineError::Protocol { message })
     }
 
-    async fn restore_checkpoint(&self, _req: RestoreRequest) -> Result<RestoreResult, EngineError> {
-        Err(EngineError::Protocol {
-            message: "RestoreCheckpoint not wired in V1 (plans replay from 0)".into(),
-        })
+    async fn restore_checkpoint(&self, req: RestoreRequest) -> Result<RestoreResult, EngineError> {
+        // RestoreCheckpoint (SCHEMA §7.7): the worker rolls its in-session head back to
+        // the checkpoint step (the geometry never re-crosses the wire — the OCW1 request
+        // path carries no binary; a worker that no longer retains the step reports
+        // `restored:false`). Rust reconstructs the base registry/element index from the
+        // stored artifacts (review F3), so the executor seeds its scratch from the
+        // immutable checkpoint, not live state.
+        let client = self.client_or_err()?;
+        let args = wire::restore_checkpoint_args(&req, self.epoch());
+        let resp = client
+            .request("RestoreCheckpoint", args)
+            .await
+            .map_err(protocol_err)?;
+        let result = ok_result(resp)?;
+        let (restored, drift, snapshot_id) = wire::parse_restore_checkpoint(&result);
+        // Without the stored artifacts Rust cannot rebuild the base ⇒ replay-from-0.
+        let Some(artifacts) = req.artifacts.as_ref().filter(|_| restored && !drift) else {
+            return Ok(unusable_restore(snapshot_id, drift));
+        };
+        let (base_registry, base_elements) = reconstruct_base(artifacts);
+        Ok(RestoreResult::ok(
+            SnapshotId(snapshot_id),
+            req.checkpoint.step_index,
+            base_registry,
+            base_elements,
+        ))
     }
 
     async fn acquire_element_ids(
@@ -1177,11 +1253,35 @@ fn not_connected() -> EngineError {
     }
 }
 
-fn unsupported(msg: &str) -> EngineError {
-    EngineError::OpFailed {
-        code: onecad_core::regen::OpFailureCode::Unsupported,
-        recoverable: true,
-        message: msg.into(),
+/// Reconstructs the base [`BodyRegistry`] + [`ElementIndex`] a checkpoint restore
+/// seeds the executor scratch with (review F3 — from the immutable artifacts, not
+/// live state). Each artifact contributes its body; the base element index is empty
+/// in V1 (the worker persists a placeholder partition — a documented divergence — and
+/// the in-session restore uses the retained partition, so a checkpoint history with
+/// no pre-referenced sub-elements reconstructs an empty index correctly).
+fn reconstruct_base(artifacts: &CheckpointArtifacts) -> (BodyRegistry, ElementIndex) {
+    let mut registry = BodyRegistry::new();
+    for (i, artifact) in artifacts.artifacts.iter().enumerate() {
+        registry.register(BodyMeta::new(
+            artifact.envelope.body,
+            format!("Body {}", i + 1),
+            RecordId(uuid::Uuid::nil()),
+        ));
+    }
+    (registry, ElementIndex::new())
+}
+
+/// An unusable restore (`restored:false` or drift) — the executor discards + replays
+/// from 0 (Invariant 7). Carries empty base state (ignored on the fallback path).
+fn unusable_restore(snapshot_id: u64, drift: bool) -> RestoreResult {
+    RestoreResult {
+        restored: false,
+        snapshot_id: SnapshotId(snapshot_id),
+        drift_detected: drift,
+        drift_detail: None,
+        checkpoint_step: 0,
+        base_registry: BodyRegistry::new(),
+        base_elements: ElementIndex::new(),
     }
 }
 

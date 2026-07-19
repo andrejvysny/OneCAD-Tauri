@@ -24,6 +24,21 @@ export interface RecentProject {
 }
 
 /**
+ * Crash-recovery offer surfaced on the start screen: a prior session left an
+ * autosave behind. `check_recovery` returns one (or null when nothing to offer);
+ * `recover_document` accepts (restore) or rejects (discard) it. Keep 1:1 with the
+ * Rust `RecoveryInfoDto` (serde camelCase).
+ */
+export interface RecoveryInfo {
+  /** Absolute path of the document the autosave belongs to (absent if never saved). */
+  originalPath?: string;
+  /** Absolute path of the autosave sidecar the crashed session left behind. */
+  autosavePath: string;
+  /** Epoch-millis mtime of the autosave (last time work was captured). */
+  modifiedMs: number;
+}
+
+/**
  * Placeholder document handle returned by open/new/import.
  *
  * The real DocumentSnapshot (full projection: bodies, timeline, revision, …)
@@ -238,6 +253,87 @@ export interface PromotedElement {
   bodyId: string;
 }
 
+// ── Topology repair (SCHEMA §9; M4b) — the `needs-repair` event + `resolveRefs` ─
+//
+// These MIRROR the Rust DTOs in `src-tauri/src/dto.rs` (camelCase serde):
+//   NeedsRepairItem  == NeedsRepairItemDto  (lean banner/badge summary)
+//   NeedsRepairEvent == NeedsRepairEvent    (`{revision, items}`; empty ⇒ cleared)
+//   ResolveCandidate == ResolveCandidateDto (one ranked candidate)
+//   ResolveRefResult == ResolveRefDto       (the un-lossy dry-run resolution)
+
+/** One entry in the `needs-repair` event — a step left in NeedsRepair. */
+export interface NeedsRepairItem {
+  /** The op record id (`RecordId`) of the step needing repair. */
+  opId: string;
+  /** The op-input ref identity (SCHEMA §9 `refId`, e.g. `"op_5.input0"`). */
+  refId: string;
+  /** `ambiguous` | `no-candidates` | `low-confidence`. */
+  reason: string;
+  /** The `resolverVersion` the candidate scores were computed under. */
+  scoringVersion?: number;
+  /** How many candidates the ladder surfaced (0 ⇒ `no-candidates`). */
+  candidateCount: number;
+}
+
+/**
+ * The `needs-repair` event payload (`{revision, items}`). Emitted after EVERY
+ * published regen; an EMPTY `items` means repairs cleared (drop the banner).
+ */
+export interface NeedsRepairEvent {
+  revision: number;
+  items: NeedsRepairItem[];
+}
+
+/** One ranked repair candidate (`ResolveCandidateDto`). */
+export interface ResolveCandidate {
+  /** The evidence handle (snapshot-scoped TopoKey) to promote on rebind. */
+  topoKey: string;
+  score: number;
+  margin: number;
+  /** Candidate centre in world coords — a geometric hint for highlighting. */
+  worldPos: [number, number, number];
+  summary: string;
+  /** Per-feature score contributions (opaque; SCHEMA §9). */
+  featureContributions?: unknown;
+}
+
+/**
+ * One dry-run ref resolution (`ResolveRefDto`) — the FULL ladder result the
+ * repair panel consumes. On `needsRepair` it carries the ranked `candidates[]`
+ * plus `reason`/`ladderFailed`/`anchor`; on `autoBind`/`unchanged` the bound id.
+ */
+export interface ResolveRefResult {
+  refId: string;
+  /** `autoBind` | `needsRepair` | `unchanged`. */
+  outcome: string;
+  elementId?: string;
+  topoKey?: string;
+  score?: number;
+  margin?: number;
+  /** `history` | `descriptor` (needsRepair). */
+  ladderFailed?: string;
+  /** `ambiguous` | `no-candidates` | `low-confidence` (needsRepair). */
+  reason?: string;
+  scoringVersion?: number;
+  uiLabel?: string;
+  /** The selection intent captured when the ref was authored (opaque). */
+  anchor?: unknown;
+  /** Ranked candidates (needsRepair), sorted by score descending. */
+  candidates: ResolveCandidate[];
+}
+
+/**
+ * One ref to dry-run-resolve (`ResolveRefInput` — `{refId, …ElementRef}`). The
+ * lean `needs-repair` event carries no ElementRef, so the panel passes `refId`
+ * only and relies on the backend resolving the STORED ref by id; a `primary`/
+ * `anchor` may be supplied when the caller has them.
+ */
+export interface ResolveRefRequest {
+  refId: string;
+  primary?: { bodyId: string; elementId?: string; kind: "body" | "face" | "edge" | "vertex" };
+  anchor?: { worldPoint?: [number, number, number]; surfaceUv?: [number, number] };
+}
+
 // ── Projection hydration (SCHEMA §7.2 projection-updated) ─────────────────────
 //
 // The authoritative document projection the backend publishes on open/new/close/
@@ -279,6 +375,17 @@ export interface RegenFinished {
   outcome: string;
 }
 
+/**
+ * The `worker-status` event payload (mirrors Rust `WorkerStatusDto`) — the C++
+ * sidecar lifecycle the status bar surfaces. The mock never emits it.
+ */
+export interface WorkerStatus {
+  /** `starting` | `ready` | `restarting` | `failed`. */
+  state: "starting" | "ready" | "restarting" | "failed";
+  /** The worker epoch this transition belongs to (`0` when unknown). */
+  epoch: number;
+}
+
 // ── Model operations (SCHEMA §7.3 op payloads) ───────────────────────────────
 //
 // These mirror the JSON the C++ worker consumes inside `ExecutePlan.ops`. The
@@ -286,7 +393,15 @@ export interface RegenFinished {
 // for the tool layer. Values keep OneCAD-CPP `operationTypeName` spelling
 // (PascalCase). The vertical slice authors Extrude | Fillet | Boolean.
 
-export type OpType = "Extrude" | "Fillet" | "Boolean";
+export type OpType =
+  | "Extrude"
+  | "Revolve"
+  | "Fillet"
+  | "Boolean"
+  | "Shell"
+  | "LinearPattern"
+  | "CircularPattern"
+  | "MirrorBody";
 
 /** Extrude end condition (SCHEMA §7.3 ExtrudeParams). */
 export type ExtrudeMode = "Blind" | "ThroughAll" | "Symmetric" | "ToNext" | "ToFace";
@@ -325,6 +440,28 @@ export interface ExtrudeParams {
   distance2?: number;
 }
 
+/**
+ * A revolve/pattern axis (SCHEMA §7.3 `axis`, Rust `AxisRef`, serde tag `kind`).
+ * The vertical-slice revolve tool only authors the `sketchLine` variant (a line
+ * entity in the profile's sketch); `edge` mirrors the Rust variant for parity.
+ */
+export type AxisRef =
+  | { kind: "sketchLine"; sketchId: string; lineId: string }
+  | { kind: "edge"; bodyId: string; edgeId: string };
+
+/**
+ * Revolve op params (SCHEMA §7.3 / Rust `RevolveParams`). `angleDeg` is the sweep
+ * in DEGREES — the same unit Rust's `angleDeg` Scalar carries, so the command
+ * mapper passes it through with NO conversion. `axis` is the sketch line to
+ * revolve around; `booleanMode`/`targetBodyId` mirror ExtrudeParams.
+ */
+export interface RevolveParams {
+  angleDeg: number;
+  axis?: AxisRef;
+  booleanMode?: FeatureBooleanMode;
+  targetBodyId?: string;
+}
+
 /** Fillet/Chamfer op params (SCHEMA §7.3 FilletChamferParams; `mode` distinguishes). */
 export interface FilletParams {
   mode: "Fillet" | "Chamfer";
@@ -339,6 +476,55 @@ export interface BooleanParams {
   operation: BooleanOperation;
   targetBodyId: string;
   toolBodyId: string;
+}
+
+/**
+ * Shell op params (Rust `ShellParams`). `openFaces` are the removed faces
+ * (ElementIds or snapshot TopoKeys, resolved through the ladder); `thickness` is
+ * the wall thickness. `targetBodyId` is the shelled body.
+ */
+export interface ShellParams {
+  thickness: number;
+  openFaces: string[];
+  targetBodyId?: string;
+}
+
+/**
+ * Linear-pattern op params (Rust `LinearPatternParams`). `direction` is a WORLD
+ * unit vector (the Rust port uses a single `direction: Vec3`, NOT an axis enum —
+ * the UI's axis chip maps to one of the world axes). `spacing` is the per-step
+ * distance, `count` the total instances (source + clones).
+ */
+export interface LinearPatternParams {
+  sourceBodyId?: string;
+  direction: [number, number, number];
+  spacing: number;
+  count: number;
+  fuseResult?: boolean;
+}
+
+/**
+ * Circular-pattern op params (Rust `CircularPatternParams`). The axis is a world
+ * ray (`axisOrigin` + `axisDirection` Vec3s); `angleDeg` is the TOTAL sweep.
+ */
+export interface CircularPatternParams {
+  sourceBodyId?: string;
+  axisOrigin: [number, number, number];
+  axisDirection: [number, number, number];
+  angleDeg: number;
+  count: number;
+  fuseResult?: boolean;
+}
+
+/**
+ * Mirror-body op params (Rust `MirrorBodyParams`). The mirror plane is a world
+ * point + normal (`planePoint` + `planeNormal` Vec3s).
+ */
+export interface MirrorBodyParams {
+  sourceBodyId?: string;
+  planePoint: [number, number, number];
+  planeNormal: [number, number, number];
+  fuseWithOriginal?: boolean;
 }
 
 /**
@@ -359,6 +545,15 @@ export type OperationOp =
       params: ExtrudeParams;
     }
   | {
+      opType: "Revolve";
+      opId?: string;
+      featureId?: string;
+      sketchId: string;
+      regionId: string;
+      inputs?: SemanticRef[];
+      params: RevolveParams;
+    }
+  | {
       opType: "Fillet";
       opId?: string;
       featureId?: string;
@@ -371,6 +566,34 @@ export type OperationOp =
       featureId?: string;
       inputs?: SemanticRef[];
       params: BooleanParams;
+    }
+  | {
+      opType: "Shell";
+      opId?: string;
+      featureId?: string;
+      inputs?: SemanticRef[];
+      params: ShellParams;
+    }
+  | {
+      opType: "LinearPattern";
+      opId?: string;
+      featureId?: string;
+      inputs?: SemanticRef[];
+      params: LinearPatternParams;
+    }
+  | {
+      opType: "CircularPattern";
+      opId?: string;
+      featureId?: string;
+      inputs?: SemanticRef[];
+      params: CircularPatternParams;
+    }
+  | {
+      opType: "MirrorBody";
+      opId?: string;
+      featureId?: string;
+      inputs?: SemanticRef[];
+      params: MirrorBodyParams;
     };
 
 /**
@@ -380,7 +603,16 @@ export type OperationOp =
  */
 export interface FeatureRecord {
   id: string;
-  kind: "sketch" | "extrude" | "revolve" | "fillet" | "boolean";
+  kind:
+    | "sketch"
+    | "extrude"
+    | "revolve"
+    | "fillet"
+    | "boolean"
+    | "shell"
+    | "linearPattern"
+    | "circularPattern"
+    | "mirror";
   label: string;
   valueText: string;
   status: "ok" | "dirty" | "error" | "needsRepair";

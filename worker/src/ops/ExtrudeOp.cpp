@@ -47,6 +47,11 @@ std::string input_body(const json& op, std::size_t index) {
     if (!op.contains("inputs") || !op["inputs"].is_array() || op["inputs"].size() <= index) return "";
     const json& in = op["inputs"][index];
     if (in.is_object() && in.contains("primary") && in["primary"].is_object()) {
+        // Only a whole-BODY ref is a valid boolean-target fallback. A face/edge ref
+        // (e.g. a ToFace `targetFace` now placed at inputs[0]) must NOT be mistaken
+        // for the operated body — binding the ToFace target's body as the boolean
+        // target would silently cut/fuse the wrong body (M2 review hazard 6).
+        if (read_str(in["primary"], "kind") != "body") return "";
         return read_str(in["primary"], "bodyId");
     }
     return "";
@@ -354,12 +359,9 @@ OpOutcome execute_extrude(OpContext& ctx, const json& op, const std::string& op_
     if (br.error_code == "CANCELLED") return OpOutcome::cancelled();
     if (!br.error_code.empty()) return OpOutcome::fail(br.error_code, br.error_message);
 
-    ctx.bodies.create(target_id, op_id, br.shape);
-    if (builder) {
-        ctx.partition.apply_history(target_id, br.shape, *builder, out.delta, &out.needs_repair);
-    }
-    out.body_events.push_back({"modified", target_id});
-    out.body_ids.push_back(target_id);
+    // Publish the successor: a single-solid result modifies the target in place; a
+    // multi-solid boolean-Cut splits into deterministic children (SCHEMA §2, D1).
+    publish_boolean_result(ctx, op_id, target_id, br.shape, builder.get(), out);
     return out;
 }
 

@@ -27,12 +27,19 @@
  * lanes are wired (Boolean now; Extrude/Fillet with R-WP12 + AcquireElementIds).
  */
 import type {
+  AxisRef,
   BooleanParams,
+  CircularPatternParams,
   ExtrudeMode,
   ExtrudeParams,
   FeatureBooleanMode,
   FilletParams,
+  LinearPatternParams,
+  MirrorBodyParams,
   OperationOp,
+  RevolveParams,
+  SemanticRef,
+  ShellParams,
 } from "./types";
 
 /** A dimension value on the wire (Rust `Scalar {value, expr?}`). */
@@ -52,10 +59,37 @@ interface WireExtrudeParams {
   distance2: WireScalar;
 }
 
+/** Rust `AxisRef` (serde internally-tagged on `kind`, camelCase fields). */
+type WireAxisRef =
+  | { kind: "sketchLine"; sketchId: string; lineId: string }
+  | { kind: "edge"; bodyId: string; edgeId: string };
+
+interface WireRevolveParams {
+  profile?: { sketchId: string; regionId: string };
+  /** Rust `angleDeg` Scalar — DEGREES (no radians conversion). */
+  angleDeg: WireScalar;
+  axis?: WireAxisRef;
+  booleanMode: FeatureBooleanMode;
+  targetBodyId?: string;
+}
+
 interface WireFilletParams {
   radius: WireScalar;
   edgeIds: string[];
+  /**
+   * Typed per-edge semantic refs (Rust `FilletParams::edges` — one `ElementRef`
+   * per `edgeIds` entry). CRITICAL: `edgeIds` (bare) and `edges` (typed) MUST stay
+   * in lockstep — any command that rewrites one rewrites BOTH (record.rs FilletParams
+   * / the M4b dual-edge rule). Optional so a legacy/bare-id fillet still marshals.
+   */
+  edges?: WireElementRef[];
   chainTangentEdges: boolean;
+}
+
+/** Rust `ElementRef` (refs.rs — identity + evidence + anchor; camelCase). */
+export interface WireElementRef {
+  primary?: { bodyId: string; elementId: string; kind: "face" | "edge" | "vertex" };
+  anchor?: { worldPoint: [number, number, number]; surfaceUv?: [number, number] };
 }
 
 interface WireBooleanParams {
@@ -64,11 +98,64 @@ interface WireBooleanParams {
   toolBodyId: string;
 }
 
+/** A world 3-vector on the wire (Rust `Vec3` — `try_from = "[f64; 3]"`, so `[x,y,z]`). */
+type WireVec3 = [number, number, number];
+
+/** Rust `ShellParams` (record.rs). `openFaces` are bare ElementIds/TopoKeys. */
+interface WireShellParams {
+  thickness: WireScalar;
+  openFaces: string[];
+  targetBodyId?: string;
+}
+
+/**
+ * Rust `LinearPatternParams` (record.rs). SCHEMA truth: the C++ flat `dirX/Y/Z`
+ * is a single `direction: Vec3` here (the UI axis chip picks a world axis), and
+ * `count` is a bare `u32` (NOT a Scalar). `fuseResult` defaults true on the Rust
+ * side (`default_true`).
+ */
+interface WireLinearPatternParams {
+  sourceBodyId?: string;
+  direction: WireVec3;
+  spacing: WireScalar;
+  count: number;
+  fuseResult: boolean;
+}
+
+/**
+ * Rust `CircularPatternParams` (record.rs). The C++ flat point/dir become
+ * `axisOrigin`/`axisDirection` Vec3s; `angleDeg` is a Scalar, `count` a bare u32.
+ */
+interface WireCircularPatternParams {
+  sourceBodyId?: string;
+  axisOrigin: WireVec3;
+  axisDirection: WireVec3;
+  angleDeg: WireScalar;
+  count: number;
+  fuseResult: boolean;
+}
+
+/**
+ * Rust `MirrorBodyParams` (record.rs). The C++ flat plane point/normal become
+ * `planePoint`/`planeNormal` Vec3s; `fuseWithOriginal` defaults FALSE on Rust.
+ */
+interface WireMirrorBodyParams {
+  sourceBodyId?: string;
+  planePoint: WireVec3;
+  planeNormal: WireVec3;
+  fuseWithOriginal: boolean;
+}
+
 /** A known op on the wire — adjacently tagged `{opType, params}` (SCHEMA §7.3). */
 type WireOperation =
   | { opType: "Extrude"; params: WireExtrudeParams }
+  | { opType: "Revolve"; params: WireRevolveParams }
   | { opType: "Fillet"; params: WireFilletParams }
-  | { opType: "Boolean"; params: WireBooleanParams };
+  | { opType: "Boolean"; params: WireBooleanParams }
+  | { opType: "Shell"; params: WireShellParams }
+  | { opType: "LinearPattern"; params: WireLinearPatternParams }
+  | { opType: "CircularPattern"; params: WireCircularPatternParams }
+  | { opType: "MirrorBody"; params: WireMirrorBodyParams };
 
 /** A minimal real `OperationRecord` (every other field defaults on the Rust side). */
 interface WireOperationRecord {
@@ -77,12 +164,44 @@ interface WireOperationRecord {
   params: WireOperation["params"];
 }
 
+/**
+ * A typed input-slot path (Rust `InputPath`, internally tagged on `"path"`,
+ * camelCase). Only the fillet-edge arm is authored by M4b.
+ */
+export type WireInputPath = { path: "filletEdges"; index: number };
+
+/**
+ * The payload of an `EditOperationInput` (Rust `InputRef`, externally tagged,
+ * camelCase). M4b authors only the `element` arm (fillet/chamfer edge rebind).
+ */
+export type WireInputRef = { element: WireElementRef };
+
 /** The `EditCommand` variants this WP emits (serde tag `"cmd"`, camelCase). */
 export type WireEditCommand =
   | { cmd: "addOperation"; record: WireOperationRecord; atCursor: boolean }
-  | { cmd: "updateOperationParams"; record: string; op: WireOperation };
+  | { cmd: "updateOperationParams"; record: string; op: WireOperation }
+  | { cmd: "editOperationInput"; record: string; path: WireInputPath; reference: WireInputRef }
+  | { cmd: "removeOperation"; record: string }
+  | { cmd: "setRollback"; cursor: number }
+  | { cmd: "setOperationSuppression"; record: string; suppressed: boolean; cascade: boolean };
 
 const scalar = (n: number): WireScalar => ({ value: n });
+
+/**
+ * Normalize a body id to the BARE uuid the core `EditCommand` serde expects
+ * (`BodyId` is `#[serde(transparent)]`, so it (de)serializes as the bare uuid).
+ *
+ * The frontend mostly HOLDS bare uuids — `document-changed`/`projection-updated`
+ * emit `body.to_string()` (bare), so tree/scene/selection body ids are bare. The
+ * one exception is `promoteSelection`, whose `PromotedElementDto.bodyId` comes back
+ * in the worker `body_<uuid>` WIRE form (`body_id_wire`). Any body id that flows
+ * into a typed ref bound for `apply_edit_command` MUST be stripped here, or the core
+ * rejects the whole command (`"body_…"` is not a uuid). Idempotent: a bare uuid — or
+ * a mock id like `body1` (no underscore) — passes through unchanged.
+ */
+export function bareBodyId(id: string): string {
+  return id.startsWith("body_") ? id.slice("body_".length) : id;
+}
 
 /** Mint a client-side record id (real UUID; V1 has no server-side pre-mint step). */
 function mintRecordId(): string {
@@ -110,14 +229,50 @@ function extrudeParams(p: ExtrudeParams): WireExtrudeParams {
   return wire;
 }
 
-function filletParams(p: FilletParams): WireFilletParams {
-  return {
+function axisRef(a: AxisRef): WireAxisRef {
+  return a.kind === "sketchLine"
+    ? { kind: "sketchLine", sketchId: a.sketchId, lineId: a.lineId }
+    : { kind: "edge", bodyId: a.bodyId, edgeId: a.edgeId };
+}
+
+function revolveParams(p: RevolveParams): WireRevolveParams {
+  const wire: WireRevolveParams = {
+    // Rust `angleDeg` is DEGREES — pass through unchanged (unit pinned).
+    angleDeg: scalar(p.angleDeg),
+    booleanMode: p.booleanMode ?? "NewBody",
+  };
+  if (p.axis !== undefined) wire.axis = axisRef(p.axis);
+  if (p.targetBodyId !== undefined) wire.targetBodyId = p.targetBodyId;
+  return wire;
+}
+
+function filletParams(p: FilletParams, inputs?: SemanticRef[]): WireFilletParams {
+  const edgeIds = [...p.edgeIds];
+  const wire: WireFilletParams = {
     radius: scalar(p.radius),
     // Chamfer shares FilletChamferParams in C++, but the vertical-slice tool only
     // authors Fillet; a Chamfer would map to opType "Chamfer" (future).
-    edgeIds: [...p.edgeIds],
+    edgeIds,
     chainTangentEdges: p.chainTangentEdges ?? true,
   };
+  // R-WP2.1 dual rule: carry the typed `edges` in LOCKSTEP with `edgeIds`, built from
+  // the op's per-edge SemanticRefs (`OperationOp.inputs`). Each typed ref supplies the
+  // operated body — `record.rs::derive_inputs` recovers it from `primary.body`, and
+  // `wire.rs::edge_input_refs` sends it as `primary.bodyId`, so a UI-selected fillet
+  // reaches the worker with a body (`FilletChamferOp::target_body_of`). Without the
+  // typed `edges` a pure-`edgeIds` fillet derives NO body (M4a note) and the worker
+  // fails "Fillet requires body input". `primary.element` MUST equal `edgeIds[i]`
+  // (session.rs F2 lockstep); the anchor world-point rides so the worker's ladder can
+  // resolve the edge. The core `ElementRef.primary` REQUIRES a bodyId, so the typed
+  // `edges` is emitted only when every edge input carries one — otherwise the op
+  // marshals as a bare-`edgeIds` fillet (the unchanged legacy path).
+  const edgeInputs = (inputs ?? []).filter((r) => r.primary.kind === "edge");
+  if (edgeInputs.length === edgeIds.length && edgeInputs.every((r) => r.primary.bodyId)) {
+    wire.edges = edgeIds.map((id, i) =>
+      edgeElementRef(edgeInputs[i].primary.bodyId, id, edgeInputs[i].anchor?.worldPoint),
+    );
+  }
+  return wire;
 }
 
 function booleanParams(p: BooleanParams): WireBooleanParams {
@@ -126,6 +281,48 @@ function booleanParams(p: BooleanParams): WireBooleanParams {
     targetBodyId: p.targetBodyId,
     toolBodyId: p.toolBodyId,
   };
+}
+
+function shellParams(p: ShellParams): WireShellParams {
+  const wire: WireShellParams = {
+    thickness: scalar(p.thickness),
+    openFaces: [...p.openFaces],
+  };
+  if (p.targetBodyId !== undefined) wire.targetBodyId = p.targetBodyId;
+  return wire;
+}
+
+function linearPatternParams(p: LinearPatternParams): WireLinearPatternParams {
+  const wire: WireLinearPatternParams = {
+    direction: [...p.direction],
+    spacing: scalar(p.spacing),
+    count: p.count, // bare u32 — NOT a Scalar
+    fuseResult: p.fuseResult ?? true,
+  };
+  if (p.sourceBodyId !== undefined) wire.sourceBodyId = p.sourceBodyId;
+  return wire;
+}
+
+function circularPatternParams(p: CircularPatternParams): WireCircularPatternParams {
+  const wire: WireCircularPatternParams = {
+    axisOrigin: [...p.axisOrigin],
+    axisDirection: [...p.axisDirection],
+    angleDeg: scalar(p.angleDeg),
+    count: p.count, // bare u32 — NOT a Scalar
+    fuseResult: p.fuseResult ?? true,
+  };
+  if (p.sourceBodyId !== undefined) wire.sourceBodyId = p.sourceBodyId;
+  return wire;
+}
+
+function mirrorBodyParams(p: MirrorBodyParams): WireMirrorBodyParams {
+  const wire: WireMirrorBodyParams = {
+    planePoint: [...p.planePoint],
+    planeNormal: [...p.planeNormal],
+    fuseWithOriginal: p.fuseWithOriginal ?? false,
+  };
+  if (p.sourceBodyId !== undefined) wire.sourceBodyId = p.sourceBodyId;
+  return wire;
 }
 
 /** Build the `{opType, params}` wire op for an OperationOp (no ids yet). */
@@ -139,10 +336,26 @@ function wireOperation(op: OperationOp): WireOperation {
       }
       return { opType: "Extrude", params };
     }
+    case "Revolve": {
+      const params = revolveParams(op.params);
+      // The profile is a SketchRegionRef (ids real once R-WP12 lands, as Extrude).
+      if (op.sketchId && op.regionId) {
+        params.profile = { sketchId: op.sketchId, regionId: op.regionId };
+      }
+      return { opType: "Revolve", params };
+    }
     case "Fillet":
-      return { opType: "Fillet", params: filletParams(op.params) };
+      return { opType: "Fillet", params: filletParams(op.params, op.inputs) };
     case "Boolean":
       return { opType: "Boolean", params: booleanParams(op.params) };
+    case "Shell":
+      return { opType: "Shell", params: shellParams(op.params) };
+    case "LinearPattern":
+      return { opType: "LinearPattern", params: linearPatternParams(op.params) };
+    case "CircularPattern":
+      return { opType: "CircularPattern", params: circularPatternParams(op.params) };
+    case "MirrorBody":
+      return { opType: "MirrorBody", params: mirrorBodyParams(op.params) };
   }
 }
 
@@ -163,7 +376,185 @@ export function operationToEditCommand(op: OperationOp): WireEditCommand {
   };
 }
 
+/** The wire `params` object for an OperationOp (the EditCommand `op.params` shape). */
+export function wireParamsOf(op: OperationOp): Record<string, unknown> {
+  return wireOperation(op).params as unknown as Record<string, unknown>;
+}
+
+/** A scalar-only re-edit patch (only the changed dimension(s), keyed by wire field). */
+export type ScalarPatch = Record<string, WireScalar>;
+
+/**
+ * `UpdateOperationParams` that changes ONLY the given scalar field(s) of a stored op,
+ * preserving every OTHER param (revolve `axis`, shell `openFaces`, fillet `edges` /
+ * `edgeIds`, `targetBodyId`, `profile`) VERBATIM. `storedParams` is the op's params
+ * JSON from `get_operation_params` (already the EditCommand `op.params` serde shape).
+ *
+ * A parametric re-edit (double-click a feature → change one dimension) cannot rebuild
+ * these non-scalar inputs from the projection, so a whole-params replace would silently
+ * clobber them (drop the picked revolve axis / wipe the shell's open faces + target).
+ * Deep-merging the scalar into the stored params here is the fix.
+ */
+export function updateScalarParamsCommand(
+  recordId: string,
+  opType: WireOperation["opType"],
+  storedParams: Record<string, unknown>,
+  patch: ScalarPatch,
+): WireEditCommand {
+  const op = { opType, params: { ...storedParams, ...patch } } as unknown as WireOperation;
+  return { cmd: "updateOperationParams", record: recordId, op };
+}
+
 /** Human label for a committed/undone op, for the status-bar hint. */
 export function opLabelFor(op: OperationOp): string {
-  return op.opType === "Boolean" ? op.params.operation : op.opType;
+  switch (op.opType) {
+    case "Boolean":
+      return op.params.operation;
+    case "LinearPattern":
+      return "Linear Pattern";
+    case "CircularPattern":
+      return "Circular Pattern";
+    case "MirrorBody":
+      return "Mirror";
+    default:
+      return op.opType;
+  }
+}
+
+// ── M4b: raw EditCommand builders (repair rebind + history affordances) ────────
+//
+// These map straight onto the Rust `EditCommand` vocabulary (edit/command.rs) so
+// `client.applyEditCommand(cmd)` can send them verbatim. The record/cursor ids
+// are the projection feature ids (a feature's `id` IS its `RecordId` UUID) and
+// the timeline cursor (= applied op count; history/timeline.rs).
+
+/** The current fillet params a rebind rewrites (the SUBSET M4b touches). */
+export interface CurrentFilletParams {
+  radius: number;
+  edgeIds: string[];
+  /** Typed refs, parallel to `edgeIds` (may be shorter for a legacy fillet). */
+  edges?: WireElementRef[];
+  chainTangentEdges?: boolean;
+}
+
+/**
+ * Build the typed edge `ElementRef` for a rebound edge (primary + anchor). The
+ * `bodyId` is normalized to the bare-uuid core form ([`bareBodyId`]) so BOTH the
+ * fresh-fillet path (picks carry bare uuids) and the M4b repair rebind path
+ * (`promoteSelection` returns the `body_<uuid>` wire form) marshal a body id the
+ * core `EditCommand` serde accepts.
+ */
+export function edgeElementRef(
+  bodyId: string,
+  elementId: string,
+  worldPos?: [number, number, number],
+): WireElementRef {
+  const ref: WireElementRef = { primary: { bodyId: bareBodyId(bodyId), elementId, kind: "edge" } };
+  if (worldPos) ref.anchor = { worldPoint: worldPos };
+  return ref;
+}
+
+/**
+ * PURE dual-field fillet-edge rewrite (M4b pinned rule): replace ONLY slot
+ * `index` in BOTH `edgeIds` (bare) and `edges` (typed), leaving every sibling
+ * edge untouched. `edgeIds[index]` becomes the minted `elementId`; `edges[index]`
+ * becomes the typed `ElementRef`. Both arrays are grown to `index + 1` if the
+ * current fillet stored fewer entries (legacy/short). Returns the full new
+ * `WireFilletParams` an `UpdateOperationParams` carries.
+ */
+export function rewriteFilletEdgeParams(
+  current: CurrentFilletParams,
+  index: number,
+  ref: WireElementRef,
+): WireFilletParams {
+  const elementId = ref.primary?.elementId ?? "";
+  const edgeIds = [...current.edgeIds];
+  const edges = [...(current.edges ?? [])];
+  // Grow both arrays so slot `index` exists (keep them the SAME length).
+  const len = Math.max(edgeIds.length, edges.length, index + 1);
+  while (edgeIds.length < len) edgeIds.push("");
+  while (edges.length < len) edges.push({});
+  edgeIds[index] = elementId; // bare id (lockstep)
+  edges[index] = ref; // typed ref (lockstep)
+  return {
+    radius: scalar(current.radius),
+    edgeIds,
+    edges,
+    chainTangentEdges: current.chainTangentEdges ?? true,
+  };
+}
+
+/** `UpdateOperationParams` for a rewritten Fillet (the pinned dual-field path). */
+export function updateFilletParamsCommand(
+  recordId: string,
+  params: WireFilletParams,
+): WireEditCommand {
+  return { cmd: "updateOperationParams", record: recordId, op: { opType: "Fillet", params } };
+}
+
+/**
+ * `EditOperationInput` for a single fillet edge slot (the backend-designated
+ * fillet-edge rebind — command.rs `InputPath::FilletEdges`, which populates BOTH
+ * `edge_ids[index]` and `edges[index]` in lockstep server-side). Needs only the
+ * slot index + the new ref, so it works WITHOUT the frontend knowing the fillet's
+ * full current edge set (which the projection does not expose).
+ */
+export function filletEdgeRebindCommand(
+  recordId: string,
+  index: number,
+  ref: WireElementRef,
+): WireEditCommand {
+  return {
+    cmd: "editOperationInput",
+    record: recordId,
+    path: { path: "filletEdges", index },
+    reference: { element: ref },
+  };
+}
+
+/** `SetOperationSuppression` — suppress/un-suppress `recordId` (optional cascade). */
+export function suppressOperationCommand(
+  recordId: string,
+  suppressed: boolean,
+  cascade = false,
+): WireEditCommand {
+  return { cmd: "setOperationSuppression", record: recordId, suppressed, cascade };
+}
+
+/** `SetRollback` — move the rollback cursor (= applied op count; timeline.rs). */
+export function rollbackToCursorCommand(cursor: number): WireEditCommand {
+  return { cmd: "setRollback", cursor: Math.max(0, Math.floor(cursor)) };
+}
+
+/** `RemoveOperation` — delete `recordId` from the timeline. */
+export function removeOperationCommand(recordId: string): WireEditCommand {
+  return { cmd: "removeOperation", record: recordId };
+}
+
+/** A short human label for a raw EditCommand (status-bar hint). */
+export function editCommandLabel(cmd: WireEditCommand): string {
+  switch (cmd.cmd) {
+    case "editOperationInput":
+    case "updateOperationParams":
+      return "Repair reference";
+    case "removeOperation":
+      return "Delete feature";
+    case "setRollback":
+      return "Rollback";
+    case "setOperationSuppression":
+      return cmd.suppressed ? "Suppress" : "Unsuppress";
+    default:
+      return "Edit";
+  }
+}
+
+/**
+ * Parse a repair `refId` (`"<opId>.input<k>"`; SCHEMA §9) into its op id + input
+ * slot index. Returns `null` when the shape does not match (the caller then treats
+ * `k` as 0 / skips slot-targeting) so a backend format change fails soft.
+ */
+export function parseRefId(refId: string): { opId: string; index: number } | null {
+  const m = /^(.*)\.input(\d+)$/.exec(refId);
+  if (!m) return null;
+  return { opId: m[1], index: Number(m[2]) };
 }

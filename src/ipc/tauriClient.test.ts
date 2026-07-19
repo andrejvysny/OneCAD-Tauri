@@ -116,6 +116,190 @@ describe("tauriClient command marshalling", () => {
   });
 });
 
+// ── Crash recovery (check_recovery / recover_document) ─────────────────────────
+
+describe("tauriClient crash recovery", () => {
+  it("checkRecovery invokes check_recovery and returns the info DTO", async () => {
+    const seen: string[] = [];
+    mockIPC((cmd) => {
+      seen.push(cmd);
+      if (cmd === "check_recovery")
+        return { autosavePath: "/x/a.onecad", originalPath: "/docs/Bracket.onecad", modifiedMs: 1_700_000_000_000 };
+    });
+    const info = await createTauriClient().checkRecovery();
+    expect(seen).toContain("check_recovery");
+    expect(info).toEqual({
+      autosavePath: "/x/a.onecad",
+      originalPath: "/docs/Bracket.onecad",
+      modifiedMs: 1_700_000_000_000,
+    });
+  });
+
+  it("checkRecovery resolves null when there is nothing to recover", async () => {
+    mockIPC((cmd) => (cmd === "check_recovery" ? null : undefined));
+    expect(await createTauriClient().checkRecovery()).toBeNull();
+  });
+
+  it("recoverDocument invokes recover_document with { accept } and returns the snapshot / null", async () => {
+    const args: Record<string, unknown> = {};
+    mockIPC((cmd, payload) => {
+      args[cmd] = payload;
+      if (cmd === "recover_document") {
+        const accept = (payload as { accept: boolean }).accept;
+        return accept ? { documentId: "doc-r", title: "Bracket" } : null;
+      }
+    });
+    const client = createTauriClient();
+    const snap = await client.recoverDocument(true);
+    expect(args["recover_document"]).toEqual({ accept: true });
+    expect(snap).toEqual({ documentId: "doc-r", title: "Bracket" });
+    expect(await client.recoverDocument(false)).toBeNull();
+  });
+});
+
+// ── Save / Save As / Export STEP (Rust-owned dialogs + fs) ─────────────────────
+
+describe("tauriClient file commands", () => {
+  it("saveDocument marshals the path (null when reusing the last path)", async () => {
+    const args: Record<string, unknown> = {};
+    mockIPC((cmd, payload) => {
+      if (cmd === "save_document") args[cmd] = payload;
+    });
+    const client = createTauriClient();
+    await client.saveDocument();
+    expect(args["save_document"]).toEqual({ path: null });
+    await client.saveDocument("/tmp/a.onecad");
+    expect(args["save_document"]).toEqual({ path: "/tmp/a.onecad" });
+  });
+
+  it("saveDocumentAs shows the save dialog, saves, and returns the chosen path", async () => {
+    const seen: string[] = [];
+    let saved: unknown;
+    mockIPC((cmd, payload) => {
+      seen.push(cmd);
+      if (cmd === "save_file_dialog") return "/chosen.onecad";
+      if (cmd === "save_document") saved = payload;
+    });
+    const path = await createTauriClient().saveDocumentAs();
+    expect(path).toBe("/chosen.onecad");
+    expect(saved).toEqual({ path: "/chosen.onecad" });
+    expect(seen).toContain("save_file_dialog");
+    expect(seen).toContain("save_document");
+  });
+
+  it("saveDocumentAs returns null and does NOT save when the dialog is cancelled", async () => {
+    const seen: string[] = [];
+    mockIPC((cmd) => {
+      seen.push(cmd);
+      if (cmd === "save_file_dialog") return null;
+    });
+    expect(await createTauriClient().saveDocumentAs()).toBeNull();
+    expect(seen).not.toContain("save_document");
+  });
+
+  it("exportStep invokes export_step_file and returns the written path", async () => {
+    let payload: unknown;
+    mockIPC((cmd, p) => {
+      if (cmd === "export_step_file") {
+        payload = p;
+        return "/out.step";
+      }
+    });
+    expect(await createTauriClient().exportStep()).toBe("/out.step");
+    expect(payload).toEqual({ path: null });
+  });
+
+  it("exportStep returns null on a cancelled export dialog", async () => {
+    mockIPC((cmd) => (cmd === "export_step_file" ? null : undefined));
+    expect(await createTauriClient().exportStep()).toBeNull();
+  });
+
+  it("exportStl invokes export_stl_file and returns the written path", async () => {
+    let payload: unknown;
+    mockIPC((cmd, p) => {
+      if (cmd === "export_stl_file") {
+        payload = p;
+        return "/out.stl";
+      }
+    });
+    expect(await createTauriClient().exportStl()).toBe("/out.stl");
+    expect(payload).toEqual({ path: null });
+  });
+
+  it("exportStl returns null on a cancelled export dialog", async () => {
+    mockIPC((cmd) => (cmd === "export_stl_file" ? null : undefined));
+    expect(await createTauriClient().exportStl()).toBeNull();
+  });
+
+  it("exportObj invokes export_obj_file and returns the written path", async () => {
+    let payload: unknown;
+    mockIPC((cmd, p) => {
+      if (cmd === "export_obj_file") {
+        payload = p;
+        return "/out.obj";
+      }
+    });
+    expect(await createTauriClient().exportObj()).toBe("/out.obj");
+    expect(payload).toEqual({ path: null });
+  });
+
+  it("exportObj returns null on a cancelled export dialog", async () => {
+    mockIPC((cmd) => (cmd === "export_obj_file" ? null : undefined));
+    expect(await createTauriClient().exportObj()).toBeNull();
+  });
+});
+
+// ── worker-status event ───────────────────────────────────────────────────────
+
+describe("tauriClient worker-status", () => {
+  it("delivers worker-status to subscribers and stops after unsubscribe", async () => {
+    mockIPC(() => undefined, { shouldMockEvents: true });
+    const client = createTauriClient();
+    const seen: { state: string; epoch: number }[] = [];
+    const unsub = client.onWorkerStatus((s) => seen.push(s));
+    await tick(); // let the lazy listen() register
+
+    await emit("worker-status", { state: "restarting", epoch: 3 });
+    expect(seen).toEqual([{ state: "restarting", epoch: 3 }]);
+
+    unsub();
+    await emit("worker-status", { state: "ready", epoch: 4 });
+    expect(seen).toHaveLength(1); // no delivery after unsubscribe
+  });
+});
+
+// ── enter_sketch constraint reverse-map (re-entry hydration) ──────────────────
+
+describe("tauriClient enter_sketch constraints", () => {
+  it("reverse-maps the worker-wire constraints into frontend constraints", async () => {
+    mockIPC(
+      (cmd, payload) => {
+        if (cmd === "apply_edit_command") return readyProjection(1);
+        if (cmd === "enter_sketch")
+          return {
+            sketchId: (payload as { sketchId: string }).sketchId,
+            plane: XZ_PLANE,
+            entities: [],
+            constraints: [
+              { id: "cc", type: "Coincident", entities: ["p1", "p2"] },
+              { id: "cd", type: "Distance", entities: ["p1", "p2"], value: 90 },
+              { id: "bad", type: "NotAThing", entities: ["x"] },
+            ],
+            dof: 2,
+            status: "UnderConstrained",
+          };
+      },
+      { shouldMockEvents: true },
+    );
+    const session = await createTauriClient().enterSketch({ newOnPlane: "XZ", sketchId: "sk" });
+    // Known kinds map through; the unknown kind is dropped.
+    expect(session.constraints).toEqual([
+      { id: "cc", type: "Coincident", entities: ["p1", "p2"] },
+      { id: "cd", type: "Distance", entities: ["p1", "p2"], value: 90 },
+    ]);
+  });
+});
+
 // ── Mesh ArrayBuffer path through the MESH1 parser ────────────────────────────
 
 describe("tauriClient mesh path", () => {
@@ -177,6 +361,57 @@ describe("operationToEditCommand", () => {
     expect(p.booleanMode).toBe("NewBody");
     expect(p.twoDirections).toBe(false);
     expect(p.profile).toEqual({ sketchId: "sk", regionId: "r1" });
+  });
+
+  it("maps Revolve to addOperation with angleDeg (DEGREES), sketchLine axis + profile", () => {
+    const cmd = operationToEditCommand({
+      opType: "Revolve",
+      sketchId: "sk",
+      regionId: "r1",
+      params: {
+        angleDeg: 270,
+        axis: { kind: "sketchLine", sketchId: "sk", lineId: "line-7" },
+        booleanMode: "NewBody",
+      },
+    });
+    expect(cmd.cmd).toBe("addOperation");
+    if (cmd.cmd !== "addOperation") throw new Error("unreachable");
+    expect(cmd.record.opType).toBe("Revolve");
+    const p = cmd.record.params as unknown as Record<string, unknown>;
+    // Unit pinned: angle passes through as a Scalar in DEGREES (no radians).
+    expect(p.angleDeg).toEqual({ value: 270 });
+    expect(p.axis).toEqual({ kind: "sketchLine", sketchId: "sk", lineId: "line-7" });
+    expect(p.booleanMode).toBe("NewBody");
+    expect(p.profile).toEqual({ sketchId: "sk", regionId: "r1" });
+  });
+
+  it("defaults Revolve booleanMode + omits an absent axis", () => {
+    const cmd = operationToEditCommand({
+      opType: "Revolve",
+      sketchId: "sk",
+      regionId: "r1",
+      params: { angleDeg: 360 },
+    });
+    if (cmd.cmd !== "addOperation") throw new Error("unreachable");
+    const p = cmd.record.params as unknown as Record<string, unknown>;
+    expect(p.angleDeg).toEqual({ value: 360 });
+    expect(p.booleanMode).toBe("NewBody");
+    expect("axis" in p).toBe(false);
+    expect("targetBodyId" in p).toBe(false);
+  });
+
+  it("maps a Revolve featureId edit to updateOperationParams (param-only re-edit)", () => {
+    const cmd = operationToEditCommand({
+      opType: "Revolve",
+      featureId: "rev-record-uuid",
+      sketchId: "sk",
+      regionId: "r1",
+      params: { angleDeg: 90 },
+    });
+    if (cmd.cmd !== "updateOperationParams") throw new Error("unreachable");
+    expect(cmd.record).toBe("rev-record-uuid");
+    expect(cmd.op.opType).toBe("Revolve");
+    expect((cmd.op.params as unknown as Record<string, unknown>).angleDeg).toEqual({ value: 90 });
   });
 
   it("maps Boolean to addOperation with real body refs + operation", () => {
@@ -438,7 +673,15 @@ describe("tauriClient drag gesture (latest-wins)", () => {
         }
         if (cmd === "solve_drag") return onDrag();
         if (cmd === "end_gesture")
-          return { sketchId: "u", sketchRevision: 9, dof: 0, status: "FullyConstrained", solvedPositions: { p: [8, 8] } };
+          // The worker keys solvedPositions by backend POINT UUID (the id begin
+          // translated "e1.Start" to); the client reverse-maps it to "e1.Start".
+          return {
+            sketchId: "u",
+            sketchRevision: 9,
+            dof: 0,
+            status: "FullyConstrained",
+            solvedPositions: beginArgs?.dragPoint ? { [beginArgs.dragPoint]: [8, 8] } : {},
+          };
       },
       { shouldMockEvents: true },
     );
@@ -484,7 +727,8 @@ describe("tauriClient drag gesture (latest-wins)", () => {
 
     const end = await client.endGesture([8, 8]);
     expect(end.status).toBe("FullyConstrained");
-    expect(end.solvedPositions?.p).toEqual([8, 8]);
+    // F-WP9: the backend point UUID is reverse-mapped to the frontend point key.
+    expect(end.solvedPositions?.["e1.Start"]).toEqual([8, 8]);
   });
 });
 

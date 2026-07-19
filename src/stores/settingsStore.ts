@@ -10,6 +10,12 @@ export interface SnapSettings {
   grid: boolean;
   sketchGuideLines: boolean;
   sketchGuidePoints: boolean;
+  /** Circle/arc 0/90/180/270° quadrant snaps (M6c parity, default on). */
+  quadrant: boolean;
+  /** Entity-entity intersection snaps (M6c parity, default on). */
+  intersection: boolean;
+  /** Nearest-point-on-curve snaps (M6c parity, default on). */
+  onCurve: boolean;
   guidePoints3d: boolean;
   distantEdges: boolean;
 }
@@ -45,6 +51,9 @@ export const settingsStore = createStore<SettingsState>()(
         grid: true,
         sketchGuideLines: true,
         sketchGuidePoints: true,
+        quadrant: true,
+        intersection: true,
+        onCurve: true,
         guidePoints3d: true,
         distantEdges: false,
       },
@@ -63,7 +72,25 @@ export const settingsStore = createStore<SettingsState>()(
         set({ experimentalWebGpu: value });
       },
     }),
-    { name: STORAGE_KEY, version: 1 },
+    {
+      name: STORAGE_KEY,
+      version: 2,
+      // v1 → v2 added the M6c snap types (quadrant / intersection / onCurve).
+      // A v1 blob has no keys for them; backfill the on-by-default values so an
+      // existing user's popover shows them enabled (parity with a fresh install).
+      migrate: (persisted, version) => {
+        const s = persisted as Partial<SettingsState>;
+        if (s && version < 2) {
+          s.snapTo = {
+            quadrant: true,
+            intersection: true,
+            onCurve: true,
+            ...(s.snapTo as Partial<SnapSettings>),
+          } as SnapSettings;
+        }
+        return s as unknown as SettingsState;
+      },
+    },
   ),
 );
 

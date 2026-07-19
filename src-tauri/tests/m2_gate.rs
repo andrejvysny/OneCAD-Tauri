@@ -37,10 +37,10 @@ use onecad_core::sketch::{Constraint, Sketch, SketchEntity, WorldPlane};
 
 use onecad_lib::document_runtime::{DocumentRuntime, RegenReport};
 use onecad_lib::worker::manager::SupervisorConfig;
-use onecad_lib::worker::wire::sketch_wire;
+use onecad_lib::worker::wire::{body_id_wire, sketch_wire};
 use onecad_lib::worker::{resolve_worker_path, MeshProvider, SolverEngine, WorkerManager};
 
-use onecad_protocol::mesh::{validate_mesh_blob, MeshHeaderView};
+use onecad_protocol::mesh::{f32_le, u32_le, validate_mesh_blob, MeshHeaderView};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Harness
@@ -82,6 +82,22 @@ fn save_meta() -> SaveMeta {
         created: "2026-07-18T00:00:00Z".into(),
         modified: "2026-07-18T00:00:00Z".into(),
     }
+}
+
+/// Append an operation record at the timeline cursor (the repeated apply-expect).
+fn add_op(rt: &mut DocumentRuntime, record: OperationRecord) {
+    rt.apply(EditCommand::AddOperation {
+        record,
+        at_cursor: true,
+    })
+    .expect("AddOperation");
+}
+
+/// Drive a full replay-from-0 regen against the real worker (the repeated
+/// `run_regen(ToEnd { from: 0 })` incantation).
+async fn regen_all(rt: &mut DocumentRuntime) -> RegenReport {
+    rt.run_regen(RegenRequest::ToEnd { from: 0 }, CancelToken::new())
+        .await
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -319,13 +335,6 @@ const SEC_EDGE_POSITIONS: u32 = 8;
 const SEC_EDGE_ID_OFFS: u32 = 9;
 const SEC_EDGE_ID_CHARS: u32 = 10;
 
-fn u32_le(b: &[u8], off: usize) -> u32 {
-    u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]])
-}
-fn f32_le(b: &[u8], off: usize) -> f32 {
-    f32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]])
-}
-
 /// Read the (`count`+1) prefix-sum offsets + concatenated UTF-8 id chars of an id
 /// table (FACE_* / EDGE_*) into the per-element id strings.
 fn id_table(
@@ -533,20 +542,13 @@ async fn m2_gate_full_slice() {
     );
 
     // ── Step 2: extrude the region → regen on the real worker → published body ──
-    rt.apply(EditCommand::AddOperation {
-        record: sketch_op_record(&sketch),
-        at_cursor: true,
-    })
-    .expect("AddOperation Sketch");
-    rt.apply(EditCommand::AddOperation {
-        record: extrude_op_record(sid, RegionId::new(region_id.clone())),
-        at_cursor: true,
-    })
-    .expect("AddOperation Extrude");
+    add_op(&mut rt, sketch_op_record(&sketch));
+    add_op(
+        &mut rt,
+        extrude_op_record(sid, RegionId::new(region_id.clone())),
+    );
 
-    let ext_report = rt
-        .run_regen(RegenRequest::ToEnd { from: 0 }, CancelToken::new())
-        .await;
+    let ext_report = regen_all(&mut rt).await;
     let ext_snap = published(&ext_report, "STEP 2 extrude").clone();
     assert_eq!(ext_report.changed.len(), 1, "STEP 2: one extruded body");
     let body = ext_report.changed[0].0;
@@ -570,7 +572,7 @@ async fn m2_gate_full_slice() {
     );
     eprintln!(
         "STEP 2 PASS: body={}, snapshot={ext_snapshot_id}, faces={}, dims={dims:?}",
-        body_id_string(body),
+        body_id_wire(body),
         view.face_count
     );
 
@@ -631,14 +633,8 @@ async fn m2_gate_full_slice() {
 
     // ── Step 5: fillet one edge (anchor-resolved) → regen → applied | NeedsRepair ─
     let (edge_key, edge_anchor) = vertical_edge_pick(&view, &mesh);
-    rt.apply(EditCommand::AddOperation {
-        record: fillet_op_record(body, edge_anchor),
-        at_cursor: true,
-    })
-    .expect("AddOperation Fillet");
-    let fil_report = rt
-        .run_regen(RegenRequest::ToEnd { from: 0 }, CancelToken::new())
-        .await;
+    add_op(&mut rt, fillet_op_record(body, edge_anchor));
+    let fil_report = regen_all(&mut rt).await;
     let fil_snap = published(&fil_report, "STEP 5 fillet").clone();
     let fillet_applied;
     if fil_snap.repair_summary.needs_repair_count > 0 {
@@ -691,9 +687,7 @@ async fn m2_gate_full_slice() {
 
     let wm2 = spawn_worker(bin.clone()).await;
     let mut rt2 = open_over(&wm2, &path1);
-    let rep2 = rt2
-        .run_regen(RegenRequest::ToEnd { from: 0 }, CancelToken::new())
-        .await;
+    let rep2 = regen_all(&mut rt2).await;
     let snap2 = published(&rep2, "STEP 6 replay").clone();
     let head2 = wm2.get_worker_head().await.expect("worker 2 head");
 
@@ -745,9 +739,7 @@ async fn m2_gate_full_slice() {
 
     // ── Step 8: undo the fillet → regen → body reverts to the pre-fillet state ──
     assert!(rt.undo(), "STEP 8: undo removes the fillet op");
-    let undo_report = rt
-        .run_regen(RegenRequest::ToEnd { from: 0 }, CancelToken::new())
-        .await;
+    let undo_report = regen_all(&mut rt).await;
     let undo_snap = published(&undo_report, "STEP 8 revert").clone();
     assert_eq!(
         body_sig_set(&undo_snap),
@@ -802,9 +794,4 @@ async fn m2_non_xy_plane_basis() {
     eprintln!("gap 7 PASS: XZ sketch carries the non-standard basis");
 
     wm.shutdown().await;
-}
-
-/// The `body_<uuid>` wire form (echoed in log lines).
-fn body_id_string(body: BodyId) -> String {
-    format!("body_{}", body)
 }

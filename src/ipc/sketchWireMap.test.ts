@@ -4,9 +4,11 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  applySolvedPositions,
   buildAddSketch,
   createIdMap,
   frontendEntitiesFromDto,
+  frontendSolvedPositions,
   isDimensional,
   marshalUpsert,
 } from "./sketchWireMap";
@@ -137,5 +139,70 @@ describe("buildAddSketch / frontendEntitiesFromDto / isDimensional", () => {
     expect(isDimensional("Distance")).toBe(true);
     expect(isDimensional("Horizontal")).toBe(false);
     expect(isDimensional("Coincident")).toBe(false);
+  });
+});
+
+// ── F-WP9: solvedPositions reverse map (backend point UUID → frontend geometry) ─
+
+describe("frontendSolvedPositions — re-key backend point UUIDs", () => {
+  it("maps backend point UUIDs to frontend entityId.Position keys", () => {
+    const map = createIdMap("sk", "XY");
+    marshalUpsert(map, { entities: [line("e1", [0, 0], [40, 0])], constraints: [] }, mint);
+    // uuid-1 = e1.Start, uuid-2 = e1.End (from the Line marshal above).
+    const out = frontendSolvedPositions(map, {
+      "uuid-1": [5, 6],
+      "uuid-2": [7, 8],
+    });
+    expect(out).toEqual({ "e1.Start": [5, 6], "e1.End": [7, 8] });
+  });
+
+  it("silently drops keys not in the id-map (re-entry / stale)", () => {
+    const map = createIdMap("sk", "XY");
+    marshalUpsert(map, { entities: [line("e1", [0, 0], [40, 0])], constraints: [] }, mint);
+    const out = frontendSolvedPositions(map, { "not-a-mapped-uuid": [1, 1] });
+    expect(out).toEqual({});
+  });
+
+  it("returns {} for null/undefined positions", () => {
+    const map = createIdMap("sk", "XY");
+    expect(frontendSolvedPositions(map, null)).toEqual({});
+    expect(frontendSolvedPositions(map, undefined)).toEqual({});
+  });
+});
+
+describe("applySolvedPositions — move geometry per entity kind", () => {
+  it("moves a Line's endpoints (Start → p0, End → p1)", () => {
+    const entities: SketchEntity[] = [{ id: "e1", type: "Line", p0: [0, 0], p1: [40, 0] }];
+    const out = applySolvedPositions(entities, { "e1.Start": [5, 6], "e1.End": [7, 8] });
+    expect(out[0]).toMatchObject({ id: "e1", type: "Line", p0: [5, 6], p1: [7, 8] });
+    // Immutable: a new array + entity, source untouched.
+    expect(out).not.toBe(entities);
+    expect(entities[0].p0).toEqual([0, 0]);
+  });
+
+  it("moves a Circle's center", () => {
+    const entities: SketchEntity[] = [{ id: "e2", type: "Circle", center: [10, 10], radius: 3 }];
+    const out = applySolvedPositions(entities, { "e2.Center": [12, 9] });
+    expect(out[0]).toMatchObject({ type: "Circle", center: [12, 9], radius: 3 });
+  });
+
+  it("moves a Point's p0 (Start or Center key)", () => {
+    const entities: SketchEntity[] = [{ id: "e3", type: "Point", p0: [1, 1] }];
+    expect(applySolvedPositions(entities, { "e3.Center": [4, 5] })[0]).toMatchObject({ p0: [4, 5] });
+  });
+
+  it("returns the SAME array reference when nothing moved (no churn)", () => {
+    const entities: SketchEntity[] = [{ id: "e1", type: "Line", p0: [0, 0], p1: [40, 0] }];
+    expect(applySolvedPositions(entities, {})).toBe(entities);
+    // Positions for an unknown entity id are ignored.
+    expect(applySolvedPositions(entities, { "eX.Start": [1, 2] })).toBe(entities);
+  });
+
+  it("round-trips with frontendSolvedPositions (client re-key → controller apply)", () => {
+    const map = createIdMap("sk", "XY");
+    marshalUpsert(map, { entities: [line("e1", [0, 0], [40, 0])], constraints: [] }, mint);
+    const frontend = frontendSolvedPositions(map, { "uuid-1": [5, 6], "uuid-2": [7, 8] });
+    const entities: SketchEntity[] = [{ id: "e1", type: "Line", p0: [0, 0], p1: [40, 0] }];
+    expect(applySolvedPositions(entities, frontend)[0]).toMatchObject({ p0: [5, 6], p1: [7, 8] });
   });
 });

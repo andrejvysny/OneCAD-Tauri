@@ -20,7 +20,9 @@ pub mod document_runtime;
 pub mod dto;
 pub mod error;
 pub mod events;
+pub mod export;
 pub mod mesh_cache;
+pub mod recents;
 pub mod state;
 pub mod worker;
 
@@ -28,8 +30,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use tauri::{AppHandle, Manager};
-use tokio::sync::Mutex;
+use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::{watch, Mutex};
 
 use onecad_core::regen::{Outcome, RegenDirective, RegenScheduler};
 
@@ -54,10 +56,12 @@ type BoxFut = Pin<Box<dyn Future<Output = Outcome> + Send>>;
 fn make_regen_driver(
     runtime: Arc<Mutex<Option<DocumentRuntime>>>,
     app: AppHandle,
+    autosave_tick: Arc<watch::Sender<u64>>,
 ) -> impl Fn(RegenDirective) -> BoxFut + Send + Sync + 'static {
     move |directive: RegenDirective| {
         let runtime = runtime.clone();
         let app = app.clone();
+        let autosave_tick = autosave_tick.clone();
         Box::pin(async move {
             // Phase 1 (locked): compile the plan + clone the scratch session.
             let prepared = {
@@ -83,6 +87,11 @@ fn make_regen_driver(
                 (report, projection)
             };
             api::emit_regen_events(&app, &report, &projection);
+            // A published regen produced new geometry outputs worth autosaving
+            // (the debounce coalesces the edit-tick + this publish-tick).
+            if report.published() {
+                autosave_tick.send_modify(|v| *v = v.wrapping_add(1));
+            }
             report.outcome
         })
     }
@@ -101,10 +110,34 @@ pub fn run() {
         .setup(|app| {
             // Spawn the single regen scheduler over the shared runtime + app handle.
             let state = app.state::<AppState>();
-            let driver = make_regen_driver(state.runtime.clone(), app.handle().clone());
+            // Publish the app handle so the backend factory's worker-status
+            // forwarder can emit events (the factory is built before this exists).
+            let _ = state.app.set(app.handle().clone());
+            let driver = make_regen_driver(
+                state.runtime.clone(),
+                app.handle().clone(),
+                state.autosave_tick.clone(),
+            );
             let (scheduler, handle) = RegenScheduler::new(driver);
             tauri::async_runtime::spawn(scheduler.run());
             let _ = state.scheduler.set(handle);
+            // Spawn the debounced autosave driver over the shared runtime + app-data
+            // root. Each autosave emits `events::AUTOSAVE {path, atMs}`. A headless /
+            // pathless environment (no app-data dir) simply skips autosave.
+            if let Some(app_data) = autosave::autosave_root(app.handle()) {
+                let runtime = state.runtime.clone();
+                let tick = state.autosave_tick.subscribe();
+                let emitter = app.handle().clone();
+                tauri::async_runtime::spawn(autosave::run(
+                    runtime,
+                    app_data,
+                    tick,
+                    autosave::AUTOSAVE_DEBOUNCE,
+                    move |ev| {
+                        let _ = emitter.emit(events::AUTOSAVE, &ev);
+                    },
+                ));
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -112,8 +145,14 @@ pub fn run() {
             api::open_document,
             api::import_step,
             api::save_document,
+            api::export_step_file,
+            api::export_stl_file,
+            api::export_obj_file,
             api::close_document,
+            api::check_recovery,
+            api::recover_document,
             api::apply_edit_command,
+            api::get_operation_params,
             api::undo,
             api::redo,
             api::get_projection,

@@ -37,6 +37,10 @@ import type { SnapResult } from "@/tools/sketch/snapEngine";
 import type { DraftEntity } from "@/tools/sketch/toolMachine";
 import { PreviewMesh } from "./PreviewMesh";
 import { DragHandle } from "./DragHandle";
+import { RevolvePreview, type AxisCandidate } from "./RevolvePreview";
+import { GhostLayer } from "./GhostLayer";
+import type { LatheAxis } from "@/tools/preview/lathePreview";
+import type { GhostTransform } from "@/tools/preview/patternPreview";
 import { buildBodyObject, createBodyMaterials, type BodyMaterials, type BodyObjectHandle } from "./BodyObject";
 import type { PrismProfile } from "@/tools/preview/prismPreview";
 import type { Vec3 } from "@/tools/preview/depthProjection";
@@ -89,6 +93,8 @@ export class ViewportEngine {
   // Model-tool previews (F-WP7).
   private previewMesh: PreviewMesh | null = null; // L1 extrude prism
   private dragHandle: DragHandle | null = null;
+  private revolvePreview: RevolvePreview | null = null; // L1 lathe + axis picker
+  private ghostLayer: GhostLayer | null = null; // L1 pattern / mirror clones
   private previewMaterials: BodyMaterials | null = null;
   private previewBody: BodyObjectHandle | null = null;
 
@@ -637,6 +643,94 @@ export class ViewportEngine {
     this.dragHandle?.setHover(false);
   }
 
+  // ---- Revolve L1 preview + axis picker ----
+
+  private ensureRevolvePreview(): RevolvePreview {
+    if (!this.revolvePreview) {
+      this.revolvePreview = new RevolvePreview({ root: this.interactionRoot, invalidate: () => this.invalidate() });
+    }
+    return this.revolvePreview;
+  }
+
+  /** Enter axis-pick: show the candidate sketch-line axes on `plane`. */
+  showRevolveAxisCandidates(plane: SketchPlane, candidates: AxisCandidate[]): void {
+    if (this.disposed) return;
+    const rp = this.ensureRevolvePreview();
+    rp.setPlane(plane);
+    rp.setCandidates(candidates);
+    rp.setHover(null);
+    rp.clearLathe();
+    rp.setVisible(true);
+  }
+
+  /** Highlight one candidate axis (hover), or clear when null. */
+  setRevolveAxisHover(seg: AxisCandidate | null): void {
+    this.revolvePreview?.setHover(seg);
+  }
+
+  /** Show the lathe L1 shell for a chosen axis at `angleDeg`; hides the candidates. */
+  showRevolvePreview(
+    plane: SketchPlane,
+    ring: [number, number][],
+    axis: LatheAxis,
+    angleDeg: number,
+  ): void {
+    if (this.disposed) return;
+    const rp = this.ensureRevolvePreview();
+    rp.setPlane(plane);
+    rp.hideCandidates();
+    rp.setHover({ a: axis.a, b: axis.b });
+    rp.setLathe(ring, axis, angleDeg);
+    rp.setVisible(true);
+  }
+
+  /** Rebuild the lathe shell at a new angle during the drag. */
+  setRevolveAngle(ring: [number, number][], axis: LatheAxis, angleDeg: number): void {
+    this.revolvePreview?.setLathe(ring, axis, angleDeg);
+  }
+
+  /** True while any revolve L1 preview (candidates or lathe) is visible. */
+  isRevolvePreviewVisible(): boolean {
+    return this.revolvePreview?.visible ?? false;
+  }
+
+  hideRevolvePreview(): void {
+    this.revolvePreview?.setVisible(false);
+    this.revolvePreview?.setHover(null);
+    this.revolvePreview?.clearLathe();
+  }
+
+  // ---- Ghost preview (pattern / mirror L1) ----
+
+  /** Show translucent clones of `entry`'s geometry at each transform (pattern/mirror L1). */
+  showGhostPreview(entry: MeshEntry, transforms: GhostTransform[]): void {
+    if (this.disposed) return;
+    if (!this.ghostLayer) {
+      this.ghostLayer = new GhostLayer({ root: this.interactionRoot, invalidate: () => this.invalidate() });
+    }
+    this.ghostLayer.show(entry, transforms);
+  }
+
+  hideGhostPreview(): void {
+    this.ghostLayer?.hide();
+  }
+
+  /** True while any pattern/mirror ghost clones are visible. */
+  isGhostPreviewVisible(): boolean {
+    return this.ghostLayer?.visible ?? false;
+  }
+
+  /** Raycast a client point onto an ARBITRARY sketch plane → plane (u,v). */
+  screenToPlaneOn(plane: SketchPlane, clientX: number, clientY: number): Point2 | null {
+    const ndc = this.clientToNdc(clientX, clientY);
+    if (!ndc) return null;
+    this.raycaster.setFromCamera(ndc, this.rig.getCamera());
+    planeGeometry(plane, this._plane);
+    const hit = new THREE.Vector3();
+    if (!this.raycaster.ray.intersectPlane(this._plane, hit)) return null;
+    return worldToPlanePoint(plane, hit);
+  }
+
   /** True when a client point hits the extrude drag handle. */
   hitExtrudeHandle(clientX: number, clientY: number): boolean {
     if (!this.canvas || !this.dragHandle) return false;
@@ -754,6 +848,10 @@ export class ViewportEngine {
     this.previewMesh = null;
     this.dragHandle?.dispose();
     this.dragHandle = null;
+    this.revolvePreview?.dispose();
+    this.revolvePreview = null;
+    this.ghostLayer?.dispose();
+    this.ghostLayer = null;
     if (this.previewBody) this.previewRoot.remove(this.previewBody.group);
     this.previewBody = null;
     this.previewMaterials?.dispose();

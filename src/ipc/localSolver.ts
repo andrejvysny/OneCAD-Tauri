@@ -100,6 +100,11 @@ export interface LocalSolverLane {
     sketchId: string | undefined,
     regionId: string | undefined,
   ): { plane: SketchPlane; profile: PrismProfile };
+  /** Resolve a sketch LINE entity → its (u,v) endpoints (revolve axis synthesis). */
+  resolveSketchLine(
+    sketchId: string | undefined,
+    lineId: string | undefined,
+  ): { a: [number, number]; b: [number, number] } | null;
   /** Seam: feed a real enter_sketch plane so beginPreview resolves it (tauri). */
   cacheSketchPlane(sketchId: string, plane: SketchPlane): void;
   /** Seam: feed real finish_sketch regions so beginPreview builds the profile (tauri). */
@@ -154,6 +159,17 @@ export function createLocalSolverLane(deps: LocalSolverDeps): LocalSolverLane {
     const plane = (sketchId && sketchSessions.get(sketchId)?.plane) || planeFor("XY");
     const profile = region ? profileFromRegion(region) : null;
     return { plane, profile: profile ?? fallbackSquareProfile() };
+  }
+
+  function resolveSketchLine(
+    sketchId: string | undefined,
+    lineId: string | undefined,
+  ): { a: [number, number]; b: [number, number] } | null {
+    if (!sketchId || !lineId) return null;
+    const session = sketchSessions.get(sketchId);
+    const line = session?.entities.find((e) => e.id === lineId && e.type === "Line");
+    if (!line?.p0 || !line?.p1) return null;
+    return { a: line.p0, b: line.p1 };
   }
 
   /** Build the concrete Extrude op a committed preview session materializes. */
@@ -349,6 +365,7 @@ export function createLocalSolverLane(deps: LocalSolverDeps): LocalSolverLane {
     },
 
     resolveExtrudeInput,
+    resolveSketchLine,
 
     cacheSketchPlane(sketchId: string, plane: SketchPlane): void {
       const existing = sketchSessions.get(sketchId);

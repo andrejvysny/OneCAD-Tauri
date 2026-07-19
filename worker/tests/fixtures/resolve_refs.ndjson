@@ -16,7 +16,10 @@
 #     (handle_resolve_refs short-circuits on part.find(), no ladder dry-run).
 #   * r_autobind    — untracked id, anchor pinned exactly on the TOP face centre
 #     (-10,20,10): nearest candidate scores 1.0, next-best (a side face) ~0.51 ->
-#     margin >> 0.10 -> "autoBind".
+#     margin >> 0.10 -> "autoBind". SCHEMA §7.5: the "elementId" slot carries the
+#     Rust-minted persistent id (empty here — the top face is not in the live
+#     partition), and the bound "topoKey" rides as evidence (SCHEMA §9), NOT in the
+#     elementId slot (M4a autoBind-conformance fix).
 #   * r_needsrepair — untracked id, anchor at the body's geometric centre
 #     (-10,20,5): top and bottom faces are EQUIDISTANT (5mm) -> a scored tie ->
 #     margin 0 < 0.10 -> "needsRepair" reason "ambiguous".
@@ -31,6 +34,6 @@
 {"send":{"v":1,"t":"req","id":3,"verb":"AcceptPrepared","args":{"jobId":88,"documentRevision":0,"workerEpoch":3}}}
 {"expect":{"v":1,"t":"resp","id":3,"ok":true,"result":{"accepted":true,"snapshotId":1}}}
 {"send":{"v":1,"t":"req","id":4,"verb":"ResolveRefs","args":{"refs":[{"refId":"r_unchanged","primary":{"bodyId":"body_op1","elementId":"el_tracked","kind":"face"}},{"refId":"r_autobind","primary":{"bodyId":"body_op1","elementId":"el_new_top","kind":"face"},"anchor":{"worldPoint":[-10.0,20.0,10.0]}},{"refId":"r_needsrepair","primary":{"bodyId":"body_op1","elementId":"el_ambiguous","kind":"face"},"anchor":{"worldPoint":[-10.0,20.0,5.0]}}]}}}
-{"expect":{"v":1,"t":"resp","id":4,"ok":true,"result":{"resolutions":[{"refId":"r_unchanged","outcome":"unchanged","elementId":"el_tracked","topoKey":"$present"},{"refId":"r_autobind","outcome":"autoBind","topoKey":"$present","score":"$present","margin":"$present"},{"refId":"r_needsrepair","outcome":"needsRepair","needsRepair":{"reason":"ambiguous","ladderFailed":"descriptor","scoringVersion":1}}]}}}
+{"expect":{"v":1,"t":"resp","id":4,"ok":true,"result":{"resolutions":[{"refId":"r_unchanged","outcome":"unchanged","elementId":"el_tracked","topoKey":"$present"},{"refId":"r_autobind","outcome":"autoBind","elementId":"$present","topoKey":"$present","score":"$present","margin":"$present"},{"refId":"r_needsrepair","outcome":"needsRepair","needsRepair":{"reason":"ambiguous","ladderFailed":"descriptor","scoringVersion":1}}]}}}
 {"send":{"v":1,"t":"req","id":9,"verb":"Shutdown","args":{}}}
 {"expect":{"v":1,"t":"resp","id":9,"ok":true,"result":{"goodbye":true}}}

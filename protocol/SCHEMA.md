@@ -657,8 +657,10 @@ Each op in `ExecutePlan.ops` is:
 ```
 
 `opType` ∈ `Sketch` | `Extrude` | `Revolve` | `Fillet` | `Chamfer` | `Boolean`
-(vertical slice; more added later on proven rails). Values keep OneCAD-CPP
-`operationTypeName` spelling (PascalCase).
+| `Shell` | `LinearPattern` | `CircularPattern` | `MirrorBody` (the M6a breadth
+ops extend the original vertical slice — see the [Changelog](#14-changelog)).
+`Loft` and `Sweep` remain **`UNSUPPORTED`** ([§8](#8-error-taxonomy)). Values keep
+OneCAD-CPP `operationTypeName` spelling (PascalCase).
 
 **Scalar / dimension fields.** Every dimensional param (`distance`, `radius`,
 `angleDeg`, `thickness`, `spacing`, …) is a **scalar**: it MAY be either a bare
@@ -803,6 +805,79 @@ OneCAD-CPP `BooleanParams` (`operation` ∈ Union/Cut/Intersect; distinct from t
 ```
 
 `operation` ∈ `Union` | `Cut` | `Intersect`.
+
+**Shell** (`op.shell`) — hollow a body, removing (opening) selected faces. Field
+names from OneCAD-CPP `ShellParams`. Added M6a (see the [Changelog](#14-changelog)).
+
+```json
+// inputs: [ semanticRef(face) per open face — kind "face" ]
+// params
+{ "thickness": 2.0, "targetBodyId": "body_1", "openFaces": ["el_…7c", "el_…8d"] }
+```
+
+- `thickness` is the (positive) wall thickness; the worker offsets **inward**
+  (`BRepOffsetAPI_MakeThickSolid::MakeThickSolidByJoin(target, removed,
+  −thickness, …)`, OneCAD-CPP parity). `thickness < 1e-3` ⇒ recoverable
+  `OP_FAILED` ("Shell thickness too small").
+- `openFaces` entries are `ElementId`s (bare). **Unlike Fillet/Chamfer edges, the
+  frozen `ShellParams` carries no per-face typed ref**, so the `inputs[]` face refs
+  are **element-only** (no `intent`/`anchor`). The worker resolves each on the
+  predecessor snapshot via the partition-tracked binding (an id already minted by
+  an earlier op / this plan's `resolve_input_refs`) OR the descriptor+anchor
+  ladder ([§10](#10-resolution-ladder)); a face that resolves via neither ⇒
+  **NeedsRepair** ([§9](#9-needsrepair-payload)), never a wrong bind. The result
+  **replaces** the shelled body (id preserved; OCCT history folds into its
+  partition).
+
+**LinearPattern** (`op.linearPattern`) — `count` copies of a source body translated
+`spacing` along `direction`. Field names from OneCAD-CPP `LinearPatternParams`
+(the C++ flat `dirX/Y/Z` is a single `direction: [x,y,z]`). Added M6a.
+
+```json
+// inputs: [ semanticRef(source body) ]
+// params
+{ "sourceBodyId": "body_1", "direction": [1,0,0], "spacing": 40.0, "count": 3, "fuseResult": true }
+```
+
+- `count ≥ 2` (else recoverable `OP_FAILED`); `|spacing| ≥ 1e-9`; `direction`
+  non-zero (normalized). Instance `i ∈ [1, count)` is translated `direction·spacing·i`.
+- `fuseResult` (default `true`): `true` ⇒ source + instances FUSED into one solid;
+  `false` ⇒ gathered into one compound. **Either way the op produces ONE new body
+  `body_<opId>`** (NewBody lineage — the source body is preserved). The result
+  INCLUDES the source geometry (OneCAD-CPP parity). Empty `elementMapDelta`
+  (ID-on-demand; a pattern face is minted when first referenced).
+
+**CircularPattern** (`op.circularPattern`) — `count` copies rotated about an axis.
+Field names from OneCAD-CPP `CircularPatternParams` (flat `axisX/Y/Z` +
+`axisDirX/Y/Z` → `axisOrigin` + `axisDirection`). Added M6a.
+
+```json
+// inputs: [ semanticRef(source body) ]
+// params
+{ "sourceBodyId": "body_1", "axisOrigin": [0,0,0], "axisDirection": [0,0,1],
+  "angleDeg": 360.0, "count": 3, "fuseResult": true }
+```
+
+- `count ≥ 2`; `axisDirection` non-zero. The per-instance step angle is
+  `angleDeg / count` (OneCAD-CPP parity — divides by `count`, **not** `count−1`);
+  instance `i ∈ [1, count)` is rotated `step·i` about `(axisOrigin, axisDirection)`.
+- `fuseResult` + lineage identical to LinearPattern.
+
+**MirrorBody** (`op.mirrorBody`) — reflect a source body across a plane. Field names
+from OneCAD-CPP `MirrorBodyParams` (flat `planePointX/Y/Z` + `planeNormalX/Y/Z` →
+`planePoint` + `planeNormal`). Added M6a.
+
+```json
+// inputs: [ semanticRef(source body) ]
+// params
+{ "sourceBodyId": "body_1", "planePoint": [0,0,0], "planeNormal": [1,0,0], "fuseWithOriginal": false }
+```
+
+- The mirror plane passes through `planePoint` perpendicular to `planeNormal`
+  (`gp_Trsf::SetMirror(gp_Ax2(planePoint, planeNormal))`).
+- `fuseWithOriginal` (default `false`): `true` ⇒ source + mirror image FUSED into
+  one solid; `false` ⇒ the mirror image alone. Either way ONE new body
+  `body_<opId>` (NewBody lineage; source preserved). Empty `elementMapDelta`.
 
 ### 7.4 Sketch solver lane
 
@@ -1108,7 +1183,7 @@ Errors are returned in a terminal `resp` with `ok:false` and an `error` object:
 | Recoverable op failure | `OP_FAILED` | scratch only — **session intact** | Rust discards scratch; user edits and retries |
 | Reference unresolved | `REF_UNRESOLVED` | scratch only | as above (distinct from NeedsRepair — this is a hard resolve failure, e.g. input body missing) |
 | Invalid geometry produced | `GEOMETRY_INVALID` | scratch only | as above |
-| Unsupported op/param (known verb) | `UNSUPPORTED` | none | Rust falls back / freezes node (e.g. `opType:"Loft"` before Loft ships) |
+| Unsupported op/param (known verb) | `UNSUPPORTED` | none | Rust falls back / freezes node (the remaining un-shipped ops `opType:"Loft"` / `"Sweep"`; the M6a breadth ops Shell/LinearPattern/CircularPattern/MirrorBody are now supported, [§7.3](#73-op-payload-schemas-vertical-slice)) |
 | Cooperative cancellation | `CANCELLED` | in-flight job dropped; session intact | terminal frame always sent ([§3.5](#35-cancel-rust--worker)) |
 | Protocol violation | `PROTOCOL_ERROR` | fatal | **restart worker** (no resync) |
 | Worker crash / abnormal exit | *(no frame)* | fatal | **restart + replay** from last checkpoint/head; crash **circuit breaker** on repeated `(historyPrefixHash, opId, occtFingerprint)` |
@@ -1299,6 +1374,167 @@ contract refinements (no worker has shipped against the prior text), so they are
 edits to version 1 rather than a version bump. They still fall under the
 [§13](#13-versioningchange-policy) change policy (fixture bump + cross-track
 sign-off) once fixtures exist.
+
+- **2026-07-19 — M6a: breadth ops Shell / LinearPattern / CircularPattern /
+  MirrorBody implemented (worker + Rust wire)** (§7.3; **orchestrator sign-off
+  PENDING**). [§7.3](#73-op-payload-schemas-vertical-slice), [§8](#8-error-taxonomy).
+  Additive extension of the §7.3 op catalogue: four op payload schemas derived
+  1:1 from the Rust serde param shapes (`onecad-core` `ShellParams` /
+  `LinearPatternParams` / `CircularPatternParams` / `MirrorBodyParams` — the wire
+  truth). `opType` now also accepts these four; **`Loft`/`Sweep` remain
+  `UNSUPPORTED`** ([§8](#8-error-taxonomy) table updated). The worker ports the
+  OneCAD-CPP `RegenerationEngine` construction verbatim (Shell:
+  `BRepOffsetAPI_MakeThickSolid::MakeThickSolidByJoin` with a **negative** offset;
+  patterns: `BRepBuilderAPI_Transform` + chained `BRepAlgoAPI_Fuse` or a compound,
+  step angle `angleDeg/count`; mirror: `gp_Trsf::SetMirror`). **Shell** replaces
+  its body (Modify lineage; OCCT history → partition) and resolves its **bare**
+  open-face refs (frozen `ShellParams` carries no per-face anchor) via the
+  partition-tracked binding or the [§10](#10-resolution-ladder) ladder — a face
+  that resolves via neither ⇒ NeedsRepair ([§9](#9-needsrepair-payload)).
+  **Patterns/MirrorBody** mint ONE new `body_<opId>` (NewBody lineage; source
+  preserved; empty `elementMapDelta`). No `protocolVersion` bump (still 1 —
+  pre-implementation contract extension). Fixtures:
+  `worker/tests/fixtures/executeplan_linearpattern.ndjson` (full apply),
+  `worker/tests/fixtures/executeplan_shell.ndjson` (bare-ref → NeedsRepair). No
+  canonical `protocol/fixtures/` change. Tests: worker `m6a_ops` (exact box
+  arithmetic — shell 4112, patterns 30000, mirror 20000, guards, NeedsRepair) +
+  Rust `src-tauri/tests/breadth_ops.rs` (real-worker exact volumes, determinism
+  across two processes, upstream-edit re-run).
+- **2026-07-19 — M5a: SaveCheckpoint/RestoreCheckpoint implemented (worker-retained,
+  in-session); mesh export (ExportStl/ExportObj) shipped** (§7.7/§7.8;
+  **orchestrator-approved 2026-07-19 for the §7.7 divergences**). [§7.7](#77-checkpoints),
+  [§7.8](#78-io). **Checkpoints.** `SaveCheckpoint` serializes the session head
+  (per-body BREP via **BinTools** + the 3 signatures + `historyPrefixHash`) into the
+  resp binary tail AND **retains the head in-session** (keyed by step); Rust stores the
+  bytes + parsed envelope metadata and persists them into the `.onecad` container's
+  `checkpoints/` layout. `RestoreCheckpoint` **rolls the in-session head back** to the
+  step (fenced on `workerEpoch`; a stale `expectedHistoryPrefixHash` ⇒
+  `driftDetected`). The Rust `WorkerManager` reconstructs the base `BodyRegistry` +
+  `ElementIndex` from the stored artifacts (executor seeds scratch from the immutable
+  checkpoint, review F3); the planner selects a compatible checkpoint at/below the
+  dirty floor so a post-checkpoint edit regens **incrementally**. Determinism proven:
+  an incremental regen (RestoreCheckpoint + incremental plan) yields a head
+  byte-identical to a from-0 replay (`src-tauri/tests/checkpoints.rs`).
+  ***Divergences to sign off:*** **(a)** the artifact blobs ride **inline in the resp
+  tail** (`bin` sections), NOT on the bulk lane / `streamId` the §7.7 example shows —
+  sound for the small V1 artifacts; **(b)** restore is **in-session only** — the OCW1
+  request path carries no binary, so RestoreCheckpoint cannot re-ship BREP; a worker
+  that no longer retains the step (post-restart, post-reopen) reports `restored:false`
+  and the executor **replays from 0** (Invariant 7 — the cache degrades to replay,
+  never a wrong result). The checkpoint bytes ARE persisted to the container for a
+  future cross-restart restore (transport request-binary is the follow-up);
+  **(c)** the persisted `elementMapPartition` is a **placeholder** JSON (the in-session
+  restore uses the retained partition) and the container form stores the whole
+  `CheckpointArtifacts` as JSON (BREP bytes inline) rather than split json/bin — size
+  inefficiency, sound. A minor **latent bug fixed:** the Rust `wire_op` omitted
+  `stepIndex`, so the worker used the execution-order index; harmless for from-0 plans
+  (exec index == step index) but wrong for the incremental plans checkpoints enable —
+  now sent per [§7.3](#73-op-payload-schemas-vertical-slice).
+  **Mesh export.** `ExportStl` (`{path, bodyIds, binary, lod}` → `{written, bytes,
+  triangleCount}`) and `ExportObj` (`{path, bodyIds, lod}` → `{written, bytes}`) reuse
+  the worker's tessellation (`tess::tessellate_raw`, same BRepMesh params/winding as the
+  viewport mesh ⇒ the STL triangle count equals the tessellation), binary+ASCII STL and
+  ASCII OBJ. stdout-hygiene asserted (`test_wp6_meshexport`). Fixtures:
+  `worker/tests/fixtures/export_mesh.ndjson`, `checkpoint_roundtrip.ndjson`. No
+  canonical `protocol/fixtures/` change.
+
+- **2026-07-19 — M5a: boolean split children `body_<opId>:<k>` are minted, adopted +
+  fenced; the Rust `BodyId` is a deterministic derived uuid** (D1 extension;
+  **orchestrator-approved 2026-07-19**). [§2](#2-identifier--scalar-types), [§7.2](#72-regen--executeplan).
+  When a Boolean (or a boolean-mode Extrude **Cut**) yields **multiple solids**, the
+  worker deletes the parent + tool and mints a deterministic child `body_<opId>:<k>`
+  per solid, ordered by a **quantized geometric key** (volume, then centroid x/y/z,
+  then face count, at 1e-6 — never unordered `TopExp` iteration), emitting a `Created`
+  `bodyEvent` per child. Rust **adopts** them at `AcceptPrepared` (`validate_created`):
+  the wire id parses to `(opId, k)`, `opId` must be a **known op in the plan**, the
+  per-op ordinals must be **contiguous from 0**, and the id must be **unique** (else
+  `PROTOCOL_ERROR`, discard). **Rust-side representation (flagged for sign-off):**
+  `BodyId` is a `Uuid` newtype, so a `:<k>` child cannot reuse the opId uuid; it maps
+  to a **deterministic derived uuid** = first 16 bytes of `SHA-256("onecad.body.split.v1:"
+  ‖ "<opId>:<k>")` (a uuid5-style stable hash — `uuid`'s `v5` feature is off; `sha2` is
+  already a dep; the derivation lives in `onecad-core` so both the wire layer and the
+  registry share it). The derivation is one-way, so the wire layer keeps a small
+  **interner** `derived → "body_<opId>:<k>"`. **Cross-process persistence (orchestrator
+  review fix):** the interner alone is only warm within the minting process, but a
+  from-0 replay compiles the WHOLE plan *before* the worker re-mints anything — so a
+  downstream op that references a persisted split child (e.g. a Cut targeting `:1`)
+  would, on reopen in a fresh process, render a bare derived uuid the worker never
+  minted (`REF_UNRESOLVED`). Fix: the core `BodyMeta` carries an **additive**
+  `splitOf: {op, k}` (serde `skip_serializing_if=None` ⇒ non-split documents are
+  byte-identical; `schema_freeze` stays green), populated at adoption/fold time and
+  persisted in `document.json`; `DocumentRuntime::open` (and checkpoint restore, via the
+  open path) walks the registry and **re-interns every split entry before any plan
+  compiles**. (A split child can only be *referenced* by an op added AFTER a regen
+  created it — you cannot select a body a not-yet-run op will mint — so within one
+  session the interner is warm at compile time; the persisted `splitOf` covers the
+  reopen.) The mapping stays deterministic + replay/persistence-stable: the document
+  stores the derived uuid and a from-0 replay re-mints the SAME id.
+  *Divergence to sign off:* the §2 note called split minting "deferred to W-WP6" and
+  said BodyIds "DOES NOT embed BodyId"; this ships the split-child id form and the
+  derived-uuid representation (an implementation choice §2 did not pin — §2 only fixed
+  the *wire* string `body_<opId>:<k>`, which is honored exactly). On a split, the
+  parent's referenced-element partition entries are **dropped** (a rebuildable
+  ID-on-demand cache; a later ref re-mints against a child or NeedsRepairs) — no
+  confident 1:1 child assignment exists. *Tests:* worker `test_wp6_split` (in-process
+  bisecting Cut → 2 ordered children, exact volumes, ids stable), Rust
+  `wire_contract::boolean_split_children_adopted` (real worker, 2 children adopted,
+  volumes 7500 each, ids stable across replay), `validate_created` unit tests
+  (contiguity / unknown-op / collision). No canonical `protocol/fixtures/` change (they
+  carry no multi-solid boolean).
+
+- **2026-07-19 — M4a: ResolveRefs `autoBind` returns `elementId` in its own slot;
+  `topoKey` is evidence** (code-to-spec; **orchestrator-approved 2026-07-19**).
+  [§7.5](#75-element-identity), [§9](#9-needsrepair-payload). The worker's
+  `ResolveRefs` `autoBind` resolution now carries the **Rust-minted `elementId`** in
+  the [§7.5](#75-element-identity) `elementId` slot (**empty** when the resolved
+  element is not yet in the partition — a dry run binds nothing, so Rust would mint at
+  real bind time) and the bound `topoKey` as **evidence** *alongside* it
+  ([§9](#9-needsrepair-payload): a snapshot-scoped `topoKey` is evidence never
+  identity, so it must not occupy the `elementId` slot). Previously the worker put the
+  `topoKey` in the `elementId` slot (R-WP12 flag). The Rust parser now reads the
+  `elementId` slot strictly (with a one-release tolerance: a legacy `topoKey`-only
+  `autoBind` still parses, the `topoKey` landing as evidence). *Fixture bump:*
+  `worker/tests/fixtures/resolve_refs.ndjson` `r_autobind` now asserts the `elementId`
+  slot present beside `topoKey`. No wire-shape change beyond code-to-spec (§7.5 already
+  specified `elementId`); no canonical `protocol/fixtures/` change (they carry no
+  `ResolveRefs` `autoBind` flow).
+
+- **2026-07-19 — M4a: Extrude/Revolve profile carries `params.sketchId` +
+  `params.regionId`; the worker selects the region by normative FNV id**
+  (code-to-spec; **orchestrator-approved 2026-07-19**).
+  [§7.3](#73-op-payload-schemas-vertical-slice), [§7.4](#74-sketch-solver-lane). The
+  Rust wire layer lifts the core-only `profile` (`SketchRegionRef {sketchId,
+  regionId}`) to top-level `params.sketchId` + `params.regionId` (dropping the
+  `profile` wrapper — §7.3 has no `profile`; Extrude AND Revolve), and the worker's
+  `build_profile_face` selects the closed region whose normative FNV `regionId`
+  ([§7.4](#74-sketch-solver-lane) `derive_region_id`, `r_<hash>`) matches. **Strict
+  semantics:** a **non-empty** `regionId` MUST match a detected region — **no match is
+  a deterministic `OP_FAILED`** (the `perStepResults` message names the requested id +
+  the available ids; downstream is blocked, publish ≤ m−1), **never** a silent fallback
+  to a different region (a stale id after a sketch edit must fail loudly, not extrude a
+  wrong profile — the "never a silent wrong bind" principle). An **empty/absent**
+  `regionId` keeps the V1 **first-region** fallback (single-region sketches; the
+  region-selection micro-slice does not yet author a real id everywhere). Additive:
+  `perStepResults[].message` on a failed step carries the §8 recoverable reason (a
+  failed step emits no `planStep`, so this is its only channel to Rust; readers ignore
+  unknown keys, §4). This closes the M2 `last_sketch_id` + first-region binding gap
+  (multi-region / multi-sketch). *Fixture:* `worker/tests/fixtures/executeplan_region_nomatch.ndjson`
+  (new) pins the no-match `OP_FAILED`. No canonical `protocol/fixtures/` change.
+
+- **2026-07-19 — Rust wire layer conformance fix: params body-bearing fields now
+  rendered in [§2](#2-identifier--scalar-types) `body_<uuid>` wire form**
+  (code-to-spec; **no schema semantic change**). [§7.3](#73-op-payload-schemas-vertical-slice).
+  The Rust wire translator now renders every body-bearing op-`params` field
+  (`targetBodyId`, `toolBodyId`, `axis.bodyId`, and `targetFace(2).primary.bodyId`)
+  in the worker's `body_<uuid>` id form on the way out, matching the `inputs[]`
+  semantic-ref rendering that already did so. The `BodyId` core wire encoding was
+  a bare uuid (the frozen document schema), which the worker's `body_<opId>`-keyed
+  `BodyStore` could never resolve (standalone Boolean / Extrude-Cut/Add / ToFace all
+  failed `REF_UNRESOLVED` / NeedsRepair). *This bullet aligns the code with the
+  already-normative [§2](#2-identifier--scalar-types) `BodyId` wire form; the wire
+  shape the worker parses is unchanged, so no `protocol/fixtures/` file changes (they
+  already carry `body_<opId>`-form ids, never bare uuids). Orchestrator-approved
+  2026-07-19.*
 
 - **2026-07-18 — a from-0 plan is always base-valid; accept replaces the head
   wholesale** (D5, orchestrator-approved; R-WP11.2). [§7.2](#72-regen--executeplan).

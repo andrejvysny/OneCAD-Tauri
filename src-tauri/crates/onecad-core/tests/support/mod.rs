@@ -329,6 +329,7 @@ impl GeometryEngine for FakeEngine {
                             step_index: step,
                             status: StepStatus::Ok,
                             body_ids: bodies,
+                            message: String::new(),
                         });
                         last_valid = Some(step);
                     }
@@ -345,6 +346,7 @@ impl GeometryEngine for FakeEngine {
                             step_index: step,
                             status: StepStatus::NeedsRepair,
                             body_ids: vec![],
+                            message: String::new(),
                         });
                         stopped = StoppedReason::NeedsRepair;
                         break;
@@ -366,6 +368,7 @@ impl GeometryEngine for FakeEngine {
                             step_index: step,
                             status: StepStatus::OpFailed,
                             body_ids: vec![],
+                            message: String::new(),
                         });
                         stopped = StoppedReason::OpFailed;
                         break;

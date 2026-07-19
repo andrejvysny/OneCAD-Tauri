@@ -49,11 +49,15 @@ import type {
   FeatureRecord,
   FinishSketchResult,
   Lod,
+  NeedsRepairEvent,
   OperationOp,
   PromotedElement,
   PromotePick,
   RecentProject,
+  RecoveryInfo,
   RegenFinished,
+  ResolveRefRequest,
+  ResolveRefResult,
   SketchConstraint,
   SketchEntity,
   SketchPlane,
@@ -62,13 +66,16 @@ import type {
   SketchSession,
   SketchSolveStatus,
   SketchUpsertResult,
+  WorkerStatus,
 } from "./types";
 import { createLocalSolverLane } from "./localSolver";
-import { operationToEditCommand, opLabelFor } from "./tauriCommandMap";
+import { operationToEditCommand, opLabelFor, editCommandLabel, type WireEditCommand } from "./tauriCommandMap";
 import {
   buildAddSketch,
   createIdMap,
+  frontendConstraintsFromDto,
   frontendEntitiesFromDto,
+  frontendSolvedPositions,
   marshalUpsert,
   mintUuid,
   type SketchIdMap,
@@ -81,9 +88,17 @@ const CMD = {
   newDocument: "new_document",
   openDocument: "open_document",
   importStep: "import_step",
+  checkRecovery: "check_recovery",
+  recoverDocument: "recover_document",
+  saveDocument: "save_document",
+  exportStepFile: "export_step_file",
+  exportStlFile: "export_stl_file",
+  exportObjFile: "export_obj_file",
   openFileDialog: "open_file_dialog",
+  saveFileDialog: "save_file_dialog",
   getMesh: "get_mesh",
   applyEditCommand: "apply_edit_command",
+  getOperationParams: "get_operation_params",
   undo: "undo",
   redo: "redo",
   enterSketch: "enter_sketch",
@@ -94,6 +109,7 @@ const CMD = {
   solveDrag: "solve_drag",
   endGesture: "end_gesture",
   promoteSelection: "promote_selection",
+  resolveRefs: "resolve_refs",
 } as const;
 
 const EVT = {
@@ -101,6 +117,8 @@ const EVT = {
   projectionUpdated: "projection-updated",
   regenFinished: "regen-finished",
   sketchSolved: "sketch-solved",
+  workerStatus: "worker-status",
+  needsRepair: "needs-repair",
 } as const;
 
 /** L2 preview pacing for the local seam (snappy; there is no backend preview verb). */
@@ -121,6 +139,12 @@ export function __setRegenTimeoutForTests(ms: number): void {
 interface DocumentSnapshotDto {
   documentId: string;
   title: string;
+}
+/** `RecoveryInfoDto` is field-identical to the frontend `RecoveryInfo`. */
+interface RecoveryInfoDto {
+  originalPath?: string;
+  autosavePath: string;
+  modifiedMs: number;
 }
 interface DocumentProjectionDto extends DocumentProjectionWire {
   /** `FeatureDto` is field-identical to the frontend `FeatureRecord`. */
@@ -203,6 +227,8 @@ export function createTauriClient(): CadClient {
   // Fan-out for app-level subscribers.
   const docChangeListeners = new Set<(c: DocumentChange) => void>();
   const projectionListeners = new Set<(p: DocumentProjectionWire) => void>();
+  const workerStatusListeners = new Set<(s: WorkerStatus) => void>();
+  const needsRepairListeners = new Set<(e: NeedsRepairEvent) => void>();
   // Latest authoritative revision (cached from any event).
   let latestRevision = 0;
   // Latest published snapshot id for promote_selection — carried by every
@@ -255,6 +281,15 @@ export function createTauriClient(): CadClient {
     for (const cb of [...projectionListeners]) cb(p);
   }
 
+  function onWorkerStatusEvent(s: WorkerStatus): void {
+    for (const cb of [...workerStatusListeners]) cb(s);
+  }
+
+  function onNeedsRepairEvent(e: NeedsRepairEvent): void {
+    latestRevision = Math.max(latestRevision, e.revision);
+    for (const cb of [...needsRepairListeners]) cb(e);
+  }
+
   /** Await the next regen publish (or null on the safety timeout). Register BEFORE invoking. */
   function awaitNextChange(baseRev: number): { promise: Promise<Resolved | null>; cancel(): void } {
     let awaiter!: Awaiter;
@@ -290,6 +325,8 @@ export function createTauriClient(): CadClient {
         await listen<SketchUpsertDto>(EVT.sketchSolved, (e) => {
           lastSketchSolved = e.payload;
         }),
+        await listen<WorkerStatus>(EVT.workerStatus, (e) => onWorkerStatusEvent(e.payload)),
+        await listen<NeedsRepairEvent>(EVT.needsRepair, (e) => onNeedsRepairEvent(e.payload)),
       );
     } catch {
       // A missing event bridge must not break command-only flows.
@@ -369,16 +406,17 @@ export function createTauriClient(): CadClient {
     const map = await ensureBackendSketch(frontendId, planeKind);
     const dto = await call<SketchSessionDto>(CMD.enterSketch, { sketchId: map.backendSketchId });
     const entities = frontendEntitiesFromDto(dto.entities);
+    // Re-entry hydration: the backend returns the sketch's real constraints in the
+    // worker-wire form (Rust `wire_constraint`, field-identical to SketchConstraint);
+    // reverse-map them so the inspector shows live constraints (kills the []-seam).
+    const constraints = frontendConstraintsFromDto(dto.constraints);
     // Feed the plane into the local preview lane so beginPreview resolves it.
     lane.cacheSketchPlane(frontendId, dto.plane);
-    // NOTE: constraints are returned in the worker-wire form; the SketchController
-    // rebuilds constraints locally on each draw, so a fresh sketch needs none.
-    // Re-entering a sketch WITH existing constraints is an M2+ reverse-map seam.
     return {
       sketchId: frontendId, // keep the frontend id; the map holds the backend UUID
       plane: dto.plane,
       entities,
-      constraints: [],
+      constraints,
       dof: dto.dof,
       status: dto.status,
     };
@@ -398,9 +436,10 @@ export function createTauriClient(): CadClient {
       sketchRevision: dto.sketchRevision,
       dof: dto.dof,
       status: dto.status,
-      // Keys are backend point UUIDs; the frontend consumes solvedPositions only
-      // for drag write-back (empty for an identity upsert). M2+ reverse-map seam.
-      solvedPositions: dto.solvedPositions,
+      // F-WP9 fix: the worker keys solvedPositions by backend POINT-entity UUID;
+      // reverse-map them to the frontend `entityId.point` keys the SketchController
+      // applies (via sketchWireMap's id-map). Unknown keys are dropped.
+      solvedPositions: frontendSolvedPositions(map, dto.solvedPositions),
     };
   }
 
@@ -467,13 +506,39 @@ export function createTauriClient(): CadClient {
     dragSketchId = null;
     dragMaxSeq = 0;
     const dto = await call<SketchUpsertDto>(CMD.endGesture, { finalTarget: finalTarget ?? null });
+    const map = sketchId ? sketchMaps.get(sketchId) : undefined;
     return {
       sketchId: sketchId ?? dto.sketchId,
       sketchRevision: dto.sketchRevision,
       dof: dto.dof,
       status: dto.status,
-      solvedPositions: dto.solvedPositions,
+      // Reverse-map backend point UUIDs → frontend `entityId.point` keys (F-WP9).
+      solvedPositions: map ? frontendSolvedPositions(map, dto.solvedPositions) : dto.solvedPositions,
     };
+  }
+
+  // ── Topology repair (dry-run resolve + raw edit commands; M4b) ─────────────
+  async function resolveRefs(refs: ResolveRefRequest[]): Promise<ResolveRefResult[]> {
+    // `resolve_refs` wants `{snapshotId, refs: [{refId, ...ElementRef}]}`; each ref
+    // flattens the (optional) primary/anchor. The lean `needs-repair` event carries
+    // no ElementRef, so callers usually pass `refId` only and the backend resolves
+    // the stored ref by id. (SEAM: if the backend requires a full ElementRef the
+    // needs-repair event must surface it — reported.)
+    const out = await call<ResolveRefResult[]>(CMD.resolveRefs, {
+      snapshotId: currentSnapshotId,
+      refs: refs.map((r) => ({ refId: r.refId, primary: r.primary, anchor: r.anchor })),
+    });
+    return out.map((r) => ({ ...r, candidates: r.candidates ?? [] }));
+  }
+
+  async function applyEditCommand(command: WireEditCommand): Promise<ApplyOperationResult> {
+    return applyEdit(CMD.applyEditCommand, { command }, editCommandLabel(command));
+  }
+
+  async function getOperationParams(recordId: string): Promise<Record<string, unknown>> {
+    // Read-only: the stored op's params (EditCommand `op.params` serde shape), so a
+    // scalar re-edit can deep-merge without clobbering axis / openFaces / edges.
+    return call<Record<string, unknown>>(CMD.getOperationParams, { recordId });
   }
 
   // ── Promotion (pick → ElementId) ──────────────────────────────────────────
@@ -502,8 +567,53 @@ export function createTauriClient(): CadClient {
     async importStep(path: string): Promise<DocumentSnapshot> {
       return call<DocumentSnapshotDto>(CMD.importStep, { path });
     },
+    async checkRecovery(): Promise<RecoveryInfo | null> {
+      return call<RecoveryInfoDto | null>(CMD.checkRecovery);
+    },
+    async recoverDocument(accept: boolean): Promise<DocumentSnapshot | null> {
+      return call<DocumentSnapshotDto | null>(CMD.recoverDocument, { accept });
+    },
     async openFileDialog(): Promise<string | null> {
       return call<string | null>(CMD.openFileDialog);
+    },
+
+    async saveDocument(path?: string): Promise<void> {
+      // `path` null ⇒ the backend reuses the last save path (an unsaved document
+      // with no path rejects with an io error; the caller falls back to Save As).
+      await call<void>(CMD.saveDocument, { path: path ?? null });
+    },
+    async saveDocumentAs(): Promise<string | null> {
+      const path = await call<string | null>(CMD.saveFileDialog);
+      if (!path) return null; // cancelled
+      await call<void>(CMD.saveDocument, { path });
+      return path;
+    },
+    async exportStep(): Promise<string | null> {
+      // Rust owns the `.step` save dialog + the worker ExportStep verb; a cancel
+      // resolves to null (no path written).
+      return call<string | null>(CMD.exportStepFile, { path: null });
+    },
+    async exportStl(): Promise<string | null> {
+      // Rust owns the `.stl` save dialog + the worker ExportStl verb; a cancel
+      // resolves to null (no path written).
+      return call<string | null>(CMD.exportStlFile, { path: null });
+    },
+    async exportObj(): Promise<string | null> {
+      // Rust owns the `.obj` save dialog + the worker ExportObj verb; a cancel
+      // resolves to null (no path written).
+      return call<string | null>(CMD.exportObjFile, { path: null });
+    },
+
+    onWorkerStatus(cb: (s: WorkerStatus) => void): () => void {
+      void ensureEvents();
+      workerStatusListeners.add(cb);
+      return () => workerStatusListeners.delete(cb);
+    },
+
+    onNeedsRepair(cb: (e: NeedsRepairEvent) => void): () => void {
+      void ensureEvents();
+      needsRepairListeners.add(cb);
+      return () => needsRepairListeners.delete(cb);
     },
 
     async getBodyMesh(bodyId: string, lod: Lod): Promise<ArrayBuffer> {
@@ -542,6 +652,9 @@ export function createTauriClient(): CadClient {
     solveDrag,
     endGesture,
     promoteSelection,
+    resolveRefs,
+    applyEditCommand,
+    getOperationParams,
 
     // ── Two-level preview (local seam; backend preview verb TBD) ──────────────
     beginPreview: lane.beginPreview,

@@ -43,16 +43,23 @@ endforeach()
 
 # --- W-WP6: resolution-ladder calibration + new ops + fast-mode ordering (finding 3)
 #     + STEP export (in-process, real OCCT). ---
-foreach(_t wp6_ladder wp6_ops wp6_extrude wp6_faststode wp6_exportstep)
+foreach(_t wp6_ladder wp6_ops wp6_extrude wp6_faststode wp6_exportstep wp6_meshexport wp6_split wp6_checkpoint)
     add_executable(test_${_t} test_${_t}.cpp)
     target_link_libraries(test_${_t} PRIVATE worker_core)
     add_test(NAME ${_t} COMMAND test_${_t})
 endforeach()
 
+# --- M6a: breadth ops (Shell / Linear+Circular pattern / MirrorBody) numerics. ---
+add_executable(test_m6a_ops test_m6a_ops.cpp)
+target_link_libraries(test_m6a_ops PRIVATE worker_core)
+add_test(NAME m6a_ops COMMAND test_m6a_ops)
+
 # Harness-driven ExecutePlan / session fixtures (NDJSON send/expect flows).
 foreach(_fx executeplan_happy executeplan_fail_step executeplan_needsrepair
             executeplan_fencing executeplan_discard double_executeplan session_reset
-            executeplan_deltas tessellate_acquire resolve_refs)
+            executeplan_deltas tessellate_acquire resolve_refs
+            executeplan_region_nomatch export_mesh checkpoint_roundtrip
+            executeplan_linearpattern executeplan_shell)
     add_test(
         NAME harness_${_fx}
         COMMAND worker_harness

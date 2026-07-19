@@ -167,13 +167,20 @@ fn u16_le(buf: &[u8], off: usize) -> u16 {
     u16::from_le_bytes([buf[off], buf[off + 1]])
 }
 
+/// Reads a little-endian `u32` at `off` (MESH1 is all-LE; [§1](crate::mesh)). Shared
+/// with the app-layer mesh-section readers so those need no private copy. Panics if
+/// `off + 4 > buf.len()` (callers bounds-check via the validated section table).
 #[inline]
-fn u32_le(buf: &[u8], off: usize) -> u32 {
+#[must_use]
+pub fn u32_le(buf: &[u8], off: usize) -> u32 {
     u32::from_le_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]])
 }
 
+/// Reads a little-endian `f32` at `off` (MESH1 positions are LE `f32`). Shared with
+/// the app-layer mesh-section readers. Panics if `off + 4 > buf.len()`.
 #[inline]
-fn f32_le(buf: &[u8], off: usize) -> f32 {
+#[must_use]
+pub fn f32_le(buf: &[u8], off: usize) -> f32 {
     f32::from_le_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]])
 }
 

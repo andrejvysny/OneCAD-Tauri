@@ -1,0 +1,30 @@
+[package]
+name = "onecad-regen"
+version = "0.1.0"
+edition = "2021"
+description = "Headless regen replay + CI gate for OneCAD .onecad containers"
+
+[[bin]]
+name = "onecad-regen"
+path = "src/main.rs"
+
+[dependencies]
+# The CLI reuses the app crate's WorkerManager + DocumentRuntime verbatim (the
+# integration tests already consume `onecad_lib` this way — checkpoints.rs /
+# worker_chaos.rs), so the headless replay is byte-for-byte the app's regen path.
+# The transitive `tauri` dep is never initialised (no app is built).
+onecad = { path = "../.." }
+onecad-core = { workspace = true }
+tokio = { workspace = true, features = [
+    "rt-multi-thread",
+    "macros",
+    "process",
+    "io-util",
+    "time",
+    "sync",
+] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+uuid = { workspace = true }
