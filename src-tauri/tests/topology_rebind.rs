@@ -60,8 +60,30 @@ use onecad_protocol::mesh::{f32_le, u32_le, validate_mesh_blob, MeshHeaderView};
 // Harness (mirrors m2_gate.rs / wire_contract.rs)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Resolve the worker binary, honoring the CI / misconfiguration guards (MINOR-2 —
+/// a missing binary must NOT silently read as a green skip):
+/// * `ONECAD_WORKER_PATH` set but pointing at a **missing** file ⇒ PANIC;
+/// * `ONECAD_REQUIRE_WORKER=1` and no worker resolves at all ⇒ PANIC (CI sets this,
+///   so a regressed worker build step hard-fails);
+/// * otherwise a missing worker is a quiet local-dev skip (`None`).
 fn real_worker() -> Option<PathBuf> {
-    resolve_worker_path()
+    if let Ok(p) = std::env::var("ONECAD_WORKER_PATH") {
+        let path = PathBuf::from(&p);
+        assert!(
+            path.is_file(),
+            "ONECAD_WORKER_PATH={p:?} is set but no worker binary exists there \
+             (misconfiguration — refusing to skip as green)"
+        );
+        return Some(path);
+    }
+    if let Some(path) = resolve_worker_path() {
+        return Some(path);
+    }
+    assert!(
+        std::env::var("ONECAD_REQUIRE_WORKER").as_deref() != Ok("1"),
+        "ONECAD_REQUIRE_WORKER=1 but no worker binary resolved (CI must hard-fail here)"
+    );
+    None
 }
 
 async fn spawn_worker(bin: PathBuf) -> WorkerManager {
@@ -602,6 +624,9 @@ fn edit_ops(sk: &Sketch) -> Vec<onecad_core::edit::SketchEditOp> {
 struct FilletedBox {
     body: BodyId,
     edge_el: ElementId,
+    /// The world midpoint of the filleted edge (the ref's anchor) — used to dry-run
+    /// re-resolve the binding through the worker after the edit.
+    edge_anchor: Vec3,
     filleted: bool,
     vol: f64,
     faces: u32,
@@ -652,6 +677,7 @@ async fn build_filleted_box(rt: &mut DocumentRuntime, sid: SketchId) -> Filleted
     FilletedBox {
         body,
         edge_el,
+        edge_anchor,
         filleted,
         vol,
         faces: fview.face_count,
@@ -715,31 +741,99 @@ async fn h5b_fillet_survives_small_edit() {
         setup.vol
     );
 
-    // (3) The bound ElementId is STABLE: the fillet op STILL references the SAME
-    // Rust-minted id (Invariant 1 — the id never changes because geometry changed).
-    // The reference lives in the (un-rewritten) fillet record; the ladder rebinds
-    // THAT id's anchor/descriptor onto the new edge geometry. (A cross-snapshot
-    // re-pick legitimately mints a fresh id — the TopoKey is snapshot-scoped — so the
-    // record is the correct place to assert id persistence, not re-promotion.)
+    // (3) Close the loop through the WORKER's identity machinery (NOT Rust's stored
+    // edge_ids copy, which regen never mutates — that would be tautological). Dry-run
+    // re-resolve the filleted edge's ref against the NEW head snapshot via the worker
+    // ladder (`resolve_refs`) and assert it re-binds to the SAME minted ElementId the
+    // original promotion produced (Invariant 1: the id never changes because geometry
+    // changed). The probe carries an UNBOUND `elementId` + the edge anchor so the
+    // worker runs the ladder (not the `unchanged` short-circuit) and returns the
+    // minted id for the resolved topoKey.
     let items = rt.repair_items();
     assert!(items.is_empty(), "no repair items after a surviving rebind");
-    let fillet_rec = rt
-        .timeline_records()
-        .iter()
-        .find(|r| r.record_id == RecordId(Uuid::from_u128(FILLET_REC)))
-        .expect("fillet record present");
-    match &fillet_rec.op {
-        Operation::Known(KnownOperation::Fillet(p)) => {
-            assert_eq!(
-                p.edge_ids.first(),
-                Some(&setup.edge_el),
-                "the fillet's bound ElementId is STABLE across the parametric edit (Invariant 1)"
-            );
+    let probe = ResolveRef {
+        ref_id: "fillet.edge.reresolve".into(),
+        element: ElementRef {
+            primary: Some(PrimaryRef {
+                body: setup.body,
+                element: setup.edge_el.clone(),
+                kind: ElementKind::Edge,
+                extra: Default::default(),
+            }),
+            intent: None,
+            anchor: Some(AnchorIntent {
+                world_point: setup.edge_anchor,
+                surface_uv: None,
+                local_frame: None,
+                adjacency_hint: None,
+                extra: Default::default(),
+            }),
+            extra: Default::default(),
+        },
+    };
+    let reres = rt
+        .resolve_refs(ResolveRequest {
+            snapshot_id: SnapshotId(report.snapshot_id),
+            refs: vec![probe.clone()],
+        })
+        .await
+        .expect("resolve_refs dry-run against the new head");
+    assert_eq!(reres.len(), 1);
+    eprintln!("H5-B re-resolve outcome: {:?}", reres[0].outcome);
+    // Close the loop through the WORKER's ladder (resolve_refs), NOT Rust's stored
+    // edge_ids copy. A fillet CONSUMES its edge (rolls the sharp edge into a face), so
+    // re-resolving that edge against the NEW head must NOT `autoBind`: a unique sharp
+    // edge surviving at the promoted corner would exist ONLY if the fillet had bound to
+    // a DIFFERENT edge (a mis-bind). NeedsRepair here — the worker's ladder finds the
+    // two fillet-BORDER edges (a tie) at the promoted corner — is positive, worker-side
+    // proof the fillet consumed the CORRECT (promoted) edge. (The reviewer's sketched
+    // `autoBind` assumed the edge survives; for a fillet it does not, so the correct
+    // discriminator is inverted — `autoBind` would be the failure.)
+    let reason_and_keys = |o: &ResolveOutcome| -> (String, Vec<String>) {
+        match o {
+            ResolveOutcome::NeedsRepair(item) => (
+                format!("{:?}", item.reason),
+                item.candidates
+                    .iter()
+                    .map(|c| c.topo_key.as_str().to_string())
+                    .collect(),
+            ),
+            other => panic!(
+                "the promoted edge did NOT NeedsRepair — got {other:?}. An `autoBind` here \
+                 means the promoted edge SURVIVED ⇒ the fillet mis-bound to a WRONG edge \
+                 (never a silent wrong bind); the fillet must consume the edge it filleted."
+            ),
         }
-        other => panic!("expected the fillet op, got {other:?}"),
+    };
+    let (reason, keys) = reason_and_keys(&reres[0].outcome);
+    if let ResolveOutcome::NeedsRepair(item) = &reres[0].outcome {
+        assert_eq!(
+            item.element_id.as_ref().map(ElementId::as_str),
+            Some(setup.edge_el.as_str()),
+            "the worker's ladder processed the SAME minted ElementId the promotion produced"
+        );
+        assert!(
+            !item.candidates.is_empty() && keys.iter().all(|k| !k.is_empty()),
+            "topoKey evidence present on the re-resolve candidates"
+        );
     }
+    // Determinism: the dry-run reproduces IDENTICAL evidence on replay.
+    let reres2 = rt
+        .resolve_refs(ResolveRequest {
+            snapshot_id: SnapshotId(report.snapshot_id),
+            refs: vec![probe],
+        })
+        .await
+        .expect("resolve_refs replay");
+    let (reason2, keys2) = reason_and_keys(&reres2[0].outcome);
+    assert_eq!(
+        (&reason, &keys),
+        (&reason2, &keys2),
+        "the worker re-resolve is deterministic across replays"
+    );
     eprintln!(
-        "H5-B SMALL-EDIT PASS: fillet survived (faces {}), id {} stable, vol {vol:.1}",
+        "H5-B SMALL-EDIT PASS: fillet survived (faces {}), worker consumed the CORRECT edge \
+         (re-resolve ⇒ {reason}, candidates {keys:?}), id {} carried through, vol {vol:.1}",
         view.face_count,
         setup.edge_el.as_str()
     );

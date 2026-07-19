@@ -587,14 +587,6 @@ impl DocumentRuntime {
         self.regen.repair.items()
     }
 
-    /// The authoritative timeline records (for tests/inspection). A record's stored
-    /// input refs (e.g. a fillet's `ElementId`s) are Rust-owned and persist across a
-    /// rebind — they never change because geometry changed (Invariant 1).
-    #[must_use]
-    pub fn timeline_records(&self) -> &[OperationRecord] {
-        self.session.document().timeline.records()
-    }
-
     /// Lean per-item NeedsRepair summaries for the `needs-repair` event, resolving
     /// each item's timeline step to its op record id (`opId`).
     fn needs_repair_items(&self) -> Vec<NeedsRepairItemDto> {

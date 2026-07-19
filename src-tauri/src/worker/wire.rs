@@ -181,6 +181,11 @@ fn wire_op(op: &PlannedOp) -> Value {
 /// first-region fallback): a non-empty `regionId` now picks a specific region; an
 /// empty/absent one keeps the first-region fallback. Ops without a `profile` object
 /// are untouched.
+///
+/// **Sweep note:** this also fires on a `Sweep` op's `profile` (it has the same
+/// `SketchRegionRef` shape). Sweep has no worker handler yet; when one lands it MUST
+/// read the lifted top-level `params.sketchId`/`params.regionId` (as Extrude/Revolve
+/// do), NOT a nested `params.profile`, which this lift removes.
 fn lift_profile_to_params(params: &mut Value) {
     let Some(map) = params.as_object_mut() else {
         return;
@@ -903,13 +908,19 @@ pub fn parse_acquire_evidence(result: &Value, fallback_body: BodyId) -> Vec<Work
 }
 
 /// `ResolveRefs.args` (SCHEMA §7.5) — dry-run ladder for repair dialogs.
+///
+/// Each ref is rendered through [`element_ref_wire`] so its `primary.bodyId` crosses
+/// in the worker's `body_<uuid>` form (SCHEMA §2) — the worker's `BodyStore` is keyed
+/// `body_<opId>`, so a bare core-serde uuid would miss (`referenced body not found`,
+/// the same body-form class as the M2 op-`params` defect; this path went un-exercised
+/// against a real body until the M4a re-resolve gate).
 #[must_use]
 pub fn resolve_refs_args(req: &ResolveRequest) -> Value {
     let refs: Vec<Value> = req
         .refs
         .iter()
         .map(|r| {
-            let mut o = serde_json::to_value(&r.element).unwrap_or_else(|_| json!({}));
+            let mut o = element_ref_wire(&r.element);
             if let Some(map) = o.as_object_mut() {
                 map.insert("refId".to_string(), json!(r.ref_id));
             }

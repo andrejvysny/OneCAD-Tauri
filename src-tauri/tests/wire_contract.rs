@@ -62,8 +62,29 @@ use onecad_protocol::mesh::{f32_le, u32_le, validate_mesh_blob, MeshHeaderView};
 // Harness (mirrors m2_gate.rs)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Resolve the worker binary, honoring the CI / misconfiguration guards (MINOR-2 —
+/// a missing binary must NOT silently read as a green skip):
+/// * `ONECAD_WORKER_PATH` set but pointing at a **missing** file ⇒ PANIC;
+/// * `ONECAD_REQUIRE_WORKER=1` and no worker resolves at all ⇒ PANIC (CI sets this);
+/// * otherwise a missing worker is a quiet local-dev skip (`None`).
 fn real_worker() -> Option<PathBuf> {
-    resolve_worker_path()
+    if let Ok(p) = std::env::var("ONECAD_WORKER_PATH") {
+        let path = PathBuf::from(&p);
+        assert!(
+            path.is_file(),
+            "ONECAD_WORKER_PATH={p:?} is set but no worker binary exists there \
+             (misconfiguration — refusing to skip as green)"
+        );
+        return Some(path);
+    }
+    if let Some(path) = resolve_worker_path() {
+        return Some(path);
+    }
+    assert!(
+        std::env::var("ONECAD_REQUIRE_WORKER").as_deref() != Ok("1"),
+        "ONECAD_REQUIRE_WORKER=1 but no worker binary resolved (CI must hard-fail here)"
+    );
+    None
 }
 
 async fn spawn_worker(bin: PathBuf) -> WorkerManager {

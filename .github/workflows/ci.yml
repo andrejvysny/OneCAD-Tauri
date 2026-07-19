@@ -37,6 +37,10 @@ jobs:
       - name: test
         env:
           ONECAD_WORKER_PATH: ${{ github.workspace }}/worker/build/onecad-worker
+          # Hard-fail (not a green skip) if the worker build step regressed and no
+          # binary resolves — the worker-backed gates (m2/wire_contract/topology_rebind)
+          # must actually run in CI (M4a MINOR-2).
+          ONECAD_REQUIRE_WORKER: "1"
         run: cargo test --workspace
 
   worker:

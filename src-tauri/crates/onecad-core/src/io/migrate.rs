@@ -292,6 +292,69 @@ pub struct MigratedValue {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+/// Whether `s` is a normative region id (SCHEMA §7.4: `"r_"` + 16 lowercase hex).
+fn is_normative_region_id(s: &str) -> bool {
+    match s.strip_prefix("r_") {
+        Some(hex) => {
+            hex.len() == 16
+                && hex
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        }
+        None => false,
+    }
+}
+
+/// Load-time normalization (M4a): a pre-M4a document may persist a **legacy
+/// placeholder** `regionId` (e.g. `"r0"`, `"region-legacy-1"`) that, under the new
+/// strict region rule ([`SCHEMA §7.4`]), would `OP_FAILED` forever with no path out
+/// (a non-empty id that matches no detected region is a hard failure). Any
+/// Extrude/Revolve/Sweep `params.profile.regionId` that is **non-empty** and NOT of
+/// the normative `^r_[0-9a-f]{16}$` form is rewritten to `""` (the first-region V1
+/// fallback), with a load diagnostic. A valid id — or an already-empty one — is left
+/// untouched. This is a same-version normalization (M4a did not bump the schema), so
+/// it runs on every writable open, not as a version-bump [`MigrationStep`].
+///
+/// Returns the diagnostics (empty ⇒ nothing changed).
+fn sanitize_region_ids(value: &mut Value) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    let Some(records) = value
+        .pointer_mut("/timeline/records")
+        .and_then(Value::as_array_mut)
+    else {
+        return diags;
+    };
+    for rec in records.iter_mut() {
+        let op_type = rec
+            .get("opType")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if !matches!(op_type.as_str(), "Extrude" | "Revolve" | "Sweep") {
+            continue;
+        }
+        let Some(region) = rec.pointer_mut("/params/profile/regionId") else {
+            continue;
+        };
+        let Some(id) = region.as_str() else {
+            continue;
+        };
+        if id.is_empty() || is_normative_region_id(id) {
+            continue;
+        }
+        let old = id.to_string();
+        *region = Value::String(String::new());
+        diags.push(Diagnostic::warning(
+            "region-id-legacy-reset",
+            format!(
+                "legacy non-normative regionId {old:?} on a {op_type} op was reset to \"\" \
+                 (first-region fallback); re-select the region to pin it"
+            ),
+        ));
+    }
+    diags
+}
+
 /// Runs the version-aware open policy over a raw document value (plan task 5).
 ///
 /// * `stored_version` is the manifest's `globalSchemaVersion`.
@@ -307,13 +370,18 @@ pub fn open_policy(
 ) -> IoResult<MigratedValue> {
     use std::cmp::Ordering;
     match stored_version.cmp(&target_version) {
-        Ordering::Equal => Ok(MigratedValue {
-            value,
-            read_only: false,
-            records_changed: false,
-            report: None,
-            diagnostics: Vec::new(),
-        }),
+        Ordering::Equal => {
+            // Same version: still normalize legacy placeholder region ids (M4a).
+            let diagnostics = sanitize_region_ids(&mut value);
+            let records_changed = !diagnostics.is_empty();
+            Ok(MigratedValue {
+                value,
+                read_only: false,
+                records_changed,
+                report: None,
+                diagnostics,
+            })
+        }
         Ordering::Greater => {
             // Newer file: best-effort read-only, no transform (Opaque ride-through).
             let diag = Diagnostic::warning(
@@ -354,6 +422,9 @@ pub fn open_policy(
                     )
                 }
             });
+            // Also normalize legacy placeholder region ids on the migrated value (M4a).
+            let region_diags = sanitize_region_ids(&mut value);
+            let records_changed = applied || !region_diags.is_empty();
             let mut diagnostics = Vec::new();
             if applied {
                 diagnostics.push(Diagnostic::info(
@@ -367,13 +438,14 @@ pub fn open_policy(
                     ),
                 ));
             }
+            diagnostics.extend(region_diags);
             if let Some(reason) = &read_only_reason {
                 diagnostics.push(Diagnostic::warning("migration-read-only", reason.clone()));
             }
             Ok(MigratedValue {
                 value,
                 read_only,
-                records_changed: applied,
+                records_changed,
                 report: Some(MigrationReport {
                     plan: Some(plan),
                     applied,
@@ -498,6 +570,57 @@ mod tests {
             out.value["timeline"]["records"][0]["migrated"],
             Value::Bool(true)
         );
+    }
+
+    #[test]
+    fn legacy_region_id_is_reset_on_load_with_diagnostic() {
+        // M4a NOTE-3: a same-version pre-M4a doc with a legacy placeholder regionId
+        // (would OP_FAILED forever under the strict rule) is reset to "" on load.
+        let v = serde_json::json!({
+            "timeline": { "records": [
+                { "opType": "Extrude", "params": { "profile": { "sketchId": "sk", "regionId": "r0" } } },
+                { "opType": "Revolve", "params": { "profile": { "regionId": "region-legacy-1" } } },
+                { "opType": "Extrude", "params": { "profile": { "regionId": "r_0123456789abcdef" } } },
+                { "opType": "Extrude", "params": { "profile": { "regionId": "" } } },
+                { "opType": "Boolean", "params": { "targetBodyId": "b" } },
+            ]}
+        });
+        let out = open_policy(&MigrationRegistry::new(), v, 1, 1).unwrap();
+        let recs = &out.value["timeline"]["records"];
+        assert_eq!(recs[0]["params"]["profile"]["regionId"], "", "\"r0\" reset");
+        assert_eq!(
+            recs[1]["params"]["profile"]["regionId"], "",
+            "\"region-legacy-1\" reset"
+        );
+        assert_eq!(
+            recs[2]["params"]["profile"]["regionId"], "r_0123456789abcdef",
+            "a valid normative id is UNTOUCHED"
+        );
+        assert_eq!(
+            recs[3]["params"]["profile"]["regionId"], "",
+            "empty stays empty"
+        );
+        assert!(out.records_changed, "a rewrite marks caches stale");
+        let n = out
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "region-id-legacy-reset")
+            .count();
+        assert_eq!(n, 2, "one diagnostic per reset (the two placeholders)");
+    }
+
+    #[test]
+    fn valid_region_id_predicate() {
+        assert!(is_normative_region_id("r_0123456789abcdef"));
+        assert!(is_normative_region_id("r_ffffffffffffffff"));
+        assert!(!is_normative_region_id("r0"));
+        assert!(!is_normative_region_id("region-legacy-1"));
+        assert!(
+            !is_normative_region_id("r_0123456789ABCDEF"),
+            "uppercase rejected"
+        );
+        assert!(!is_normative_region_id("r_0123"), "wrong length rejected");
+        assert!(!is_normative_region_id(""));
     }
 
     #[test]
