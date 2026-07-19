@@ -57,6 +57,10 @@ std::string input_body(const json& op, std::size_t index) {
     if (!op.contains("inputs") || !op["inputs"].is_array() || op["inputs"].size() <= index) return "";
     const json& in = op["inputs"][index];
     if (in.is_object() && in.contains("primary") && in["primary"].is_object()) {
+        // Only a whole-BODY ref is a valid boolean-target fallback — a face/edge ref
+        // must never be mistaken for the operated body (M2 review hazard 6; mirrors
+        // ExtrudeOp::input_body).
+        if (read_str(in["primary"], "kind") != "body") return "";
         return read_str(in["primary"], "bodyId");
     }
     return "";

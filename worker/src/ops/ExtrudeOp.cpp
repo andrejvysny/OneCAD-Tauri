@@ -47,6 +47,11 @@ std::string input_body(const json& op, std::size_t index) {
     if (!op.contains("inputs") || !op["inputs"].is_array() || op["inputs"].size() <= index) return "";
     const json& in = op["inputs"][index];
     if (in.is_object() && in.contains("primary") && in["primary"].is_object()) {
+        // Only a whole-BODY ref is a valid boolean-target fallback. A face/edge ref
+        // (e.g. a ToFace `targetFace` now placed at inputs[0]) must NOT be mistaken
+        // for the operated body — binding the ToFace target's body as the boolean
+        // target would silently cut/fuse the wrong body (M2 review hazard 6).
+        if (read_str(in["primary"], "kind") != "body") return "";
         return read_str(in["primary"], "bodyId");
     }
     return "";

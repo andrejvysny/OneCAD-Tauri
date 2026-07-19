@@ -20,6 +20,7 @@
 #include "ops/OpTypes.h"
 #include "ops/RevolveOp.h"
 #include "session/Signatures.h"
+#include "tess/MeshHandle.h"
 #include "tess/Tessellate.h"
 #include "util/Hashing.h"
 #include "util/Log.h"
@@ -385,17 +386,12 @@ json attach_tessellate(const ScratchJob& job, const json& artifacts, Envelope& r
         resp.out_bin.insert(resp.out_bin.end(), bm.blob.begin(), bm.blob.end());
         const std::string section = "mesh:" + bid;
         resp.bin.push_back(protocol::BinSection{section, off, bm.blob.size()});
-        meshes.push_back(json{
-            {"bodyId", bid},
-            {"format", "MESH1"},
-            // SCHEMA §5.2/§7.6 normative inline-handle key is "bin" (see main.cpp
-            // handle_tessellate + SolverLane region handle). Was "section" (M2 fix).
-            {"bin", section},
-            {"lod", lod},
-            {"totalBytes", bm.blob.size()},
-            {"triangleCount", bm.triangle_count},
-            {"sha256", hashing::sha256_hex(bm.blob.data(), bm.blob.size())},
-        });
+        // Shared §7.6 handle builder (identical shape as the Tessellate verb —
+        // MeshHandle.h). `snapshotId` is the prepared scratch snapshot the artifact
+        // belongs to (reconciled to the §7.6 superset; was previously omitted here).
+        meshes.push_back(tess::mesh_handle_json(
+            bid, section, lod, bm.blob.size(), bm.triangle_count,
+            hashing::sha256_hex(bm.blob.data(), bm.blob.size()), job.prepared_snapshot_id));
     }
     return json{{"meshes", std::move(meshes)}};
 }

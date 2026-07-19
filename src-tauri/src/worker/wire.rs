@@ -139,9 +139,15 @@ pub fn execute_plan_args(req: &PlanRequest) -> Value {
 /// One op in `ExecutePlan.ops` (SCHEMA §7.3): `{opType, opId, inputs, params,
 /// determinism}`. `opType`/`params` come from the typed [`Operation`] (same split
 /// the planner hashes over); `inputs`/`determinism` serialize their core structs.
+///
+/// `params` is rendered through [`to_wire_body_form`] so every body-bearing field
+/// (`targetBodyId`/`toolBodyId`/`axis.bodyId`/…) crosses the wire in the worker's
+/// `body_<uuid>` form: the core serde emits a [`BodyId`] transparently as a bare
+/// uuid, but the worker keys its `BodyStore` by `body_<opId>`, so a bare uuid would
+/// never resolve (REF_UNRESOLVED / "target body not found").
 fn wire_op(op: &PlannedOp) -> Value {
     let op_val = serde_json::to_value(&op.operation).unwrap_or(Value::Null);
-    let (op_type, params) = match &op.operation {
+    let (op_type, mut params) = match &op.operation {
         Operation::Known(_) => (
             op_val.get("opType").cloned().unwrap_or(Value::Null),
             op_val.get("params").cloned().unwrap_or(Value::Null),
@@ -152,13 +158,45 @@ fn wire_op(op: &PlannedOp) -> Value {
             (t, Value::Object(obj))
         }
     };
+    to_wire_body_form(&mut params);
     json!({
         "opType": op_type,
         "opId": op.record_id.to_string(),
-        "inputs": wire_op_inputs(&op.operation),
+        "inputs": wire_op_inputs(op),
         "params": params,
         "determinism": serde_json::to_value(&op.determinism).unwrap_or(Value::Null),
     })
+}
+
+/// Rewrites every body-bearing field of `value` — a key exactly `"bodyId"` or ending
+/// in `"BodyId"` (`targetBodyId`, `toolBodyId`, `sourceBodyId`, …) — whose value is a
+/// bare [`Uuid`] string into the worker's `body_<uuid>` wire form (SCHEMA §2),
+/// recursing through nested objects and arrays.
+///
+/// The core serde emits a [`BodyId`] transparently as a **bare uuid** (the frozen
+/// v2 file schema); this wire layer owns rendering it as `body_<uuid>`, the id form
+/// the worker's `BodyStore` is keyed by (a NewBody body is `body_<opId>`).
+/// **Idempotent** — an already-prefixed value (`body_…`) fails the uuid parse and is
+/// left untouched, as is the empty string (`""` = "no body", the NewBody case).
+/// **Scoped to body keys only** — `sketchId`/`opId`/`elementId`/`edgeIds`/… never
+/// match, so a non-body id is never rewritten.
+fn to_wire_body_form(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for (key, v) in map.iter_mut() {
+                if key == "bodyId" || key.ends_with("BodyId") {
+                    if let Value::String(s) = v {
+                        if let Ok(u) = Uuid::parse_str(s) {
+                            *s = body_id_wire(BodyId(u));
+                        }
+                    }
+                }
+                to_wire_body_form(v);
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(to_wire_body_form),
+        _ => {}
+    }
 }
 
 /// The SCHEMA §7.3 `inputs[]` semantic-ref ARRAY for an op, built from its typed
@@ -171,10 +209,14 @@ fn wire_op(op: &PlannedOp) -> Value {
 /// `bodyId` is rendered in the worker's `body_<uuid>` wire form (SCHEMA §2). The
 /// extrude *profile* rides in `params` (`sketchId`/first region) — the worker reads
 /// it there — so a Blind/NewBody extrude carries no `inputs`.
-fn wire_op_inputs(op: &Operation) -> Value {
-    let refs: Vec<Value> = match op {
-        Operation::Known(KnownOperation::Fillet(p)) => edge_input_refs(&p.edges, &p.edge_ids),
-        Operation::Known(KnownOperation::Chamfer(p)) => edge_input_refs(&p.edges, &p.edge_ids),
+fn wire_op_inputs(op: &PlannedOp) -> Value {
+    let refs: Vec<Value> = match &op.operation {
+        Operation::Known(KnownOperation::Fillet(p)) => {
+            edge_input_refs(&p.edges, &p.edge_ids, &op.inputs.bodies)
+        }
+        Operation::Known(KnownOperation::Chamfer(p)) => {
+            edge_input_refs(&p.edges, &p.edge_ids, &op.inputs.bodies)
+        }
         Operation::Known(KnownOperation::Boolean(p)) => {
             vec![body_input_ref(p.target_body), body_input_ref(p.tool_body)]
         }
@@ -198,15 +240,27 @@ fn wire_op_inputs(op: &Operation) -> Value {
 }
 
 /// Fillet/Chamfer edge refs: prefer the typed per-edge [`ElementRef`]s (they carry
-/// the operated body + anchor/descriptor evidence); fall back to bare `edge_ids`
-/// (element-only, no body — the operated body is bound at regen time).
-fn edge_input_refs(edges: &[ElementRef], edge_ids: &[ElementId]) -> Vec<Value> {
+/// the operated body + anchor/descriptor evidence). Fall back to bare `edge_ids`
+/// (element-only), attaching the operated body — the op's graph-view `bodies[0]`
+/// (`FilletParams` derives the operated body from its edge refs; SCHEMA §7.3) — as
+/// `primary.bodyId` in the worker's `body_<uuid>` form so `FilletChamferOp`'s
+/// `target_body_of()` can bind the body. With no body input the ref stays
+/// element-only (a clear worker-side "requires body input" error, not a silent miss).
+fn edge_input_refs(edges: &[ElementRef], edge_ids: &[ElementId], bodies: &[BodyId]) -> Vec<Value> {
     if !edges.is_empty() {
         return edges.iter().map(element_ref_wire).collect();
     }
     edge_ids
         .iter()
-        .map(|id| json!({ "primary": { "elementId": id.as_str(), "kind": "edge" } }))
+        .map(|id| {
+            let mut primary = serde_json::Map::new();
+            if let Some(b) = bodies.first() {
+                primary.insert("bodyId".into(), json!(body_id_wire(*b)));
+            }
+            primary.insert("elementId".into(), json!(id.as_str()));
+            primary.insert("kind".into(), json!("edge"));
+            json!({ "primary": Value::Object(primary) })
+        })
         .collect()
 }
 
@@ -216,39 +270,19 @@ fn body_input_ref(b: BodyId) -> Value {
     json!({ "primary": { "bodyId": body_id_wire(b), "elementId": body_id_wire(b), "kind": "body" } })
 }
 
-/// Render an [`ElementRef`] to the SCHEMA §7.3 semantic-ref JSON, with `bodyId` in
-/// the worker's `body_<uuid>` wire form (the default serde emits the bare uuid).
+/// Render an [`ElementRef`] to the SCHEMA §7.3 semantic-ref JSON (`{primary, intent,
+/// anchor}`), with body-bearing fields in the worker's `body_<uuid>` wire form.
+///
+/// Serializes the typed ref directly (rather than hand-rolling the object), so the
+/// `#[serde(flatten)] extra` forward-compat maps that a hand-rolled builder would
+/// drop survive; `primary.kind` serializes lowercase (`face`/`edge`/`vertex`) via
+/// [`ElementKind`]'s serde derive. [`to_wire_body_form`] then rewrites `primary.bodyId`
+/// (a bare uuid from core serde) into `body_<uuid>` — the form the worker reads in
+/// `OpCommon`/`FilletChamferOp`/`ExtrudeOp::resolve_to_face`.
 fn element_ref_wire(r: &ElementRef) -> Value {
-    let mut o = serde_json::Map::new();
-    if let Some(pr) = &r.primary {
-        o.insert(
-            "primary".into(),
-            json!({
-                "bodyId": body_id_wire(pr.body),
-                "elementId": pr.element.as_str(),
-                "kind": element_kind_str(pr.kind),
-            }),
-        );
-    }
-    if let Some(anchor) = &r.anchor {
-        o.insert("anchor".into(), anchor_to_wire(anchor));
-    }
-    if let Some(intent) = &r.intent {
-        o.insert(
-            "intent".into(),
-            serde_json::to_value(intent).unwrap_or(Value::Null),
-        );
-    }
-    Value::Object(o)
-}
-
-/// The SCHEMA §2 wire kind char-word for an [`ElementKind`].
-fn element_kind_str(kind: ElementKind) -> &'static str {
-    match kind {
-        ElementKind::Face => "face",
-        ElementKind::Edge => "edge",
-        ElementKind::Vertex => "vertex",
-    }
+    let mut v = serde_json::to_value(r).unwrap_or_else(|_| json!({}));
+    to_wire_body_form(&mut v);
+    v
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1479,5 +1513,220 @@ mod solver_wire_tests {
         );
         assert!(matches!(res[1].outcome, ResolveOutcome::Unchanged));
         assert!(matches!(res[2].outcome, ResolveOutcome::NeedsRepair(_)));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BodyId wire-form rendering (M2 code-review defects 1–6) — the params/inputs body
+// fields must cross the wire as `body_<uuid>` (SCHEMA §2), never a bare core-serde
+// uuid (which the worker's BodyStore, keyed `body_<opId>`, would never resolve).
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod body_wire_tests {
+    use super::*;
+    use onecad_core::document::record::{
+        BooleanMode, BooleanOp, BooleanParams, DeterminismSettings, ExtrudeParams, FilletParams,
+        OperationInputs, RevolveParams,
+    };
+    use onecad_core::document::refs::{AxisRef, ElementKind, ElementRef, Extra, PrimaryRef};
+    use onecad_core::document::variables::Scalar;
+    use onecad_core::ids::RecordId;
+
+    fn planned(op: Operation, inputs: OperationInputs) -> PlannedOp {
+        PlannedOp {
+            record_id: RecordId(Uuid::from_u128(0xE0)),
+            step_index: 1,
+            operation: op,
+            inputs,
+            determinism: DeterminismSettings::default(),
+        }
+    }
+
+    fn extrude_cut(target: BodyId) -> ExtrudeParams {
+        ExtrudeParams {
+            profile: None,
+            distance: Scalar::new(5.0),
+            draft_angle_deg: Scalar::new(0.0),
+            mode: ExtrudeMode::Blind,
+            boolean_mode: BooleanMode::Cut,
+            target_body: Some(target),
+            target_face: None,
+            two_directions: false,
+            mode2: ExtrudeMode::Blind,
+            distance2: Scalar::new(0.0),
+            target_face2: None,
+            extra: Default::default(),
+        }
+    }
+
+    #[test]
+    fn to_wire_body_form_rewrites_only_body_keys() {
+        let u = Uuid::from_u128(0xABC);
+        let bare = u.to_string();
+        let mut v = json!({
+            "targetBodyId": bare,
+            "toolBodyId": bare,
+            "sourceBodyId": bare,
+            "bodyId": bare,
+            "sketchId": bare,        // not a body key
+            "elementId": "el_1",
+            "bodyIdList": bare,      // contains but does not END with BodyId
+            "nested": { "axis": { "bodyId": bare } },
+            "already": { "targetBodyId": format!("body_{u}") },  // idempotent
+            "empty": { "targetBodyId": "" },                     // NewBody
+        });
+        to_wire_body_form(&mut v);
+        let want = format!("body_{u}");
+        for k in ["targetBodyId", "toolBodyId", "sourceBodyId", "bodyId"] {
+            assert_eq!(v[k], json!(want), "{k} → body_<uuid>");
+        }
+        assert_eq!(v["sketchId"], json!(bare), "sketchId is not a body key");
+        assert_eq!(
+            v["bodyIdList"],
+            json!(bare),
+            "suffix match only (not substring)"
+        );
+        assert_eq!(v["nested"]["axis"]["bodyId"], json!(want), "recurses");
+        assert_eq!(
+            v["already"]["targetBodyId"],
+            json!(want),
+            "already-prefixed is left as-is (idempotent)"
+        );
+        assert_eq!(v["empty"]["targetBodyId"], json!(""), "empty stays empty");
+    }
+
+    #[test]
+    fn wire_op_boolean_renders_body_wire_form() {
+        let target = BodyId(Uuid::from_u128(0x11));
+        let tool = BodyId(Uuid::from_u128(0x22));
+        let op = Operation::Known(KnownOperation::Boolean(BooleanParams {
+            operation: BooleanOp::Cut,
+            target_body: target,
+            tool_body: tool,
+            extra: Default::default(),
+        }));
+        let inputs = op.derive_inputs();
+        let w = wire_op(&planned(op, inputs));
+        assert_eq!(w["params"]["targetBodyId"], json!(body_id_wire(target)));
+        assert_eq!(w["params"]["toolBodyId"], json!(body_id_wire(tool)));
+        // inputs[] whole-body refs carry the same wire form + kind "body".
+        assert_eq!(
+            w["inputs"][0]["primary"]["bodyId"],
+            json!(body_id_wire(target))
+        );
+        assert_eq!(w["inputs"][0]["primary"]["kind"], json!("body"));
+        assert_eq!(
+            w["inputs"][1]["primary"]["bodyId"],
+            json!(body_id_wire(tool))
+        );
+    }
+
+    #[test]
+    fn wire_op_extrude_cut_renders_target_body_wire_form() {
+        let target = BodyId(Uuid::from_u128(0x33));
+        let op = Operation::Known(KnownOperation::Extrude(extrude_cut(target)));
+        let inputs = op.derive_inputs();
+        let w = wire_op(&planned(op, inputs));
+        assert_eq!(w["params"]["targetBodyId"], json!(body_id_wire(target)));
+    }
+
+    #[test]
+    fn element_ref_wire_body_form_kind_and_extra_survive() {
+        let body = BodyId(Uuid::from_u128(0x44));
+        let mut extra = Extra::new();
+        extra.insert("alienRefKey".into(), json!({ "keep": true }));
+        let r = ElementRef {
+            primary: Some(PrimaryRef {
+                body,
+                element: ElementId::new("el_9"),
+                kind: ElementKind::Face,
+                extra: Default::default(),
+            }),
+            intent: None,
+            anchor: None,
+            extra,
+        };
+        let w = element_ref_wire(&r);
+        assert_eq!(w["primary"]["bodyId"], json!(body_id_wire(body)));
+        assert_eq!(w["primary"]["elementId"], json!("el_9"));
+        assert_eq!(
+            w["primary"]["kind"],
+            json!("face"),
+            "kind lowercases via derive"
+        );
+        assert_eq!(
+            w["alienRefKey"],
+            json!({ "keep": true }),
+            "serde-flattened extra preserved (hand-rolled builder dropped it)"
+        );
+    }
+
+    #[test]
+    fn edge_input_refs_bare_fallback_attaches_operated_body() {
+        let body = BodyId(Uuid::from_u128(0x55));
+        let ids = vec![ElementId::new("e:5"), ElementId::new("e:6")];
+        let with_body = edge_input_refs(&[], &ids, &[body]);
+        assert_eq!(
+            with_body[0]["primary"]["bodyId"],
+            json!(body_id_wire(body)),
+            "bare fallback attaches the operated body (defect 5)"
+        );
+        assert_eq!(with_body[0]["primary"]["elementId"], json!("e:5"));
+        assert_eq!(with_body[0]["primary"]["kind"], json!("edge"));
+        // No body input ⇒ element-only (a clear worker-side "requires body input").
+        let no_body = edge_input_refs(&[], &ids, &[]);
+        assert!(no_body[0]["primary"].get("bodyId").is_none());
+        assert_eq!(no_body[0]["primary"]["elementId"], json!("e:5"));
+    }
+
+    #[test]
+    fn wire_op_fillet_bare_edge_ids_carries_operated_body() {
+        let body = BodyId(Uuid::from_u128(0x66));
+        let op = Operation::Known(KnownOperation::Fillet(FilletParams {
+            radius: Scalar::new(2.0),
+            edge_ids: vec![ElementId::new("e:14")],
+            edges: vec![],
+            chain_tangent_edges: false,
+            extra: Default::default(),
+        }));
+        // The graph-view carries the operated body at bodies[0] (as the plan would
+        // when the fillet's body input is known), exercising the bare-fallback attach.
+        let mut inputs = OperationInputs::default();
+        inputs.bodies.push(body);
+        inputs.elements.push(ElementId::new("e:14"));
+        let w = wire_op(&planned(op, inputs));
+        assert_eq!(
+            w["inputs"][0]["primary"]["bodyId"],
+            json!(body_id_wire(body))
+        );
+        assert_eq!(w["inputs"][0]["primary"]["kind"], json!("edge"));
+    }
+
+    #[test]
+    fn wire_op_revolve_renders_axis_and_target_body_wire_form() {
+        let axis_body = BodyId(Uuid::from_u128(0x77));
+        let target = BodyId(Uuid::from_u128(0x88));
+        let op = Operation::Known(KnownOperation::Revolve(RevolveParams {
+            profile: None,
+            angle_deg: Scalar::new(90.0),
+            axis: Some(AxisRef::Element {
+                body: axis_body,
+                edge: ElementId::new("e:2"),
+                extra: Default::default(),
+            }),
+            boolean_mode: BooleanMode::Cut,
+            target_body: Some(target),
+            extra: Default::default(),
+        }));
+        let inputs = op.derive_inputs();
+        let w = wire_op(&planned(op, inputs));
+        // Both body-bearing params fields (edge-axis body + boolean target) → wire form
+        // via to_wire_body_form; the worker reads them from params (no inputs branch).
+        assert_eq!(
+            w["params"]["axis"]["bodyId"],
+            json!(body_id_wire(axis_body)),
+            "edge-axis body → wire form (defect 4)"
+        );
+        assert_eq!(w["params"]["targetBodyId"], json!(body_id_wire(target)));
     }
 }

@@ -171,6 +171,62 @@ void test_draft() {
     }
 }
 
+// input_body() picks up a whole-BODY inputs[0] ref as the boolean target when
+// `targetBodyId` is absent (the valid fallback): Add fuses into body_target.
+void test_boolean_target_from_body_ref() {
+    const TopoDS_Shape target = BRepPrimAPI_MakeBox(gp_Pnt(-10, 0, 0), 10.0, 10.0, 10.0).Shape();
+    BodyStore bodies;
+    bodies.create("body_target", "op_t", target);  // world z∈[0,10], vol 1000
+    em::ElementMapPartition part;
+    Ctx c;
+    c.sketches.push_back({"sk1", rect_sketch("sk1", 10, 10)});
+    c.last_sketch = "sk1";
+    ops::OpContext ctx = c.make(bodies, part);
+    json op = {{"opType", "Extrude"},
+               {"opId", "ope"},
+               {"inputs", json::array({json{{"primary",
+                                             {{"bodyId", "body_target"},
+                                              {"elementId", "body_target"},
+                                              {"kind", "body"}}}}})},
+               {"params",
+                {{"sketchId", "sk1"}, {"distance", 20.0}, {"extrudeMode", "Blind"},
+                 {"booleanMode", "Add"}}}};
+    ops::OpOutcome oc = ops::execute_extrude(ctx, op, "ope");
+    check(oc.status == ops::OpOutcome::Status::Ok, "boolean body-ref fallback: Ok");
+    if (bodies.contains("body_target"))
+        check_near(onecad::session::shape_volume(bodies.get("body_target")->geom), 2000.0, 1.0,
+                   "boolean body-ref fallback: Add fused into body_target (z∈[0,20] → vol 2000)");
+}
+
+// A FACE ref at inputs[0] (e.g. a ToFace targetFace) must NOT be bound as the boolean
+// target when `targetBodyId` is absent (hazard 6): the op fails cleanly instead of
+// silently cutting the ToFace target's body.
+void test_boolean_ignores_face_ref_at_input0() {
+    const TopoDS_Shape target = BRepPrimAPI_MakeBox(gp_Pnt(-10, 0, 0), 10.0, 10.0, 10.0).Shape();
+    BodyStore bodies;
+    bodies.create("body_target", "op_t", target);  // vol 1000
+    em::ElementMapPartition part;
+    Ctx c;
+    c.sketches.push_back({"sk1", rect_sketch("sk1", 10, 10)});
+    c.last_sketch = "sk1";
+    ops::OpContext ctx = c.make(bodies, part);
+    json op = {{"opType", "Extrude"},
+               {"opId", "ope"},
+               {"inputs", json::array({json{{"primary",
+                                             {{"bodyId", "body_target"},
+                                              {"elementId", "el_face"},
+                                              {"kind", "face"}}}}})},
+               {"params",
+                {{"sketchId", "sk1"}, {"distance", 5.0}, {"extrudeMode", "Blind"},
+                 {"booleanMode", "Cut"}}}};
+    ops::OpOutcome oc = ops::execute_extrude(ctx, op, "ope");
+    check(oc.status == ops::OpOutcome::Status::Failed,
+          "hazard 6: a face-ref inputs[0] is not bound as boolean target → clean failure");
+    if (bodies.get("body_target") != nullptr)
+        check_near(onecad::session::shape_volume(bodies.get("body_target")->geom), 1000.0, 1.0,
+                   "hazard 6: the face ref's body is left unmodified (no silent cut)");
+}
+
 }  // namespace
 
 int main() {
@@ -178,6 +234,8 @@ int main() {
     test_to_face_unresolved_needs_repair();
     test_to_next();
     test_draft();
+    test_boolean_target_from_body_ref();
+    test_boolean_ignores_face_ref_at_input0();
     if (g_failures == 0) std::fprintf(stderr, "wp6_extrude: OK\n");
     return g_failures;
 }

@@ -1300,6 +1300,21 @@ edits to version 1 rather than a version bump. They still fall under the
 [§13](#13-versioningchange-policy) change policy (fixture bump + cross-track
 sign-off) once fixtures exist.
 
+- **2026-07-19 — Rust wire layer conformance fix: params body-bearing fields now
+  rendered in [§2](#2-identifier--scalar-types) `body_<uuid>` wire form**
+  (code-to-spec; **no schema semantic change**). [§7.3](#73-op-payload-schemas-vertical-slice).
+  The Rust wire translator now renders every body-bearing op-`params` field
+  (`targetBodyId`, `toolBodyId`, `axis.bodyId`, and `targetFace(2).primary.bodyId`)
+  in the worker's `body_<uuid>` id form on the way out, matching the `inputs[]`
+  semantic-ref rendering that already did so. The `BodyId` core wire encoding was
+  a bare uuid (the frozen document schema), which the worker's `body_<opId>`-keyed
+  `BodyStore` could never resolve (standalone Boolean / Extrude-Cut/Add / ToFace all
+  failed `REF_UNRESOLVED` / NeedsRepair). *This bullet aligns the code with the
+  already-normative [§2](#2-identifier--scalar-types) `BodyId` wire form; the wire
+  shape the worker parses is unchanged, so no `protocol/fixtures/` file changes (they
+  already carry `body_<opId>`-form ids, never bare uuids). Orchestrator-approved
+  2026-07-19.*
+
 - **2026-07-18 — a from-0 plan is always base-valid; accept replaces the head
   wholesale** (D5, orchestrator-approved; R-WP11.2). [§7.2](#72-regen--executeplan).
   A **from-0 plan** — no `baseCheckpoint` AND `expectedBaseHash` == the empty-prefix

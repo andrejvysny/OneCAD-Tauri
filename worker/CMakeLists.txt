@@ -71,6 +71,7 @@ add_library(worker_core STATIC
     src/io/ExportStep.cpp
     src/session/ElementIdentity.cpp
     src/tess/Mesh1.cpp
+    src/tess/MeshHandle.cpp
     src/tess/Tessellate.cpp
     src/sketch/WireSketch.cpp
     src/sketch/RegionId.cpp

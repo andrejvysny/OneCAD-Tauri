@@ -28,6 +28,7 @@
 #include "session/ElementIdentity.h"
 #include "session/PlanExecutor.h"
 #include "session/Session.h"
+#include "tess/MeshHandle.h"
 #include "tess/Tessellate.h"
 #include "util/Hashing.h"
 #include "util/LittleEndian.h"
@@ -174,19 +175,11 @@ Envelope handle_tessellate(Session& session, const Envelope& req) {
         resp.out_bin.insert(resp.out_bin.end(), bm.blob.begin(), bm.blob.end());
         const std::string section = "mesh:" + bid;
         resp.bin.push_back(onecad::protocol::BinSection{section, off, bm.blob.size()});
-        meshes.push_back(nlohmann::json{
-            {"bodyId", bid},
-            {"format", "MESH1"},
-            // SCHEMA §5.2/§7.6: the inline handle references the resp-tail section by
-            // the normative key "bin" (matches SolverLane's region handle + the Rust
-            // `assemble_mesh` reader). Was "section" (M2 gate fix — SCHEMA violation).
-            {"bin", section},
-            {"lod", lod},
-            {"totalBytes", bm.blob.size()},
-            {"triangleCount", bm.triangle_count},
-            {"sha256", onecad::hashing::sha256_hex(bm.blob.data(), bm.blob.size())},
-            {"snapshotId", snapshot_id},
-        });
+        // Shared §7.6 handle builder (identical shape as ExecutePlan's inline artifact
+        // — MeshHandle.h). The inline handle keys the resp-tail section by "bin".
+        meshes.push_back(onecad::tess::mesh_handle_json(
+            bid, section, lod, bm.blob.size(), bm.triangle_count,
+            onecad::hashing::sha256_hex(bm.blob.data(), bm.blob.size()), snapshot_id));
     }
     resp.result = nlohmann::json{{"meshes", std::move(meshes)}};
     return resp;
