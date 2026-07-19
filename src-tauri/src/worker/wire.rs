@@ -179,11 +179,18 @@ fn wire_op(op: &PlannedOp) -> Value {
 /// **Idempotent** — an already-prefixed value (`body_…`) fails the uuid parse and is
 /// left untouched, as is the empty string (`""` = "no body", the NewBody case).
 /// **Scoped to body keys only** — `sketchId`/`opId`/`elementId`/`edgeIds`/… never
-/// match, so a non-body id is never rewritten.
+/// match, so a non-body id is never rewritten. **`intent` subtrees are skipped
+/// wholesale**: an [`ElementRef`]'s `intent` is worker-authored frozen evidence
+/// (descriptor + metadata) that must round-trip verbatim — any body reference the
+/// worker ever puts there is already in wire form, and the wire layer must not
+/// rewrite worker-owned bytes (independent-review NOTE, 2026-07-19).
 fn to_wire_body_form(value: &mut Value) {
     match value {
         Value::Object(map) => {
             for (key, v) in map.iter_mut() {
+                if key == "intent" {
+                    continue;
+                }
                 if key == "bodyId" || key.ends_with("BodyId") {
                     if let Value::String(s) = v {
                         if let Ok(u) = Uuid::parse_str(s) {
@@ -1574,6 +1581,8 @@ mod body_wire_tests {
             "nested": { "axis": { "bodyId": bare } },
             "already": { "targetBodyId": format!("body_{u}") },  // idempotent
             "empty": { "targetBodyId": "" },                     // NewBody
+            // Worker-authored frozen evidence: round-trips verbatim, never rewritten.
+            "intent": { "bodyId": bare, "descriptor": { "refBodyId": bare } },
         });
         to_wire_body_form(&mut v);
         let want = format!("body_{u}");
@@ -1593,6 +1602,11 @@ mod body_wire_tests {
             "already-prefixed is left as-is (idempotent)"
         );
         assert_eq!(v["empty"]["targetBodyId"], json!(""), "empty stays empty");
+        assert_eq!(
+            v["intent"],
+            json!({ "bodyId": bare, "descriptor": { "refBodyId": bare } }),
+            "intent subtree (worker-authored evidence) round-trips verbatim"
+        );
     }
 
     #[test]
