@@ -35,9 +35,11 @@ double read_scalar(const nlohmann::json& params, const char* key, double dflt);
 std::string read_str(const nlohmann::json& o, const char* key, const std::string& dflt = "");
 
 // Build one planar profile face from a Sketch op's params (plane + entities +
-// constraints). `region_id` selects a region when non-empty; on "" the first
-// detected closed region is used (documented V1 selection — see .cpp). Returns
-// nullopt + fills `err` on any failure.
+// constraints). A non-empty `region_id` (SCHEMA §7.4 normative FNV `r_<hash>`) MUST
+// match a detected region — no match is a HARD FAILURE (nullopt + `err` naming the
+// requested id and the available ids), never a silent fallback to a different
+// region. An empty/absent `region_id` uses the FIRST detected region (V1 fallback).
+// Returns nullopt + fills `err` on any failure.
 std::optional<TopoDS_Face> build_profile_face(const nlohmann::json& sketch_params,
                                               const std::string& region_id, std::string& err);
 

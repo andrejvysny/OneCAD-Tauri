@@ -312,19 +312,154 @@ pub struct PromotedElementDto {
     pub body_id: String,
 }
 
-/// One dry-run resolution (`resolveRefs`; SCHEMA §7.5 `ResolveRefs` result).
+/// One repair candidate surfaced to the M4b repair UI (`resolveRefs` →
+/// `needsRepair`; SCHEMA §9 `candidates[]`). Carries the evidence handle
+/// (`topoKey`), the normalized score + margin, a geometric hint (`worldPos` centre),
+/// and a human-usable `summary` (e.g. `"planar face, area≈120mm²"`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveCandidateDto {
+    pub topo_key: String,
+    pub score: f64,
+    pub margin: f64,
+    /// Candidate centre in world coords — a geometric hint for highlighting.
+    pub world_pos: [f64; 3],
+    pub summary: String,
+    /// Per-feature score contributions (SCHEMA §9 `featureContributions`), when the
+    /// worker carried them (rides in the candidate's `extra`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feature_contributions: Option<serde_json::Value>,
+}
+
+/// One dry-run resolution (`resolveRefs`; SCHEMA §7.5 `ResolveRefs` result) — the
+/// **full** ladder result the M4b repair UI consumes (un-lossy: the older DTO
+/// dropped candidates/reason/anchor).
+///
+/// Per ref: `outcome` (status), `elementId` (the bound id — `autoBind`/`unchanged`,
+/// or the last-known id on `needsRepair`), and — on `needsRepair` — the ranked
+/// `candidates[]` plus `ladderFailed`/`reason`/`scoringVersion`/`uiLabel`/`anchor`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolveRefDto {
     pub ref_id: String,
     /// `autoBind` | `needsRepair` | `unchanged`.
     pub outcome: String,
+    /// The bound `ElementId` (empty ⇒ omitted). For `autoBind`/`unchanged` this is
+    /// the resolved id; for `needsRepair` it is the ref's last-known id, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub element_id: Option<String>,
+    /// The bound element's `TopoKey` evidence (SCHEMA §9) — present on `autoBind`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topo_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub margin: Option<f64>,
+    /// `history` | `descriptor` — the ladder level that could not decide (needsRepair).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ladder_failed: Option<String>,
+    /// `ambiguous` | `no-candidates` | `low-confidence` (needsRepair).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// The `resolverVersion` the scores were computed under (SCHEMA §9).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scoring_version: Option<u32>,
+    /// UI-friendly label (SCHEMA §9 `uiLabel`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ui_label: Option<String>,
+    /// The selection intent captured when the ref was authored (SCHEMA §9 `anchor`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<serde_json::Value>,
+    /// Ranked candidates (needsRepair), sorted by score descending.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub candidates: Vec<ResolveCandidateDto>,
+}
+
+impl ResolveRefDto {
+    /// Maps a core [`RefResolution`](onecad_core::regen::RefResolution) to the full
+    /// repair-UI DTO (SCHEMA §7.5/§9). Un-lossy: the `needsRepair` path carries the
+    /// ranked candidates + reason + anchor the old DTO dropped.
+    #[must_use]
+    pub fn from_resolution(r: onecad_core::regen::RefResolution) -> Self {
+        use onecad_core::regen::ResolveOutcome;
+        let non_empty = |id: onecad_core::ids::ElementId| {
+            let s = id.as_str().to_string();
+            (!s.is_empty()).then_some(s)
+        };
+        let base = |ref_id: String, outcome: &str| ResolveRefDto {
+            ref_id,
+            outcome: outcome.to_string(),
+            element_id: None,
+            topo_key: None,
+            score: None,
+            margin: None,
+            ladder_failed: None,
+            reason: None,
+            scoring_version: None,
+            ui_label: None,
+            anchor: None,
+            candidates: Vec::new(),
+        };
+        match r.outcome {
+            ResolveOutcome::AutoBind {
+                element_id,
+                score,
+                margin,
+                topo_key,
+            } => ResolveRefDto {
+                element_id: non_empty(element_id),
+                topo_key: topo_key.map(|k| k.as_str().to_string()),
+                score: Some(score),
+                margin: Some(margin),
+                ..base(r.ref_id, "autoBind")
+            },
+            ResolveOutcome::Unchanged { element_id } => ResolveRefDto {
+                element_id: element_id.and_then(non_empty),
+                ..base(r.ref_id, "unchanged")
+            },
+            ResolveOutcome::NeedsRepair(item) => ResolveRefDto {
+                element_id: item.element_id.and_then(non_empty),
+                ladder_failed: Some(ladder_level_str(item.ladder_failed).to_string()),
+                reason: Some(repair_reason_str(item.reason).to_string()),
+                scoring_version: item.scoring_version,
+                ui_label: (!item.ui_label.is_empty()).then_some(item.ui_label),
+                anchor: item
+                    .anchor
+                    .as_ref()
+                    .and_then(|a| serde_json::to_value(a).ok()),
+                candidates: item.candidates.into_iter().map(candidate_dto).collect(),
+                ..base(r.ref_id, "needsRepair")
+            },
+        }
+    }
+}
+
+fn ladder_level_str(l: onecad_core::document::repair::LadderLevel) -> &'static str {
+    use onecad_core::document::repair::LadderLevel;
+    match l {
+        LadderLevel::History => "history",
+        LadderLevel::Descriptor => "descriptor",
+    }
+}
+
+fn repair_reason_str(r: onecad_core::document::repair::RepairReason) -> &'static str {
+    use onecad_core::document::repair::RepairReason;
+    match r {
+        RepairReason::Ambiguous => "ambiguous",
+        RepairReason::NoCandidates => "no-candidates",
+        RepairReason::LowConfidence => "low-confidence",
+    }
+}
+
+fn candidate_dto(c: onecad_core::document::repair::RepairCandidate) -> ResolveCandidateDto {
+    ResolveCandidateDto {
+        topo_key: c.topo_key.as_str().to_string(),
+        score: c.score,
+        margin: c.margin,
+        world_pos: [c.world_pos.x, c.world_pos.y, c.world_pos.z],
+        summary: c.summary,
+        feature_contributions: c.extra.get("featureContributions").cloned(),
+    }
 }
 
 /// The `regen-finished` event payload (`{revision, outcome}`) so the frontend
@@ -335,6 +470,50 @@ pub struct RegenFinished {
     pub revision: u64,
     /// `published` | `superseded` | `failed` | `cancelled` | `noop`.
     pub outcome: String,
+}
+
+/// One entry in the `needs-repair` event — a **lean** summary of a step left in
+/// NeedsRepair (SCHEMA §9). The repair panel fetches the full candidate evidence via
+/// `resolveRefs` on demand, so this carries only what the banner/badge needs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NeedsRepairItemDto {
+    /// The op record id (`RecordId`) of the step needing repair.
+    pub op_id: String,
+    /// The op-input ref identity (SCHEMA §9 `refId`, e.g. `"op_5.input0"`).
+    pub ref_id: String,
+    /// `ambiguous` | `no-candidates` | `low-confidence` (SCHEMA §9 `reason`).
+    pub reason: String,
+    /// The `resolverVersion` the candidate scores were computed under (SCHEMA §9).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scoring_version: Option<u32>,
+    /// How many candidates the ladder surfaced (0 ⇒ `no-candidates`).
+    pub candidate_count: usize,
+}
+
+/// The `needs-repair` event payload (`{revision, items}`). Emitted after **every**
+/// published regen; an EMPTY `items` means repairs cleared, so the frontend can drop
+/// the banner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NeedsRepairEvent {
+    pub revision: u64,
+    pub items: Vec<NeedsRepairItemDto>,
+}
+
+/// Builds the lean [`NeedsRepairItemDto`] for one repair item + its op record id.
+#[must_use]
+pub fn needs_repair_item_dto(
+    op_id: String,
+    item: &onecad_core::document::repair::RepairItem,
+) -> NeedsRepairItemDto {
+    NeedsRepairItemDto {
+        op_id,
+        ref_id: item.ref_id.clone(),
+        reason: repair_reason_str(item.reason).to_string(),
+        scoring_version: item.scoring_version,
+        candidate_count: item.candidates.len(),
+    }
 }
 
 // ── Mappers (op → feature kind / value; regen state → feature status) ─────────
@@ -487,5 +666,133 @@ mod tests {
             }),
             FeatureStatus::Error
         );
+    }
+
+    // ── M4a deliverable 3: the un-lossy resolve_refs DTO mapping ──────────────
+
+    #[test]
+    fn resolve_ref_dto_autobind_carries_id_and_topokey_evidence() {
+        use onecad_core::ids::{ElementId, TopoKey};
+        use onecad_core::regen::{RefResolution, ResolveOutcome};
+        let dto = ResolveRefDto::from_resolution(RefResolution {
+            ref_id: "op_5.input0".into(),
+            outcome: ResolveOutcome::AutoBind {
+                element_id: ElementId::new("el_top"),
+                score: 0.94,
+                margin: 0.31,
+                topo_key: Some(TopoKey::new("f:1")),
+            },
+        });
+        let v = serde_json::to_value(&dto).unwrap();
+        assert_eq!(v["outcome"], "autoBind");
+        assert_eq!(v["elementId"], "el_top");
+        assert_eq!(v["topoKey"], "f:1");
+        assert_eq!(v["score"], 0.94);
+        assert_eq!(v["margin"], 0.31);
+        assert!(v.get("candidates").is_none(), "no candidates on autoBind");
+
+        // Unminted dry-run autoBind: empty id ⇒ elementId omitted, topoKey kept.
+        let dto = ResolveRefDto::from_resolution(RefResolution {
+            ref_id: "op_5.input1".into(),
+            outcome: ResolveOutcome::AutoBind {
+                element_id: ElementId::new(""),
+                score: 0.9,
+                margin: 0.2,
+                topo_key: Some(TopoKey::new("f:3")),
+            },
+        });
+        let v = serde_json::to_value(&dto).unwrap();
+        assert!(v.get("elementId").is_none(), "empty id ⇒ omitted");
+        assert_eq!(v["topoKey"], "f:3");
+    }
+
+    #[test]
+    fn resolve_ref_dto_needs_repair_carries_full_candidate_evidence() {
+        use onecad_core::document::repair::{
+            LadderLevel, RepairCandidate, RepairItem, RepairReason,
+        };
+        use onecad_core::ids::TopoKey;
+        use onecad_core::math::Vec3;
+        use onecad_core::regen::{RefResolution, ResolveOutcome};
+
+        let mut extra = onecad_core::document::refs::Extra::new();
+        extra.insert(
+            "featureContributions".into(),
+            serde_json::json!({ "area": 0.25 }),
+        );
+        let item = RepairItem {
+            step_index: 6,
+            ref_id: "op_6.input0".into(),
+            element_id: Some(onecad_core::ids::ElementId::new("el_last")),
+            ladder_failed: LadderLevel::Descriptor,
+            reason: RepairReason::Ambiguous,
+            candidates: vec![
+                RepairCandidate {
+                    topo_key: TopoKey::new("f:31"),
+                    score: 0.91,
+                    margin: 0.0,
+                    world_pos: Vec3::new_unchecked(12.0, 3.5, 0.0),
+                    summary: "planar face".into(),
+                    extra,
+                },
+                RepairCandidate {
+                    topo_key: TopoKey::new("f:44"),
+                    score: 0.91,
+                    margin: 0.0,
+                    world_pos: Vec3::new_unchecked(12.0, -3.5, 0.0),
+                    summary: "planar face".into(),
+                    extra: Default::default(),
+                },
+            ],
+            scoring_version: Some(1),
+            anchor: None,
+            ui_label: "Fillet edge".into(),
+        };
+        let dto = ResolveRefDto::from_resolution(RefResolution {
+            ref_id: "op_6.input0".into(),
+            outcome: ResolveOutcome::NeedsRepair(item),
+        });
+        let v = serde_json::to_value(&dto).unwrap();
+        assert_eq!(v["outcome"], "needsRepair");
+        assert_eq!(v["elementId"], "el_last");
+        assert_eq!(v["ladderFailed"], "descriptor");
+        assert_eq!(v["reason"], "ambiguous");
+        assert_eq!(v["scoringVersion"], 1);
+        assert_eq!(v["uiLabel"], "Fillet edge");
+        // The candidate evidence the OLD DTO dropped is now carried in full.
+        assert_eq!(v["candidates"].as_array().unwrap().len(), 2);
+        assert_eq!(v["candidates"][0]["topoKey"], "f:31");
+        assert_eq!(v["candidates"][0]["score"], 0.91);
+        assert_eq!(
+            v["candidates"][0]["worldPos"],
+            serde_json::json!([12.0, 3.5, 0.0])
+        );
+        assert_eq!(
+            v["candidates"][0]["featureContributions"],
+            serde_json::json!({ "area": 0.25 })
+        );
+    }
+
+    #[test]
+    fn needs_repair_item_dto_shape() {
+        use onecad_core::document::repair::{LadderLevel, RepairItem, RepairReason};
+        let item = RepairItem {
+            step_index: 2,
+            ref_id: "op_2.input0".into(),
+            element_id: None,
+            ladder_failed: LadderLevel::Descriptor,
+            reason: RepairReason::NoCandidates,
+            candidates: Vec::new(),
+            scoring_version: Some(1),
+            anchor: None,
+            ui_label: String::new(),
+        };
+        let dto = needs_repair_item_dto("rec-1".into(), &item);
+        let v = serde_json::to_value(&dto).unwrap();
+        assert_eq!(v["opId"], "rec-1");
+        assert_eq!(v["refId"], "op_2.input0");
+        assert_eq!(v["reason"], "no-candidates");
+        assert_eq!(v["scoringVersion"], 1);
+        assert_eq!(v["candidateCount"], 0);
     }
 }

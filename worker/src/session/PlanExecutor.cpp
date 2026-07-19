@@ -353,6 +353,9 @@ ExecResult execute_ops(ScratchJob& job, const json& ops, std::uint64_t job_id, s
             StepResult r;
             r.step_index = step_index;
             r.status = "opFailed";
+            // Carry the op's §8 message into perStepResults (the failed step emits no
+            // planStep, so this is the only channel to Rust — see the emit below).
+            if (!diagnostics.empty()) r.message = diagnostics.back().value("message", "");
             job.per_step.push_back(std::move(r));
             job.stopped_reason = "opFailed";
             job.last_valid_step = last_ok_step;  // publish ≤ m-1 (Invariant 6)
@@ -457,6 +460,10 @@ Envelope handle_execute_plan(Session& session, const Envelope& req, HandlerConte
         json e = {{"stepIndex", ps.step_index}, {"status", ps.status}};
         if (!ps.body_ids.empty()) e["bodyIds"] = ps.body_ids;
         if (ps.ref_count.has_value()) e["refCount"] = *ps.ref_count;
+        // Surface a failed op's recoverable message (§8) so Rust can report WHY —
+        // a failed step emits no planStep event, so its diagnostic would otherwise be
+        // worker-local. Additive (readers ignore unknown keys; §4).
+        if (!ps.message.empty()) e["message"] = ps.message;
         per_step.push_back(std::move(e));
     }
     json last_valid = job.last_valid_step.has_value() ? json(*job.last_valid_step) : json(nullptr);

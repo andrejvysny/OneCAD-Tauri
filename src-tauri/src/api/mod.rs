@@ -18,7 +18,7 @@ use onecad_core::document::refs::{AnchorIntent, ElementRef};
 use onecad_core::edit::{EditCommand, SketchEditOp};
 use onecad_core::ids::{BodyId, EntityId, SketchId, SnapshotId, TopoKey};
 use onecad_core::io::container::SaveMeta;
-use onecad_core::regen::{RefResolution, RegenRequest, ResolveOutcome, ResolveRef, ResolveRequest};
+use onecad_core::regen::{RegenRequest, ResolveRef, ResolveRequest};
 
 use crate::document_runtime::{DocumentRuntime, RegenReport};
 use crate::dto::{
@@ -459,37 +459,10 @@ pub async fn resolve_refs(
             .ok_or_else(|| ApiError::NoDocument("resolveRefs".into()))?;
         rt.resolve_refs(req).await?
     };
-    Ok(resolutions.into_iter().map(map_resolution).collect())
-}
-
-fn map_resolution(r: RefResolution) -> ResolveRefDto {
-    match r.outcome {
-        ResolveOutcome::AutoBind {
-            element_id,
-            score,
-            margin,
-        } => ResolveRefDto {
-            ref_id: r.ref_id,
-            outcome: "autoBind".into(),
-            element_id: Some(element_id.as_str().to_string()),
-            score: Some(score),
-            margin: Some(margin),
-        },
-        ResolveOutcome::Unchanged => ResolveRefDto {
-            ref_id: r.ref_id,
-            outcome: "unchanged".into(),
-            element_id: None,
-            score: None,
-            margin: None,
-        },
-        ResolveOutcome::NeedsRepair(_) => ResolveRefDto {
-            ref_id: r.ref_id,
-            outcome: "needsRepair".into(),
-            element_id: None,
-            score: None,
-            margin: None,
-        },
-    }
+    Ok(resolutions
+        .into_iter()
+        .map(ResolveRefDto::from_resolution)
+        .collect())
 }
 
 fn parse_sketch_id(s: &str) -> Result<SketchId, ApiError> {
@@ -563,9 +536,13 @@ async fn pick_step_save(app: AppHandle) -> Option<String> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Emits the post-regen events: `document-changed` (pull-model body refs) when a
-/// snapshot published, the refreshed `projection-updated`, and `regen-finished`
+/// snapshot published, the refreshed `projection-updated`, `regen-finished`
 /// (`{revision, outcome}`) at the end of **every** regen so the frontend
-/// correlation resolves promptly without the 8 s fallback (F-WP8 flag 3).
+/// correlation resolves promptly without the 8 s fallback (F-WP8 flag 3), and —
+/// on a **published** regen — `needs-repair` (`{revision, items}`) so the repair
+/// banner appears (items non-empty) or is dropped (items empty ⇒ repairs cleared;
+/// M4a). A superseded/failed/no-op regen leaves the live repair state unchanged, so
+/// no `needs-repair` is emitted for those.
 pub fn emit_regen_events(app: &AppHandle, report: &RegenReport, projection: &DocumentProjection) {
     if let Some(change) = report.document_change() {
         let _ = app.emit(events::DOCUMENT_CHANGED, change);
@@ -578,6 +555,15 @@ pub fn emit_regen_events(app: &AppHandle, report: &RegenReport, projection: &Doc
             outcome: report.outcome_str().to_string(),
         },
     );
+    if report.published() {
+        let _ = app.emit(
+            events::NEEDS_REPAIR,
+            crate::dto::NeedsRepairEvent {
+                revision: report.revision,
+                items: report.needs_repair.clone(),
+            },
+        );
+    }
 }
 
 fn snapshot_of(rt: &DocumentRuntime) -> DocumentSnapshotDto {

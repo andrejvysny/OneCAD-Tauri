@@ -136,6 +136,7 @@ impl GeometryEngine for FakeBackend {
                     step_index: step,
                     status: StepStatus::Ok,
                     body_ids,
+                    message: String::new(),
                 });
                 last_valid = Some(step);
             }

@@ -1300,6 +1300,45 @@ edits to version 1 rather than a version bump. They still fall under the
 [§13](#13-versioningchange-policy) change policy (fixture bump + cross-track
 sign-off) once fixtures exist.
 
+- **2026-07-19 — M4a: ResolveRefs `autoBind` returns `elementId` in its own slot;
+  `topoKey` is evidence** (code-to-spec; **orchestrator-approved 2026-07-19**).
+  [§7.5](#75-element-identity), [§9](#9-needsrepair-payload). The worker's
+  `ResolveRefs` `autoBind` resolution now carries the **Rust-minted `elementId`** in
+  the [§7.5](#75-element-identity) `elementId` slot (**empty** when the resolved
+  element is not yet in the partition — a dry run binds nothing, so Rust would mint at
+  real bind time) and the bound `topoKey` as **evidence** *alongside* it
+  ([§9](#9-needsrepair-payload): a snapshot-scoped `topoKey` is evidence never
+  identity, so it must not occupy the `elementId` slot). Previously the worker put the
+  `topoKey` in the `elementId` slot (R-WP12 flag). The Rust parser now reads the
+  `elementId` slot strictly (with a one-release tolerance: a legacy `topoKey`-only
+  `autoBind` still parses, the `topoKey` landing as evidence). *Fixture bump:*
+  `worker/tests/fixtures/resolve_refs.ndjson` `r_autobind` now asserts the `elementId`
+  slot present beside `topoKey`. No wire-shape change beyond code-to-spec (§7.5 already
+  specified `elementId`); no canonical `protocol/fixtures/` change (they carry no
+  `ResolveRefs` `autoBind` flow).
+
+- **2026-07-19 — M4a: Extrude/Revolve profile carries `params.sketchId` +
+  `params.regionId`; the worker selects the region by normative FNV id**
+  (code-to-spec; **orchestrator-approved 2026-07-19**).
+  [§7.3](#73-op-payload-schemas-vertical-slice), [§7.4](#74-sketch-solver-lane). The
+  Rust wire layer lifts the core-only `profile` (`SketchRegionRef {sketchId,
+  regionId}`) to top-level `params.sketchId` + `params.regionId` (dropping the
+  `profile` wrapper — §7.3 has no `profile`; Extrude AND Revolve), and the worker's
+  `build_profile_face` selects the closed region whose normative FNV `regionId`
+  ([§7.4](#74-sketch-solver-lane) `derive_region_id`, `r_<hash>`) matches. **Strict
+  semantics:** a **non-empty** `regionId` MUST match a detected region — **no match is
+  a deterministic `OP_FAILED`** (the `perStepResults` message names the requested id +
+  the available ids; downstream is blocked, publish ≤ m−1), **never** a silent fallback
+  to a different region (a stale id after a sketch edit must fail loudly, not extrude a
+  wrong profile — the "never a silent wrong bind" principle). An **empty/absent**
+  `regionId` keeps the V1 **first-region** fallback (single-region sketches; the
+  region-selection micro-slice does not yet author a real id everywhere). Additive:
+  `perStepResults[].message` on a failed step carries the §8 recoverable reason (a
+  failed step emits no `planStep`, so this is its only channel to Rust; readers ignore
+  unknown keys, §4). This closes the M2 `last_sketch_id` + first-region binding gap
+  (multi-region / multi-sketch). *Fixture:* `worker/tests/fixtures/executeplan_region_nomatch.ndjson`
+  (new) pins the no-match `OP_FAILED`. No canonical `protocol/fixtures/` change.
+
 - **2026-07-19 — Rust wire layer conformance fix: params body-bearing fields now
   rendered in [§2](#2-identifier--scalar-types) `body_<uuid>` wire form**
   (code-to-spec; **no schema semantic change**). [§7.3](#73-op-payload-schemas-vertical-slice).

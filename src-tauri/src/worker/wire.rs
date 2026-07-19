@@ -159,6 +159,7 @@ fn wire_op(op: &PlannedOp) -> Value {
         }
     };
     to_wire_body_form(&mut params);
+    lift_profile_to_params(&mut params);
     json!({
         "opType": op_type,
         "opId": op.record_id.to_string(),
@@ -166,6 +167,41 @@ fn wire_op(op: &PlannedOp) -> Value {
         "params": params,
         "determinism": serde_json::to_value(&op.determinism).unwrap_or(Value::Null),
     })
+}
+
+/// Lifts the Rust-core `profile` (`{sketchId, regionId}`, a `SketchRegionRef`) to
+/// **top-level** `params.sketchId` + `params.regionId` and drops the `profile`
+/// wrapper (SCHEMA §7.3 carries no `profile`).
+///
+/// The worker reads the profile source there: `ExtrudeOp`/`RevolveOp` `find_sketch`
+/// selects the sketch by `params.sketchId` (else `last_sketch_id`), and
+/// `build_profile_face` selects the region by matching `params.regionId` against each
+/// detected region's normative FNV id (SCHEMA §7.4). This is what closes the
+/// multi-region / multi-sketch profile-binding gap (M2 flag `last_sketch_id` +
+/// first-region fallback): a non-empty `regionId` now picks a specific region; an
+/// empty/absent one keeps the first-region fallback. Ops without a `profile` object
+/// are untouched.
+fn lift_profile_to_params(params: &mut Value) {
+    let Some(map) = params.as_object_mut() else {
+        return;
+    };
+    let Some(profile) = map.remove("profile") else {
+        return;
+    };
+    let Some(pobj) = profile.as_object() else {
+        return;
+    };
+    if let Some(sid) = pobj.get("sketchId") {
+        map.insert("sketchId".into(), sid.clone());
+    }
+    // Only forward a non-empty regionId — an empty one keeps the worker's
+    // first-region fallback (backward compat with placeholder/legacy region ids).
+    if let Some(rid) = pobj
+        .get("regionId")
+        .filter(|v| v.as_str().is_some_and(|s| !s.is_empty()))
+    {
+        map.insert("regionId".into(), rid.clone());
+    }
 }
 
 /// Rewrites every body-bearing field of `value` — a key exactly `"bodyId"` or ending
@@ -487,6 +523,11 @@ fn parse_per_step(v: Option<&Value>) -> Result<Vec<StepResult>, String> {
                     _ => StepStatus::Ok,
                 },
                 body_ids: body_array(r.get("bodyIds"))?,
+                message: r
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
             })
         })
         .collect()
@@ -878,9 +919,12 @@ pub fn resolve_refs_args(req: &ResolveRequest) -> Value {
     json!({ "snapshotId": req.snapshot_id.0, "refs": refs })
 }
 
-/// Parses a `ResolveRefs` result into core [`RefResolution`]s. The worker returns
-/// a `topoKey` for `autoBind` (Rust mints/binds the real id at bind time); it is
-/// carried as the ref's evidence id here (dry-run — nothing is bound). `needsRepair`
+/// Parses a `ResolveRefs` result into core [`RefResolution`]s (SCHEMA §7.5).
+///
+/// `autoBind` carries the Rust-minted `elementId` in its own slot (empty when the
+/// resolved element is unminted) plus the bound `topoKey` as evidence (SCHEMA §9 —
+/// M4a autoBind-conformance fix; the worker no longer puts the topoKey in the
+/// elementId slot). `unchanged` echoes the ref's bound `elementId`. `needsRepair`
 /// carries the full [`RepairItem`] evidence.
 #[must_use]
 pub fn parse_resolve_refs(result: &Value) -> Vec<RefResolution> {
@@ -891,24 +935,36 @@ pub fn parse_resolve_refs(result: &Value) -> Vec<RefResolution> {
         .unwrap_or_default()
 }
 
+/// Reads a non-empty string field as an [`ElementId`] (empty/absent ⇒ `None`).
+fn opt_element_id(r: &Value, key: &str) -> Option<ElementId> {
+    r.get(key)
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(ElementId::new)
+}
+
 fn parse_one_resolution(r: &Value) -> Option<RefResolution> {
     let ref_id = r.get("refId").and_then(Value::as_str)?.to_string();
     let outcome = match r.get("outcome").and_then(Value::as_str)? {
         "autoBind" => {
-            // The worker echoes `topoKey` (dry-run — Rust binds the real id later);
-            // `elementId` is used when present (an already-bound `unchanged`-like hit).
-            let id = r
-                .get("elementId")
-                .or_else(|| r.get("topoKey"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
+            // SCHEMA §7.5 strict slot: `elementId` is the bound Rust-minted id (empty
+            // ⇒ None here). The bound `topoKey` rides as EVIDENCE (SCHEMA §9). A
+            // one-release tolerance: a legacy worker that emitted only `topoKey` (no
+            // `elementId`) still parses — the topoKey lands as evidence, elementId None.
             ResolveOutcome::AutoBind {
-                element_id: ElementId::new(id),
+                element_id: opt_element_id(r, "elementId").unwrap_or_else(|| ElementId::new("")),
                 score: r.get("score").and_then(Value::as_f64).unwrap_or(0.0),
                 margin: r.get("margin").and_then(Value::as_f64).unwrap_or(0.0),
+                topo_key: r
+                    .get("topoKey")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(TopoKey::new),
             }
         }
-        "unchanged" => ResolveOutcome::Unchanged,
+        "unchanged" => ResolveOutcome::Unchanged {
+            element_id: opt_element_id(r, "elementId"),
+        },
         "needsRepair" => {
             let mut obj = r.get("needsRepair").cloned().unwrap_or_else(|| json!({}));
             if let Some(map) = obj.as_object_mut() {
@@ -1508,18 +1564,50 @@ mod solver_wire_tests {
     #[test]
     fn resolve_refs_parses_all_three_outcomes() {
         let result = json!({ "resolutions": [
-            { "refId": "op_5.input0", "outcome": "autoBind", "topoKey": "f:1", "score": 0.94, "margin": 0.31 },
+            // M4a shape: `elementId` in its own slot (Rust-minted), `topoKey` = evidence.
+            { "refId": "op_5.input0", "outcome": "autoBind", "elementId": "el_top", "topoKey": "f:1", "score": 0.94, "margin": 0.31 },
             { "refId": "op_5.input1", "outcome": "unchanged", "elementId": "el_9", "topoKey": "f:2" },
             { "refId": "op_5.input2", "outcome": "needsRepair",
-              "needsRepair": { "refId": "op_5.input2", "ladderFailed": "descriptor", "reason": "ambiguous", "candidates": [] } }
+              "needsRepair": { "refId": "op_5.input2", "ladderFailed": "descriptor", "reason": "ambiguous", "candidates": [] } },
+            // Unminted dry-run autoBind: empty elementId, topoKey still rides as evidence.
+            { "refId": "op_5.input3", "outcome": "autoBind", "elementId": "", "topoKey": "f:3", "score": 0.9, "margin": 0.2 }
         ]});
         let res = parse_resolve_refs(&result);
-        assert_eq!(res.len(), 3);
-        assert!(
-            matches!(res[0].outcome, ResolveOutcome::AutoBind { score, .. } if (score - 0.94).abs() < 1e-9)
-        );
-        assert!(matches!(res[1].outcome, ResolveOutcome::Unchanged));
+        assert_eq!(res.len(), 4);
+        match &res[0].outcome {
+            ResolveOutcome::AutoBind {
+                element_id,
+                score,
+                topo_key,
+                ..
+            } => {
+                assert_eq!(element_id.as_str(), "el_top", "elementId in its own slot");
+                assert!((score - 0.94).abs() < 1e-9);
+                assert_eq!(
+                    topo_key.as_ref().map(TopoKey::as_str),
+                    Some("f:1"),
+                    "topoKey rides as evidence"
+                );
+            }
+            other => panic!("expected AutoBind, got {other:?}"),
+        }
+        assert!(matches!(
+            &res[1].outcome,
+            ResolveOutcome::Unchanged { element_id } if element_id.as_ref().map(ElementId::as_str) == Some("el_9")
+        ));
         assert!(matches!(res[2].outcome, ResolveOutcome::NeedsRepair(_)));
+        // Unminted autoBind: empty elementId, topoKey preserved as evidence.
+        match &res[3].outcome {
+            ResolveOutcome::AutoBind {
+                element_id,
+                topo_key,
+                ..
+            } => {
+                assert!(element_id.as_str().is_empty(), "unminted ⇒ empty elementId");
+                assert_eq!(topo_key.as_ref().map(TopoKey::as_str), Some("f:3"));
+            }
+            other => panic!("expected AutoBind, got {other:?}"),
+        }
     }
 }
 
@@ -1714,6 +1802,86 @@ mod body_wire_tests {
             json!(body_id_wire(body))
         );
         assert_eq!(w["inputs"][0]["primary"]["kind"], json!("edge"));
+    }
+
+    #[test]
+    fn wire_op_lifts_profile_to_sketch_and_region_for_extrude_and_revolve() {
+        use onecad_core::document::refs::SketchRegionRef;
+        use onecad_core::ids::{RegionId, SketchId};
+
+        let sid = SketchId(Uuid::from_u128(0x5c));
+        let region = "r_0123456789abcdef";
+        let profile = SketchRegionRef {
+            sketch: sid,
+            region: RegionId::new(region),
+            extra: Default::default(),
+        };
+
+        // Extrude: profile {sketchId, regionId} is lifted to top-level params; the
+        // core-only `profile` wrapper (SCHEMA §7.3 has none) is dropped.
+        let ex = Operation::Known(KnownOperation::Extrude(ExtrudeParams {
+            profile: Some(profile.clone()),
+            distance: Scalar::new(5.0),
+            draft_angle_deg: Scalar::new(0.0),
+            mode: ExtrudeMode::Blind,
+            boolean_mode: BooleanMode::NewBody,
+            target_body: None,
+            target_face: None,
+            two_directions: false,
+            mode2: ExtrudeMode::Blind,
+            distance2: Scalar::new(0.0),
+            target_face2: None,
+            extra: Default::default(),
+        }));
+        let w = wire_op(&planned(ex.clone(), ex.derive_inputs()));
+        assert_eq!(w["params"]["sketchId"], json!(sid.to_string()));
+        assert_eq!(w["params"]["regionId"], json!(region));
+        assert!(
+            w["params"].get("profile").is_none(),
+            "the core-only `profile` wrapper is dropped from the wire"
+        );
+
+        // Revolve: same lift (the frontend Revolve WP now sends a profile too; the
+        // worker's RevolveOp reads params.sketchId/regionId via the SAME find_sketch +
+        // build_profile_face path as Extrude).
+        let rev = Operation::Known(KnownOperation::Revolve(RevolveParams {
+            profile: Some(profile),
+            angle_deg: Scalar::new(360.0),
+            axis: None,
+            boolean_mode: BooleanMode::NewBody,
+            target_body: None,
+            extra: Default::default(),
+        }));
+        let w = wire_op(&planned(rev.clone(), rev.derive_inputs()));
+        assert_eq!(w["params"]["sketchId"], json!(sid.to_string()));
+        assert_eq!(w["params"]["regionId"], json!(region));
+        assert!(w["params"].get("profile").is_none());
+
+        // An EMPTY regionId is NOT forwarded (keeps the worker's first-region fallback).
+        let ex_empty = Operation::Known(KnownOperation::Extrude(ExtrudeParams {
+            profile: Some(SketchRegionRef {
+                sketch: sid,
+                region: RegionId::new(""),
+                extra: Default::default(),
+            }),
+            distance: Scalar::new(5.0),
+            draft_angle_deg: Scalar::new(0.0),
+            mode: ExtrudeMode::Blind,
+            boolean_mode: BooleanMode::NewBody,
+            target_body: None,
+            target_face: None,
+            two_directions: false,
+            mode2: ExtrudeMode::Blind,
+            distance2: Scalar::new(0.0),
+            target_face2: None,
+            extra: Default::default(),
+        }));
+        let w = wire_op(&planned(ex_empty.clone(), ex_empty.derive_inputs()));
+        assert_eq!(w["params"]["sketchId"], json!(sid.to_string()));
+        assert!(
+            w["params"].get("regionId").is_none(),
+            "empty regionId is not forwarded (first-region fallback)"
+        );
     }
 
     #[test]

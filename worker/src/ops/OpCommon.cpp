@@ -18,6 +18,7 @@
 #include "loop/LoopDetector.h"
 #include "loop/RegionUtils.h"
 #include "ops/CancelProgress.h"
+#include "sketch/RegionId.h"
 #include "sketch/WireSketch.h"
 
 namespace onecad::ops {
@@ -25,6 +26,33 @@ namespace onecad::ops {
 namespace sk = onecad::core::sketch;
 namespace loop = onecad::core::loop;
 using nlohmann::json;
+
+namespace {
+
+// Mirror of SolverLane.cpp's loop→wire-edge mapping (`strip_seg` + `loop_wire_edges`)
+// so `build_profile_face` computes the SAME normative region ids the `SketchRegions`
+// verb publishes (SCHEMA §7.4). Kept in lockstep by the multi-region integration
+// test (src-tauri/tests/topology_rebind.rs): if this diverges from SolverLane, an
+// extrude-by-`regionId` no longer matches the id `SketchRegions` returned and the
+// test fails. (Small, deliberate duplication — the alternative couples the loop
+// layer to the wire layer for two trivial functions.)
+std::string strip_seg(const std::string& id) {
+    const std::size_t at = id.find("#seg");
+    return at == std::string::npos ? id : id.substr(0, at);
+}
+
+std::vector<std::string> loop_wire_edges(const loop::Loop& lp, const wire::WireIndex& index) {
+    std::vector<std::string> out;
+    for (const auto& e : lp.wire.edges) {
+        const std::string base = strip_seg(e);
+        auto it = index.internal_edge_to_wire.find(base);
+        const std::string wid = it != index.internal_edge_to_wire.end() ? it->second : base;
+        if (out.empty() || out.back() != wid) out.push_back(wid);
+    }
+    return out;
+}
+
+}  // namespace
 
 double read_scalar(const json& params, const char* key, double dflt) {
     if (!params.is_object() || !params.contains(key)) return dflt;
@@ -62,13 +90,41 @@ std::optional<TopoDS_Face> build_profile_face(const json& sketch_params,
         return std::nullopt;
     }
 
-    // Region selection (V1): the FIRST detected closed region. The corpus extrude
-    // inputs reference "sk.region.r0" placeholders (the sketch's first region — see
-    // corpus a/b/c notes); the normative FNV region id is not carried on the extrude
-    // ref, so a by-id match is not attempted here. Multi-region selection lands with
-    // full ref resolution (W-WP6). `region_id` is accepted for forward-compat.
-    (void)region_id;
-    const loop::Face& face = det.faces.front();
+    // Region selection (M4 multi-region): honor an explicit `region_id` (SCHEMA §7.4
+    // normative FNV-1a-64 `r_<hash>`) by matching it against each detected region's
+    // id — the SAME id `SketchRegions` publishes (`derive_region_id` over the outer
+    // loop's wire edges, Ccw). A non-empty `region_id` that matches NO detected region
+    // is a HARD FAILURE (never a silent fallback to a different region — a stale id
+    // after a sketch edit must block downstream, not extrude a wrong profile). An
+    // empty/absent `region_id` keeps the V1 first-region fallback (backward compat).
+    const loop::Face* selected = &det.faces.front();
+    if (!region_id.empty()) {
+        std::vector<std::string> available;
+        available.reserve(det.faces.size());
+        const loop::Face* matched = nullptr;
+        for (const loop::Face& f : det.faces) {
+            const std::vector<std::string> outer = loop_wire_edges(f.outerLoop, tr.index);
+            const std::string id =
+                onecad::region::derive_region_id(outer, onecad::region::Winding::Ccw);
+            available.push_back(id);
+            if (id == region_id) {
+                matched = &f;
+                break;
+            }
+        }
+        if (!matched) {
+            std::string avail;
+            for (std::size_t i = 0; i < available.size(); ++i) {
+                if (i) avail += ", ";
+                avail += available[i];
+            }
+            err = "profile: regionId '" + region_id +
+                  "' matched no detected region (available: [" + avail + "])";
+            return std::nullopt;
+        }
+        selected = matched;
+    }
+    const loop::Face& face = *selected;
 
     loop::FaceBuilder builder;
     const loop::FaceBuildResult fr = builder.buildFace(face, *tr.sketch);

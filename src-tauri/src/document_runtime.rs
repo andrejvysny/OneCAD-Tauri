@@ -47,6 +47,7 @@ use uuid::Uuid;
 use onecad_core::document::element_index::ElementEntry;
 use onecad_core::document::record::OperationRecord;
 use onecad_core::document::refs::AnchorIntent;
+use onecad_core::document::repair::RepairItem;
 use onecad_core::document::Document;
 use onecad_core::edit::{CommandOutcome, DocumentSession, EditCommand, SketchEditOp};
 use onecad_core::error::DomainError;
@@ -67,9 +68,10 @@ use onecad_core::regen::{
 use onecad_core::sketch::Sketch;
 
 use crate::dto::{
-    default_label, feature_kind, feature_status, feature_value_text, BodyDto, BodyMeshRef,
-    DocStatus, DocumentChange, DocumentProjection, FeatureDto, FinishSketchDto, PromotedElementDto,
-    SketchDto, SketchSessionDto, SketchSolveStatus, SketchStatus, SketchUpsertDto,
+    default_label, feature_kind, feature_status, feature_value_text, needs_repair_item_dto,
+    BodyDto, BodyMeshRef, DocStatus, DocumentChange, DocumentProjection, FeatureDto,
+    FinishSketchDto, NeedsRepairItemDto, PromotedElementDto, SketchDto, SketchSessionDto,
+    SketchSolveStatus, SketchStatus, SketchUpsertDto,
 };
 use crate::mesh_cache::MeshCache;
 use crate::worker::{lod_str, AdoptingEngine, MeshProvider, SolverEngine};
@@ -137,9 +139,21 @@ pub struct RegenReport {
     pub changed: Vec<(BodyId, MeshKey)>,
     /// Bodies that were present before but are gone now.
     pub removed: Vec<BodyId>,
+    /// The post-regen NeedsRepair set (empty ⇒ no repairs / repairs cleared). Lean
+    /// per-item summaries for the `needs-repair` event; the panel fetches the full
+    /// candidate evidence via `resolveRefs`. Populated only for a **published** regen
+    /// (a superseded/failed/no-op regen leaves the live repair state unchanged).
+    pub needs_repair: Vec<NeedsRepairItemDto>,
 }
 
 impl RegenReport {
+    /// Whether this regen published a new snapshot (drives the `document-changed` +
+    /// `needs-repair` emission gate).
+    #[must_use]
+    pub fn published(&self) -> bool {
+        matches!(self.outcome, Outcome::Published(_))
+    }
+
     /// The regen terminal as the `regen-finished` `outcome` token (`published` |
     /// `superseded` | `failed` | `cancelled` | `noop`).
     #[must_use]
@@ -460,6 +474,7 @@ impl DocumentRuntime {
                 snapshot_id: 0,
                 changed: Vec::new(),
                 removed: Vec::new(),
+                needs_repair: Vec::new(),
             };
         };
         let driven = prepared.drive(cancel).await;
@@ -530,12 +545,17 @@ impl DocumentRuntime {
             if self.fencing.get() == expected {
                 let snapshot_id = snap.id.0;
                 let (changed, removed) = self.commit_snapshot(scratch, snap, lod, &prior);
+                // Post-commit: the live repair state now reflects this regen. A lean
+                // per-item set drives the `needs-repair` event (empty ⇒ repairs
+                // cleared → banner drop).
+                let needs_repair = self.needs_repair_items();
                 return RegenReport {
                     outcome,
                     revision: self.fencing.revision().0,
                     snapshot_id,
                     changed,
                     removed,
+                    needs_repair,
                 };
             }
             // Window race: worker accepted lock-free but the document advanced.
@@ -545,6 +565,7 @@ impl DocumentRuntime {
                 snapshot_id: 0,
                 changed: Vec::new(),
                 removed: Vec::new(),
+                needs_repair: Vec::new(),
             };
         }
         RegenReport {
@@ -553,7 +574,43 @@ impl DocumentRuntime {
             snapshot_id: 0,
             changed: Vec::new(),
             removed: Vec::new(),
+            needs_repair: Vec::new(),
         }
+    }
+
+    /// The current document repair items (SCHEMA §9 state), for a test/repair-panel
+    /// projection. Order-stable (sorted by `(step, refId)` in [`RepairState`]).
+    ///
+    /// [`RepairState`]: onecad_core::document::repair::RepairState
+    #[must_use]
+    pub fn repair_items(&self) -> &[RepairItem] {
+        self.regen.repair.items()
+    }
+
+    /// The authoritative timeline records (for tests/inspection). A record's stored
+    /// input refs (e.g. a fillet's `ElementId`s) are Rust-owned and persist across a
+    /// rebind — they never change because geometry changed (Invariant 1).
+    #[must_use]
+    pub fn timeline_records(&self) -> &[OperationRecord] {
+        self.session.document().timeline.records()
+    }
+
+    /// Lean per-item NeedsRepair summaries for the `needs-repair` event, resolving
+    /// each item's timeline step to its op record id (`opId`).
+    fn needs_repair_items(&self) -> Vec<NeedsRepairItemDto> {
+        let records = self.regen.timeline.records();
+        self.regen
+            .repair
+            .items()
+            .iter()
+            .map(|item| {
+                let op_id = records
+                    .get(item.step_index)
+                    .map(|r| r.record_id.to_string())
+                    .unwrap_or_default();
+                needs_repair_item_dto(op_id, item)
+            })
+            .collect()
     }
 
     /// Moves the driven scratch state into the live session and records the

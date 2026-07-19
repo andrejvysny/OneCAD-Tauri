@@ -936,7 +936,9 @@ fn handle_resolve_refs<W: Write>(
                 .filter(|s| !s.is_empty());
             resolutions.push(match existing {
                 Some(eid) => json!({ "refId": ref_id, "outcome": "unchanged", "elementId": eid, "topoKey": "f:0" }),
-                None => json!({ "refId": ref_id, "outcome": "autoBind", "topoKey": "f:0", "score": 0.95, "margin": 0.5 }),
+                // SCHEMA §7.5: `elementId` slot (empty — the stub holds no partition,
+                // so an autoBind resolves an unminted element); `topoKey` = evidence.
+                None => json!({ "refId": ref_id, "outcome": "autoBind", "elementId": "", "topoKey": "f:0", "score": 0.95, "margin": 0.5 }),
             });
         }
     }

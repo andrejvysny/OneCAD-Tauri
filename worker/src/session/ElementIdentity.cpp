@@ -204,8 +204,17 @@ Envelope handle_resolve_refs(Session& session, const Envelope& req) {
             const std::vector<em::LadderResolution> res =
                 em::resolve_descriptor_stage(rec->geom, body_id, refs);
             if (!res.empty() && res[0].outcome == em::LadderOutcome::AutoBind) {
+                // SCHEMA §7.5 conformance: the `elementId` slot carries the
+                // Rust-minted persistent id (empty when the resolved element is not
+                // yet in the live partition — a dry run binds nothing, so Rust mints
+                // at real bind time). The bound `topoKey` rides as EVIDENCE (SCHEMA
+                // §9: a topoKey is snapshot-scoped evidence, never identity — it must
+                // not occupy the elementId slot).
+                const em::PartitionEntry* held =
+                    entry_by_topokey(part, body_id, res[0].bound_topo_key);
                 resolutions.push_back(json{{"refId", ref_id},
                                            {"outcome", "autoBind"},
+                                           {"elementId", held ? held->element_id : ""},
                                            {"topoKey", res[0].bound_topo_key},
                                            {"score", res[0].score},
                                            {"margin", res[0].margin}});

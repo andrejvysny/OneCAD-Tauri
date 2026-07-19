@@ -332,6 +332,10 @@ pub struct StepResult {
     pub status: StepStatus,
     /// The bodies present/produced at this step.
     pub body_ids: Vec<BodyId>,
+    /// For an `OpFailed` step: the worker's §8 recoverable message (why it failed).
+    /// Empty otherwise. A failed step emits no `planStep` event, so this is the only
+    /// channel carrying the failure reason to the snapshot's `StepState::Error`.
+    pub message: String,
 }
 
 /// The terminal `PlanPrepared` (SCHEMA §7.2). The prepared snapshot is held in
@@ -649,15 +653,23 @@ pub struct ResolveRequest {
 pub enum ResolveOutcome {
     /// A confident unique match (SCHEMA §10 auto-bind policy).
     AutoBind {
+        /// The bound persistent id — the Rust-minted `ElementId` the worker holds
+        /// for the resolved element, or **empty** when the element is not yet in the
+        /// partition (a dry run binds nothing, so Rust would mint at real bind time).
         element_id: ElementId,
         score: f64,
         margin: f64,
+        /// The resolved element's snapshot-scoped `TopoKey` — **evidence** (SCHEMA §9,
+        /// never identity), carried so a repair UI can highlight/mint even when
+        /// `element_id` is empty. `None` when the worker echoed no topoKey.
+        topo_key: Option<TopoKey>,
     },
     /// Ambiguous / low-confidence — surfaces the full NeedsRepair evidence
     /// (STATE — SCHEMA §9), never a guess.
     NeedsRepair(RepairItem),
-    /// The ref already resolves to its stored binding; nothing to do.
-    Unchanged,
+    /// The ref already resolves to its stored binding; nothing to do. Carries that
+    /// bound `ElementId` (SCHEMA §7.5 `unchanged` echoes the ref's own id).
+    Unchanged { element_id: Option<ElementId> },
 }
 
 /// One dry-run resolution (SCHEMA §7.5 `resolutions[]`).

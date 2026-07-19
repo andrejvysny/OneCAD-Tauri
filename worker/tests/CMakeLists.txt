@@ -52,7 +52,8 @@ endforeach()
 # Harness-driven ExecutePlan / session fixtures (NDJSON send/expect flows).
 foreach(_fx executeplan_happy executeplan_fail_step executeplan_needsrepair
             executeplan_fencing executeplan_discard double_executeplan session_reset
-            executeplan_deltas tessellate_acquire resolve_refs)
+            executeplan_deltas tessellate_acquire resolve_refs
+            executeplan_region_nomatch)
     add_test(
         NAME harness_${_fx}
         COMMAND worker_harness

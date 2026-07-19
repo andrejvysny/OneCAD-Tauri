@@ -242,7 +242,10 @@ fn extrude_record(
     let params = ExtrudeParams {
         profile: Some(SketchRegionRef {
             sketch,
-            region: RegionId::new("r0"), // worker uses the first detected region
+            // Empty ⇒ the worker's V1 first-region fallback (a NON-EMPTY id that
+            // matched no region is now a hard OP_FAILED — M4a strict rule; these
+            // single-region fixtures assert the fallback, so they carry no id).
+            region: RegionId::new(""),
             extra: Default::default(),
         }),
         distance: Scalar::new(dist),
@@ -270,7 +273,7 @@ fn extrude_to_face_record(rec: u128, sketch: SketchId, face: ElementRef) -> Oper
     let params = ExtrudeParams {
         profile: Some(SketchRegionRef {
             sketch,
-            region: RegionId::new("r0"),
+            region: RegionId::new(""), // empty ⇒ V1 first-region fallback (M4a strict rule)
             extra: Default::default(),
         }),
         distance: Scalar::new(1.0),
