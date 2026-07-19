@@ -18,12 +18,15 @@ use onecad_core::document::refs::{AnchorIntent, ElementRef};
 use onecad_core::edit::{EditCommand, SketchEditOp};
 use onecad_core::ids::{BodyId, EntityId, SketchId, SnapshotId, TopoKey};
 use onecad_core::io::container::SaveMeta;
+use onecad_core::io::recovery::{scan_stale_markers, RecoveryOffer};
 use onecad_core::regen::{RegenRequest, ResolveRef, ResolveRequest};
 
+use crate::autosave;
 use crate::document_runtime::{DocumentRuntime, RegenReport};
 use crate::dto::{
     BeginGestureDto, DocumentProjection, DocumentSnapshotDto, DragSolveDto, FinishSketchDto,
-    PromotedElementDto, RecentProjectDto, ResolveRefDto, SketchSessionDto, SketchUpsertDto,
+    PromotedElementDto, RecentProjectDto, RecoveryInfoDto, ResolveRefDto, SketchSessionDto,
+    SketchUpsertDto,
 };
 use crate::error::ApiError;
 use crate::events;
@@ -53,6 +56,14 @@ pub async fn new_document(
 }
 
 /// Opens an existing `.onecad` project (`CadClient.openDocument`).
+///
+/// **Recovery seam (V1 scope).** Crash recovery is startup-only: a crashed session
+/// is surfaced by [`check_recovery`] before any document is opened. The
+/// "open a path that has a *newer* autosave than the file on disk" case is **not**
+/// handled here yet — the autosave layout is keyed by `documentId`, not by the
+/// on-disk path, so matching a just-opened file to a stale autosave needs a
+/// path→documentId index. Deferred to a later WP; the startup scan covers the
+/// crash-then-relaunch flow that matters most.
 #[tauri::command]
 pub async fn open_document(
     state: State<'_, AppState>,
@@ -97,7 +108,7 @@ pub async fn save_document(
     app: AppHandle,
     path: Option<String>,
 ) -> Result<(), ApiError> {
-    let target: PathBuf = {
+    let (target, document_id): (PathBuf, onecad_core::ids::DocumentId) = {
         let mut guard = state.runtime.lock().await;
         let rt = guard
             .as_mut()
@@ -113,8 +124,12 @@ pub async fn save_document(
         // current head before persisting, so a reopen/edit can regen incrementally.
         rt.take_checkpoint_at_head().await;
         rt.save(&target, save_meta())?;
-        target
+        (target, rt.document_uuid())
     };
+    // A clean save supersedes any crash-recovery state for this document.
+    if let Some(root) = autosave::autosave_root(&app) {
+        autosave::clear_recovery_state(&root, document_id);
+    }
     recents::record(&app, &target);
     Ok(())
 }
@@ -207,12 +222,120 @@ async fn head_bodies(state: &State<'_, AppState>) -> Result<Vec<BodyId>, ApiErro
     Ok(rt.head_body_ids())
 }
 
-/// Closes the open document, dropping its runtime + caches.
+/// Closes the open document, dropping its runtime + caches. Clears the document's
+/// crash-recovery state first (a clean close is not a crash).
 #[tauri::command]
 pub async fn close_document(state: State<'_, AppState>, app: AppHandle) -> Result<(), ApiError> {
-    *state.runtime.lock().await = None;
+    let closed = {
+        let mut guard = state.runtime.lock().await;
+        let id = guard.as_ref().map(DocumentRuntime::document_uuid);
+        *guard = None;
+        id
+    };
+    if let (Some(id), Some(root)) = (closed, autosave::autosave_root(&app)) {
+        autosave::clear_recovery_state(&root, id);
+    }
     let _ = app.emit(events::PROJECTION_UPDATED, &DocumentProjection::empty());
     Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Crash recovery (autosave; `io::recovery`)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Scans for a crash-recovery offer at startup (`CadClient.checkRecovery`): a stale
+/// session marker (its owning process is gone, per [`autosave::pid_alive`]) whose
+/// autosave container survives. Stashes the offer for a later
+/// [`recover_document`] decision and returns its display info; `None` when there is
+/// nothing to recover.
+#[tauri::command]
+pub async fn check_recovery(
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<Option<RecoveryInfoDto>, ApiError> {
+    let Some(root) = autosave::autosave_root(&app) else {
+        return Ok(None);
+    };
+    let offers =
+        scan_stale_markers(&root, autosave::pid_alive).map_err(|e| ApiError::Io(e.to_string()))?;
+    let Some(offer) = offers.into_iter().next() else {
+        *state.pending_recovery.lock().unwrap() = None;
+        return Ok(None);
+    };
+    let dto = recovery_info_dto(&offer);
+    *state.pending_recovery.lock().unwrap() = Some(offer);
+    Ok(Some(dto))
+}
+
+/// Acts on the pending crash-recovery offer (`CadClient.recoverDocument`).
+///
+/// `accept == true`: opens the autosave as the current document, re-targets its
+/// **real** save path (so a later Save writes the original file, not the autosave),
+/// marks it dirty (unsaved recovered work), clears the stale marker, and returns the
+/// snapshot. `accept == false`: discards the autosave + marker. Either way the
+/// pending offer is consumed; `None` when nothing was pending.
+#[tauri::command]
+pub async fn recover_document(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    accept: bool,
+) -> Result<Option<DocumentSnapshotDto>, ApiError> {
+    let offer = state.pending_recovery.lock().unwrap().take();
+    let Some(offer) = offer else {
+        return Ok(None);
+    };
+    let root = autosave::autosave_root(&app);
+    if !accept {
+        if let Some(root) = &root {
+            autosave::clear_recovery_state(root, offer.document_id);
+        }
+        return Ok(None);
+    }
+    // Restore: open the autosave container as the live document.
+    let (engine, meshes, solver) = state.make_backend();
+    let mut rt = DocumentRuntime::open(&offer.autosave_path, engine, meshes, solver)?;
+    rt.mark_recovered(offer.marker.opened_path.clone());
+    let (snapshot, projection) = {
+        let mut guard = state.runtime.lock().await;
+        *guard = Some(rt);
+        let rt = guard.as_ref().unwrap();
+        (snapshot_of(rt), rt.projection())
+    };
+    // Consume the marker (the autosave is superseded on the next save/close). The
+    // autosave file itself is kept so a re-crash before the next tick still recovers.
+    if let Some(root) = &root {
+        let _ = onecad_core::io::recovery::remove_marker(root, offer.document_id);
+    }
+    let _ = app.emit(events::PROJECTION_UPDATED, &projection);
+    // Rebuild geometry from the recovered (all-Dirty) timeline.
+    if let Some(sched) = state.scheduler.get() {
+        sched.request(RegenRequest::ToEnd { from: 0 });
+    }
+    Ok(Some(snapshot))
+}
+
+/// Maps a [`RecoveryOffer`] to the start-screen DTO (`modifiedMs` from the autosave
+/// file's mtime).
+fn recovery_info_dto(offer: &RecoveryOffer) -> RecoveryInfoDto {
+    RecoveryInfoDto {
+        original_path: offer
+            .marker
+            .opened_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned()),
+        autosave_path: offer.autosave_path.to_string_lossy().into_owned(),
+        modified_ms: file_mtime_ms(&offer.autosave_path),
+    }
+}
+
+/// A file's last-modified time in Unix-epoch milliseconds (`0` if unavailable).
+fn file_mtime_ms(p: &Path) -> u64 {
+    std::fs::metadata(p)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -240,6 +363,7 @@ pub async fn apply_edit_command(
     if let Some(sched) = state.scheduler.get() {
         sched.handle(&outcome);
     }
+    state.note_mutation();
     Ok(projection)
 }
 
@@ -261,6 +385,7 @@ pub async fn undo(
         if let Some(sched) = state.scheduler.get() {
             sched.request(RegenRequest::ToEnd { from: 0 });
         }
+        state.note_mutation();
     }
     Ok(projection)
 }
@@ -283,6 +408,7 @@ pub async fn redo(
         if let Some(sched) = state.scheduler.get() {
             sched.request(RegenRequest::ToEnd { from: 0 });
         }
+        state.note_mutation();
     }
     Ok(projection)
 }
@@ -365,6 +491,7 @@ pub async fn sketch_upsert(
     };
     let _ = app.emit(events::SKETCH_SOLVED, &result);
     let _ = app.emit(events::PROJECTION_UPDATED, &projection);
+    state.note_mutation();
     Ok(result)
 }
 
@@ -415,6 +542,7 @@ pub async fn end_gesture(
     };
     let _ = app.emit(events::SKETCH_SOLVED, &result);
     let _ = app.emit(events::PROJECTION_UPDATED, &projection);
+    state.note_mutation();
     Ok(result)
 }
 

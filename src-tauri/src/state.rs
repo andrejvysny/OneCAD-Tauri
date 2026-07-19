@@ -17,11 +17,12 @@
 //! `export_step_file` drives, and spawns a **worker-status forwarder** that relays
 //! [`WorkerLifecycle`] transitions to the webview as `worker-status` events.
 
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock, RwLock};
 
 use tauri::{AppHandle, Emitter};
-use tokio::sync::Mutex;
+use tokio::sync::{watch, Mutex};
 
+use onecad_core::io::recovery::RecoveryOffer;
 use onecad_core::regen::{GeometryEngine, RegenRequest, SchedulerHandle};
 
 use crate::document_runtime::DocumentRuntime;
@@ -72,6 +73,15 @@ pub struct AppState {
     /// The app handle, set once in `crate::run`'s setup (the worker-status
     /// forwarder + any late event emitter read it).
     pub app: SharedAppHandle,
+    /// A monotonic "document mutated" tick the autosave driver debounces on. Every
+    /// document-mutating command bumps it via [`note_mutation`](Self::note_mutation);
+    /// the driver subscribes in `crate::run`'s setup (the autosave signal seam).
+    pub autosave_tick: Arc<watch::Sender<u64>>,
+    /// The crash-recovery offer surfaced at startup by
+    /// [`check_recovery`](crate::api::check_recovery), consumed by
+    /// [`recover_document`](crate::api::recover_document). `None` until scanned / after
+    /// a decision (V1 single-document ⇒ at most one offer).
+    pub pending_recovery: StdMutex<Option<RecoveryOffer>>,
     /// The current document's STEP exporter (the same `WorkerManager` Arc the
     /// backend uses, or [`PendingBackend`] when no worker). Swapped by
     /// [`make_backend`](AppState::make_backend) on every new/open.
@@ -88,9 +98,17 @@ impl AppState {
             runtime: Arc::new(Mutex::new(None)),
             scheduler: Arc::new(OnceLock::new()),
             app: Arc::new(OnceLock::new()),
+            autosave_tick: Arc::new(watch::channel(0u64).0),
+            pending_recovery: StdMutex::new(None),
             exporter: RwLock::new(Arc::new(PendingBackend)),
             backend_factory,
         }
+    }
+
+    /// Signals the autosave driver that the open document changed (every
+    /// document-mutating command calls this — the autosave debounce seam).
+    pub fn note_mutation(&self) {
+        self.autosave_tick.send_modify(|v| *v = v.wrapping_add(1));
     }
 
     /// A fresh backend pair for a new/open document. Also swaps in the matching
@@ -122,6 +140,8 @@ impl Default for AppState {
             runtime,
             scheduler,
             app,
+            autosave_tick: Arc::new(watch::channel(0u64).0),
+            pending_recovery: StdMutex::new(None),
             exporter: RwLock::new(Arc::new(PendingBackend)),
             backend_factory,
         }

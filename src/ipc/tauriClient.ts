@@ -54,6 +54,7 @@ import type {
   PromotedElement,
   PromotePick,
   RecentProject,
+  RecoveryInfo,
   RegenFinished,
   ResolveRefRequest,
   ResolveRefResult,
@@ -87,6 +88,8 @@ const CMD = {
   newDocument: "new_document",
   openDocument: "open_document",
   importStep: "import_step",
+  checkRecovery: "check_recovery",
+  recoverDocument: "recover_document",
   saveDocument: "save_document",
   exportStepFile: "export_step_file",
   exportStlFile: "export_stl_file",
@@ -135,6 +138,12 @@ export function __setRegenTimeoutForTests(ms: number): void {
 interface DocumentSnapshotDto {
   documentId: string;
   title: string;
+}
+/** `RecoveryInfoDto` is field-identical to the frontend `RecoveryInfo`. */
+interface RecoveryInfoDto {
+  originalPath?: string;
+  autosavePath: string;
+  modifiedMs: number;
 }
 interface DocumentProjectionDto extends DocumentProjectionWire {
   /** `FeatureDto` is field-identical to the frontend `FeatureRecord`. */
@@ -550,6 +559,12 @@ export function createTauriClient(): CadClient {
     },
     async importStep(path: string): Promise<DocumentSnapshot> {
       return call<DocumentSnapshotDto>(CMD.importStep, { path });
+    },
+    async checkRecovery(): Promise<RecoveryInfo | null> {
+      return call<RecoveryInfoDto | null>(CMD.checkRecovery);
+    },
+    async recoverDocument(accept: boolean): Promise<DocumentSnapshot | null> {
+      return call<DocumentSnapshotDto | null>(CMD.recoverDocument, { accept });
     },
     async openFileDialog(): Promise<string | null> {
       return call<string | null>(CMD.openFileDialog);

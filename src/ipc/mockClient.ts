@@ -24,6 +24,7 @@ import type {
   PromotedElement,
   PromotePick,
   RecentProject,
+  RecoveryInfo,
   ResolveCandidate,
   ResolveRefRequest,
   ResolveRefResult,
@@ -104,6 +105,18 @@ const RECENTS: RecentProject[] = [
     modifiedAt: "2026-06-02T13:00:00Z",
   },
 ];
+
+// ── Crash recovery (start screen) — test-seeded seam ────────────────────────
+//
+// DEFAULT NONE so the start screen shows no recovery banner unless a test opts in
+// (existing StartScreen/App tests stay green). `setMockRecovery` seeds/clears it;
+// `checkRecovery` reports it; `recoverDocument` accepts (restore) or discards it.
+let mockRecovery: RecoveryInfo | null = null;
+
+/** Test seam: seed (or clear) the crash-recovery offer the start screen checks. */
+export function setMockRecovery(r: RecoveryInfo | null): void {
+  mockRecovery = r ? { ...r } : null;
+}
 
 // ── Mesh + document-changed emitter (mock backend surface) ──────────────────
 
@@ -419,6 +432,7 @@ export function resetMockDocument(): void {
   nextFeatureSeq = 100;
   undoStack.length = 0;
   redoStack.length = 0;
+  mockRecovery = null;
 }
 
 export const mockClient: CadClient = {
@@ -438,6 +452,20 @@ export const mockClient: CadClient = {
   async importStep(path) {
     await wait();
     return snapshot(basename(path));
+  },
+  async checkRecovery() {
+    await wait();
+    return mockRecovery ? { ...mockRecovery } : null;
+  },
+  async recoverDocument(accept: boolean) {
+    await wait();
+    if (!accept) {
+      mockRecovery = null;
+      return null;
+    }
+    const snap = snapshot(mockRecovery?.originalPath ? basename(mockRecovery.originalPath) : "Recovered");
+    mockRecovery = null;
+    return snap;
   },
   async openFileDialog() {
     await wait(40);

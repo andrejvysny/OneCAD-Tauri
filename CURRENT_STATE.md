@@ -15,7 +15,7 @@ stays untouched.
 | M3 packaging gate | Linux portion DONE (externalBin deb-verified, path chain, bundle-dylibs.sh, PACKAGING.md); **Mac-side verification DEFERRED** (checklist §5) |
 | FX file/app UX | DONE — save/open/recents/STEP-export UI, worker-status, live constraints |
 | **M4 topology slice (backend + repair UI)** | **DONE, review-closed** (H5-B proven vs real worker) |
-| M5 lifecycle (checkpoints, crash drills, regen CLI, autosave, STL/OBJ) | Revolve tool DONE; rest NEXT |
+| **M5 lifecycle** (Revolve tool, STL/OBJ, checkpoints, splits, autosave+recovery, onecad-regen CLI, crash drills, drift gate) | **DONE** |
 | M6 hardening + backlog (Shell/Patterns/Loft/Sweep/Mirror, datum, snap parity, e2e) | pending |
 
 ## What works end-to-end (real worker, automated gates)
@@ -55,8 +55,8 @@ hydration on sketch re-entry.
 ## Key flags / known gaps
 - Mac packaging verification (signing/notarization/bundle-dylibs first run) — needs a Mac
 - L2 exact preview still local (no backend preview verb); revolve L1 only
-- SaveCheckpoint/RestoreCheckpoint unwired (V1 replays from 0) — M5
-- Autosave driver stub; recents done; STL/OBJ export missing — M5
+- Checkpoints live (save-on-explicit-save policy, in-session restore V1; restore-fallback D1 edge flagged in TODO)
+- Autosave+recovery live (30s debounce, startup-only recovery V1); onecad-regen CLI in CI
 - Repair UI seams: resolveRefs sends refId-only; >1-body operated-body derivation;
   candidate viewport highlight = data seam; suppressed flag = optimistic overlay
 - STEP import stub; Shell/Patterns/Loft/Sweep/Mirror UNSUPPORTED at worker — M6

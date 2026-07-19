@@ -116,6 +116,47 @@ describe("tauriClient command marshalling", () => {
   });
 });
 
+// ── Crash recovery (check_recovery / recover_document) ─────────────────────────
+
+describe("tauriClient crash recovery", () => {
+  it("checkRecovery invokes check_recovery and returns the info DTO", async () => {
+    const seen: string[] = [];
+    mockIPC((cmd) => {
+      seen.push(cmd);
+      if (cmd === "check_recovery")
+        return { autosavePath: "/x/a.onecad", originalPath: "/docs/Bracket.onecad", modifiedMs: 1_700_000_000_000 };
+    });
+    const info = await createTauriClient().checkRecovery();
+    expect(seen).toContain("check_recovery");
+    expect(info).toEqual({
+      autosavePath: "/x/a.onecad",
+      originalPath: "/docs/Bracket.onecad",
+      modifiedMs: 1_700_000_000_000,
+    });
+  });
+
+  it("checkRecovery resolves null when there is nothing to recover", async () => {
+    mockIPC((cmd) => (cmd === "check_recovery" ? null : undefined));
+    expect(await createTauriClient().checkRecovery()).toBeNull();
+  });
+
+  it("recoverDocument invokes recover_document with { accept } and returns the snapshot / null", async () => {
+    const args: Record<string, unknown> = {};
+    mockIPC((cmd, payload) => {
+      args[cmd] = payload;
+      if (cmd === "recover_document") {
+        const accept = (payload as { accept: boolean }).accept;
+        return accept ? { documentId: "doc-r", title: "Bracket" } : null;
+      }
+    });
+    const client = createTauriClient();
+    const snap = await client.recoverDocument(true);
+    expect(args["recover_document"]).toEqual({ accept: true });
+    expect(snap).toEqual({ documentId: "doc-r", title: "Bracket" });
+    expect(await client.recoverDocument(false)).toBeNull();
+  });
+});
+
 // ── Save / Save As / Export STEP (Rust-owned dialogs + fs) ─────────────────────
 
 describe("tauriClient file commands", () => {

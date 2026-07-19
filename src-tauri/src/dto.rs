@@ -144,6 +144,22 @@ pub struct RecentProjectDto {
     pub thumbnail: Option<String>,
 }
 
+/// A crash-recovery offer surfaced at startup (`check_recovery`; `types.ts`
+/// `RecoveryInfo`). A previous session left an autosave whose owning process is
+/// gone — the start screen offers to Restore or Discard it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryInfoDto {
+    /// The document's real on-disk path, if it had ever been saved (absent for a
+    /// never-saved autosave-only document).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_path: Option<String>,
+    /// The autosave container to recover from (absolute path).
+    pub autosave_path: String,
+    /// The autosave's last-modified time, in Unix-epoch milliseconds.
+    pub modified_ms: u64,
+}
+
 /// The `worker-status` event payload (`types.ts` `WorkerStatus`) — the sidecar
 /// lifecycle the status bar surfaces. `state` is one of
 /// `starting`|`ready`|`restarting`|`failed`; `epoch` is the worker epoch that

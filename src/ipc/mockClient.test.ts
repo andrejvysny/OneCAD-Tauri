@@ -5,7 +5,7 @@
  * Export return fake paths, and worker-status never fires (the mock has no worker).
  */
 import { describe, it, expect } from "vitest";
-import { mockClient } from "./mockClient";
+import { mockClient, setMockRecovery } from "./mockClient";
 
 describe("mockClient file seam", () => {
   it("saveDocument resolves (no-op, no throw) with or without a path", async () => {
@@ -41,5 +41,35 @@ describe("mockClient file seam", () => {
     expect(typeof unsub).toBe("function");
     unsub();
     expect(fired).toBe(false);
+  });
+});
+
+describe("mockClient crash recovery", () => {
+  it("checkRecovery is null by default (no banner unless a test opts in)", async () => {
+    setMockRecovery(null);
+    expect(await mockClient.checkRecovery()).toBeNull();
+  });
+
+  it("checkRecovery reports the seeded info; recoverDocument(true) restores + clears", async () => {
+    const info = {
+      autosavePath: "/x/autosave/foo.onecad",
+      originalPath: "/docs/Bracket.onecad",
+      modifiedMs: 1_700_000_000_000,
+    };
+    setMockRecovery(info);
+    expect(await mockClient.checkRecovery()).toEqual(info);
+
+    const snap = await mockClient.recoverDocument(true);
+    expect(snap).not.toBeNull();
+    expect(snap?.title).toBe("Bracket"); // derived from originalPath basename
+
+    // Consumed: a follow-up check sees nothing.
+    expect(await mockClient.checkRecovery()).toBeNull();
+  });
+
+  it("recoverDocument(false) discards the offer and resolves null", async () => {
+    setMockRecovery({ autosavePath: "/x/autosave/foo.onecad", modifiedMs: 1 });
+    expect(await mockClient.recoverDocument(false)).toBeNull();
+    expect(await mockClient.checkRecovery()).toBeNull();
   });
 });

@@ -4,6 +4,7 @@ members = [
     "crates/onecad-core",
     "crates/onecad-protocol",
     "crates/onecad-worker-stub",
+    "crates/onecad-regen",
 ]
 
 # Shared dependency versions for every workspace member. Individual crates
@@ -66,6 +67,11 @@ uuid = { workspace = true }
 async-trait = { workspace = true }
 # R-WP11: verify the SHA-256 integrity of assembled MESH1 bulk streams (SCHEMA §5.2).
 sha2 = { workspace = true }
+
+# M5b: crash-marker liveness — `kill(pid, 0)` for the autosave recovery scan
+# (`io::recovery` injects the predicate; the app owns the platform syscall).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 # Save/reopen round-trip tests for the open/save command path; chaos drills spawn

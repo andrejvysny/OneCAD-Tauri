@@ -2229,6 +2229,7 @@ name = "onecad"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "libc",
  "onecad-core",
  "onecad-protocol",
  "serde",
@@ -2273,6 +2274,18 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "onecad-regen"
+version = "0.1.0"
+dependencies = [
+ "onecad",
+ "onecad-core",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

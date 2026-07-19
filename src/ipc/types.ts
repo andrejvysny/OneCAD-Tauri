@@ -24,6 +24,21 @@ export interface RecentProject {
 }
 
 /**
+ * Crash-recovery offer surfaced on the start screen: a prior session left an
+ * autosave behind. `check_recovery` returns one (or null when nothing to offer);
+ * `recover_document` accepts (restore) or rejects (discard) it. Keep 1:1 with the
+ * Rust `RecoveryInfoDto` (serde camelCase).
+ */
+export interface RecoveryInfo {
+  /** Absolute path of the document the autosave belongs to (absent if never saved). */
+  originalPath?: string;
+  /** Absolute path of the autosave sidecar the crashed session left behind. */
+  autosavePath: string;
+  /** Epoch-millis mtime of the autosave (last time work was captured). */
+  modifiedMs: number;
+}
+
+/**
  * Placeholder document handle returned by open/new/import.
  *
  * The real DocumentSnapshot (full projection: bodies, timeline, revision, …)

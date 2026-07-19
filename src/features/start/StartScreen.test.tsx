@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "@/App";
 import { StartScreen } from "./StartScreen";
@@ -11,6 +11,8 @@ beforeEach(() => {
     recents: [],
     recentsStatus: "idle",
     document: null,
+    recovery: null,
+    recoveryStatus: "ready",
   });
 });
 
@@ -73,5 +75,56 @@ describe("StartScreen", () => {
 
     // Editor shell (F-WP3) mounts — its Model⇄Sketch toggle is a stable marker.
     expect(await screen.findByRole("tab", { name: "Model" })).toBeInTheDocument();
+  });
+
+  it("shows the recovery card and Restore enters the editor", async () => {
+    const user = userEvent.setup();
+    appStore.setState({
+      screen: "start",
+      recents: [],
+      recentsStatus: "ready",
+      document: null,
+      recovery: {
+        autosavePath: "/x/autosave/foo.onecad",
+        originalPath: "/docs/Bracket.onecad",
+        modifiedMs: 1_700_000_000_000,
+      },
+      recoveryStatus: "ready",
+    });
+    render(<StartScreen />);
+
+    expect(screen.getByText("Unsaved changes recovered")).toBeInTheDocument();
+    expect(screen.getByText("Bracket")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Restore/ }));
+
+    await waitFor(() => expect(appStore.getState().screen).toBe("editor"));
+    expect(appStore.getState().recovery).toBeNull();
+  });
+
+  it("Discard clears the recovery card without leaving the start screen", async () => {
+    const user = userEvent.setup();
+    appStore.setState({
+      screen: "start",
+      recents: [],
+      recentsStatus: "ready",
+      document: null,
+      recovery: {
+        autosavePath: "/x/autosave/foo.onecad",
+        originalPath: "/docs/Bracket.onecad",
+        modifiedMs: 1_700_000_000_000,
+      },
+      recoveryStatus: "ready",
+    });
+    render(<StartScreen />);
+    expect(screen.getByText("Unsaved changes recovered")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Discard/ }));
+
+    await waitFor(() => expect(appStore.getState().recovery).toBeNull());
+    expect(appStore.getState().screen).toBe("start");
+    expect(
+      screen.queryByText("Unsaved changes recovered"),
+    ).not.toBeInTheDocument();
   });
 });

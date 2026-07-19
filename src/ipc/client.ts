@@ -28,6 +28,7 @@ import type {
   PromotedElement,
   PromotePick,
   RecentProject,
+  RecoveryInfo,
   ResolveRefRequest,
   ResolveRefResult,
   SketchConstraint,
@@ -235,6 +236,23 @@ export interface CadClient {
   undo(): Promise<ApplyOperationResult>;
   /** Redo the last undone op. */
   redo(): Promise<ApplyOperationResult>;
+
+  // ── Crash recovery (start screen) ─────────────────────────────────────────
+  // A crashed session may leave an autosave behind; the start screen offers to
+  // restore it. Rust owns the autosave sidecar + the crash detection; the mock
+  // exposes a test-seeded seam (`setMockRecovery`).
+
+  /**
+   * Check whether a crashed session left an autosave to offer. Resolves the
+   * recovery info, or null when there is nothing to recover.
+   */
+  checkRecovery(): Promise<RecoveryInfo | null>;
+
+  /**
+   * Resolve a pending recovery. `accept:true` restores the autosave and opens the
+   * recovered document (returns a snapshot); `accept:false` discards it (returns null).
+   */
+  recoverDocument(accept: boolean): Promise<DocumentSnapshot | null>;
 }
 
 /**

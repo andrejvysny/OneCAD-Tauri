@@ -755,6 +755,46 @@ impl DocumentRuntime {
         Ok(())
     }
 
+    /// Writes an autosave copy of the document (+ merged regen outputs + the
+    /// checkpoint cache) to `path` **without** touching the live save path or the
+    /// dirty flag — a crash-recovery snapshot, not a real save. Reuses the same
+    /// atomic [`ContainerWriter`] the autosave layout ([`io::recovery`]) points at.
+    /// Timestamps come from the caller (the pure core never reads the wall clock).
+    ///
+    /// [`io::recovery`]: onecad_core::io::recovery
+    ///
+    /// # Errors
+    /// [`IoError`] on a serialization / filesystem failure; the target is left
+    /// untouched on any failure.
+    pub fn write_autosave(&self, path: &Path, meta: SaveMeta) -> Result<(), IoError> {
+        let mut doc = self.session.document().clone();
+        doc.bodies = self.regen.bodies.clone();
+        doc.elements = self.regen.elements.clone();
+        doc.repair = self.regen.repair.clone();
+        let caches = ContainerCaches {
+            checkpoints: self.checkpoint_caches(),
+            ..ContainerCaches::none()
+        };
+        ContainerWriter::save(path, &doc, &caches, &meta)
+    }
+
+    /// The document's stable id (the autosave container + crash-marker key,
+    /// SCHEMA §7 recovery layout).
+    #[must_use]
+    pub fn document_uuid(&self) -> DocumentId {
+        self.session.document().id
+    }
+
+    /// Adopts a recovered document's real on-disk path and marks it unsaved. Called
+    /// after opening an autosave container during crash recovery: a subsequent Save
+    /// then targets the ORIGINAL path (not the autosave copy), and the recovered
+    /// edits stay dirty until the user saves. `original` `None` ⇒ a never-saved
+    /// document (Save falls back to Save As).
+    pub fn mark_recovered(&mut self, original: Option<PathBuf>) {
+        self.path = original;
+        self.dirty = true;
+    }
+
     // ── Checkpoints (SCHEMA §7.7) ────────────────────────────────────────────
 
     /// Takes a checkpoint of the current head into the cache (the SaveCheckpoint
