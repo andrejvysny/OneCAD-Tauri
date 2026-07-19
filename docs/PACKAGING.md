@@ -39,6 +39,12 @@ This configures + builds `worker/` via CMake and copies the result to
 `bundle.externalBin` expects (the triple suffix is stripped at install time, so
 the bundled binary is plain `onecad-worker`).
 
+> **Run this before any `cargo` command that compiles the app crate**
+> (`check`/`clippy`/`test`/`build`): `bundle.externalBin` makes Tauri's build
+> script fail hard when the staged sidecar is missing
+> (`resource path binaries/onecad-worker-<triple> doesn't exist`). CI stages it
+> as its first step for the same reason.
+
 ## 2. externalBin bundling
 
 `src-tauri/tauri.conf.json` declares the sidecar:

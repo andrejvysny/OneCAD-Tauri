@@ -19,21 +19,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      # Build AND STAGE the C++ sidecar first: `bundle.externalBin` makes Tauri's
+      # build script require src-tauri/binaries/onecad-worker-<triple> to exist,
+      # and clippy/test both compile the app crate (and thus its build script) —
+      # so staging must precede every cargo invocation that touches the app crate.
+      # The script configures, builds, and stages under the rustc host triple.
+      # The real-worker / m2 gates also need the binary (ONECAD_REQUIRE_WORKER).
+      - name: Install OCCT toolchain
+        working-directory: .
+        run: brew install opencascade boost eigen nlohmann-json || true
+      - name: Build + stage worker
+        working-directory: .
+        run: scripts/build-worker.sh Release
       - name: fmt
         run: cargo fmt --all --check
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
-      # Build the C++ sidecar so the real-worker / m2 integration tests exercise
-      # the actual worker instead of silently skipping (they gate on
-      # ONECAD_WORKER_PATH pointing at an existing binary).
-      - name: Install OCCT toolchain
-        working-directory: .
-        run: brew install opencascade boost eigen nlohmann-json || true
-      - name: Build worker
-        working-directory: .
-        run: |
-          cmake -S worker -B worker/build -DCMAKE_BUILD_TYPE=Release
-          cmake --build worker/build --parallel
       - name: test
         env:
           ONECAD_WORKER_PATH: ${{ github.workspace }}/worker/build/onecad-worker
