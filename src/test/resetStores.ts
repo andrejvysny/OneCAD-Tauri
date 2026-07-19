@@ -10,6 +10,7 @@ import { documentStore, seedMockDocument } from "@/stores/documentStore";
 import { settingsStore } from "@/stores/settingsStore";
 import { sketchStore } from "@/stores/sketchStore";
 import { toolChipStore } from "@/stores/toolChipStore";
+import { workerStore } from "@/stores/workerStore";
 import { resetMockSketches, resetMockDocument } from "@/ipc/mockClient";
 
 export function resetStores(): void {
@@ -48,6 +49,7 @@ export function resetStores(): void {
   });
   sketchStore.getState().reset();
   toolChipStore.getState().clear();
+  workerStore.getState().reset();
   resetMockSketches();
   resetMockDocument();
 }

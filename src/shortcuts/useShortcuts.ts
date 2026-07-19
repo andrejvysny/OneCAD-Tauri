@@ -9,6 +9,11 @@ import { toolStore, activeTool } from "@/stores/toolStore";
 import { selectionStore } from "@/stores/selectionStore";
 import { viewportStore } from "@/stores/viewportStore";
 import { getModelToolController } from "@/tools/modelTools/modelToolBridge";
+import {
+  openDocumentDialog,
+  saveDocument,
+  saveDocumentAs,
+} from "@/features/shell/fileActions";
 import { resolveBinding, type ShortcutAction } from "./keymap";
 
 function isEditableTarget(el: EventTarget | null): boolean {
@@ -84,6 +89,19 @@ export function useShortcuts(): void {
       if (mod && (e.key === "y" || e.key === "Y")) {
         e.preventDefault();
         void getModelToolController()?.redo();
+        return;
+      }
+      // File chords own ⌘S (Save) / ⇧⌘S (Save As) / ⌘O (Open) in every mode; they
+      // route through the shared fileActions bridge (Rust owns dialogs + fs).
+      if (mod && (e.key === "s" || e.key === "S")) {
+        e.preventDefault();
+        if (e.shiftKey) void saveDocumentAs();
+        else void saveDocument();
+        return;
+      }
+      if (mod && !e.shiftKey && (e.key === "o" || e.key === "O")) {
+        e.preventDefault();
+        void openDocumentDialog();
         return;
       }
       // Leave remaining OS / app chords (Cmd/Ctrl/Alt) to their owners; Shift ok.

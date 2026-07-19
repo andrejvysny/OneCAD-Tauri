@@ -37,6 +37,28 @@ import type {
   SketchPlaneKind,
 } from "./types";
 
+/** The 18 constraint-type tokens the worker wire emits (== `SketchConstraintType`). */
+const CONSTRAINT_TYPES: ReadonlySet<string> = new Set<SketchConstraintType>([
+  "Coincident",
+  "Horizontal",
+  "Vertical",
+  "Fixed",
+  "Midpoint",
+  "OnCurve",
+  "Parallel",
+  "Perpendicular",
+  "Tangent",
+  "Concentric",
+  "Equal",
+  "Distance",
+  "HorizontalDistance",
+  "VerticalDistance",
+  "Angle",
+  "Radius",
+  "Diameter",
+  "Symmetric",
+]);
+
 // ── Rust typed doc wire shapes (SketchEditOp target) ──────────────────────────
 
 /** A dimension value on the wire (Rust `Scalar {value, expr?}`). */
@@ -463,6 +485,48 @@ export function frontendEntitiesFromDto(dtoEntities: unknown): SketchEntity[] {
         }
         break;
     }
+  }
+  return out;
+}
+
+/** One constraint from the worker wire form (`enter_sketch` returns these — the
+ *  Rust `wire_constraint` shape: `{id, type, entities, positions?, value?}`). */
+interface WireDtoConstraint {
+  id: string;
+  type: string;
+  entities: string[];
+  positions?: string[];
+  value?: number;
+}
+
+/**
+ * Reverse-map the worker-wire constraints `enter_sketch` returns into the frontend
+ * `SketchConstraint` form. The wire shape is field-identical to the frontend type
+ * (id / PascalCase type / entity refs / optional positions + value), so this is a
+ * validated pass-through: entries with an unknown `type` or a missing id/entities
+ * are dropped. The referenced ids are backend UUIDs (kept verbatim); the inspector
+ * summarizes constraints by type, and the marshaller only re-adds constraints it
+ * has NOT already seen, so re-entry constraints hydrate the panel without churn.
+ */
+export function frontendConstraintsFromDto(dtoConstraints: unknown): SketchConstraint[] {
+  if (!Array.isArray(dtoConstraints)) return [];
+  const out: SketchConstraint[] = [];
+  for (const raw of dtoConstraints as WireDtoConstraint[]) {
+    if (!raw || typeof raw.id !== "string" || !CONSTRAINT_TYPES.has(raw.type)) continue;
+    if (!Array.isArray(raw.entities)) continue;
+    const c: SketchConstraint = {
+      id: raw.id,
+      type: raw.type as SketchConstraintType,
+      entities: raw.entities,
+    };
+    if (Array.isArray(raw.positions)) {
+      c.positions = raw.positions.filter(
+        (p): p is ConstraintPosition =>
+          p === "Start" || p === "End" || p === "Center" || p === "Midpoint",
+      );
+    }
+    if (typeof raw.value === "number") c.value = raw.value;
+    out.push(c);
   }
   return out;
 }

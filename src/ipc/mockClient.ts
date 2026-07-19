@@ -24,6 +24,7 @@ import type {
   PromotePick,
   RecentProject,
   Unsubscribe,
+  WorkerStatus,
 } from "./types";
 import { makeBoxMesh, makeCylinderMesh, makeExtrudeBodyMesh } from "./mockMeshes";
 import { createLocalSolverLane } from "./localSolver";
@@ -319,6 +320,25 @@ export const mockClient: CadClient = {
     await wait(40);
     // Rust returns the real chosen path in F-WP8; here we fake a pick.
     return "/Users/andrej/CAD/Projects/Imported.onecad";
+  },
+
+  // Save/export are Rust-owned in the real app; the mock keeps them deterministic
+  // (no filesystem): saveDocument is a no-op, Save As / Export return fake paths.
+  async saveDocument(_path?: string) {
+    await wait(40);
+  },
+  async saveDocumentAs() {
+    await wait(40);
+    return "/Users/andrej/CAD/Projects/Untitled.onecad";
+  },
+  async exportStep() {
+    await wait(40);
+    return "/Users/andrej/CAD/Projects/Untitled.step";
+  },
+
+  // The mock has no worker, so it never emits worker-status (no-op unsubscribe).
+  onWorkerStatus(_cb: (status: WorkerStatus) => void): Unsubscribe {
+    return () => {};
   },
 
   async getBodyMesh(bodyId, _lod) {

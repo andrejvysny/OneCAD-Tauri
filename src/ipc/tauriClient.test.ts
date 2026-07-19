@@ -116,6 +116,115 @@ describe("tauriClient command marshalling", () => {
   });
 });
 
+// ── Save / Save As / Export STEP (Rust-owned dialogs + fs) ─────────────────────
+
+describe("tauriClient file commands", () => {
+  it("saveDocument marshals the path (null when reusing the last path)", async () => {
+    const args: Record<string, unknown> = {};
+    mockIPC((cmd, payload) => {
+      if (cmd === "save_document") args[cmd] = payload;
+    });
+    const client = createTauriClient();
+    await client.saveDocument();
+    expect(args["save_document"]).toEqual({ path: null });
+    await client.saveDocument("/tmp/a.onecad");
+    expect(args["save_document"]).toEqual({ path: "/tmp/a.onecad" });
+  });
+
+  it("saveDocumentAs shows the save dialog, saves, and returns the chosen path", async () => {
+    const seen: string[] = [];
+    let saved: unknown;
+    mockIPC((cmd, payload) => {
+      seen.push(cmd);
+      if (cmd === "save_file_dialog") return "/chosen.onecad";
+      if (cmd === "save_document") saved = payload;
+    });
+    const path = await createTauriClient().saveDocumentAs();
+    expect(path).toBe("/chosen.onecad");
+    expect(saved).toEqual({ path: "/chosen.onecad" });
+    expect(seen).toContain("save_file_dialog");
+    expect(seen).toContain("save_document");
+  });
+
+  it("saveDocumentAs returns null and does NOT save when the dialog is cancelled", async () => {
+    const seen: string[] = [];
+    mockIPC((cmd) => {
+      seen.push(cmd);
+      if (cmd === "save_file_dialog") return null;
+    });
+    expect(await createTauriClient().saveDocumentAs()).toBeNull();
+    expect(seen).not.toContain("save_document");
+  });
+
+  it("exportStep invokes export_step_file and returns the written path", async () => {
+    let payload: unknown;
+    mockIPC((cmd, p) => {
+      if (cmd === "export_step_file") {
+        payload = p;
+        return "/out.step";
+      }
+    });
+    expect(await createTauriClient().exportStep()).toBe("/out.step");
+    expect(payload).toEqual({ path: null });
+  });
+
+  it("exportStep returns null on a cancelled export dialog", async () => {
+    mockIPC((cmd) => (cmd === "export_step_file" ? null : undefined));
+    expect(await createTauriClient().exportStep()).toBeNull();
+  });
+});
+
+// ── worker-status event ───────────────────────────────────────────────────────
+
+describe("tauriClient worker-status", () => {
+  it("delivers worker-status to subscribers and stops after unsubscribe", async () => {
+    mockIPC(() => undefined, { shouldMockEvents: true });
+    const client = createTauriClient();
+    const seen: { state: string; epoch: number }[] = [];
+    const unsub = client.onWorkerStatus((s) => seen.push(s));
+    await tick(); // let the lazy listen() register
+
+    await emit("worker-status", { state: "restarting", epoch: 3 });
+    expect(seen).toEqual([{ state: "restarting", epoch: 3 }]);
+
+    unsub();
+    await emit("worker-status", { state: "ready", epoch: 4 });
+    expect(seen).toHaveLength(1); // no delivery after unsubscribe
+  });
+});
+
+// ── enter_sketch constraint reverse-map (re-entry hydration) ──────────────────
+
+describe("tauriClient enter_sketch constraints", () => {
+  it("reverse-maps the worker-wire constraints into frontend constraints", async () => {
+    mockIPC(
+      (cmd, payload) => {
+        if (cmd === "apply_edit_command") return readyProjection(1);
+        if (cmd === "enter_sketch")
+          return {
+            sketchId: (payload as { sketchId: string }).sketchId,
+            plane: XZ_PLANE,
+            entities: [],
+            constraints: [
+              { id: "cc", type: "Coincident", entities: ["p1", "p2"] },
+              { id: "cd", type: "Distance", entities: ["p1", "p2"], value: 90 },
+              { id: "bad", type: "NotAThing", entities: ["x"] },
+            ],
+            dof: 2,
+            status: "UnderConstrained",
+          };
+      },
+      { shouldMockEvents: true },
+    );
+    const session = await createTauriClient().enterSketch({ newOnPlane: "XZ", sketchId: "sk" });
+    // Known kinds map through; the unknown kind is dropped.
+    expect(session.constraints).toEqual([
+      { id: "cc", type: "Coincident", entities: ["p1", "p2"] },
+      { id: "cd", type: "Distance", entities: ["p1", "p2"], value: 90 },
+    ]);
+  });
+});
+
 // ── Mesh ArrayBuffer path through the MESH1 parser ────────────────────────────
 
 describe("tauriClient mesh path", () => {

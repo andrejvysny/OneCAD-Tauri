@@ -62,12 +62,14 @@ import type {
   SketchSession,
   SketchSolveStatus,
   SketchUpsertResult,
+  WorkerStatus,
 } from "./types";
 import { createLocalSolverLane } from "./localSolver";
 import { operationToEditCommand, opLabelFor } from "./tauriCommandMap";
 import {
   buildAddSketch,
   createIdMap,
+  frontendConstraintsFromDto,
   frontendEntitiesFromDto,
   marshalUpsert,
   mintUuid,
@@ -81,7 +83,10 @@ const CMD = {
   newDocument: "new_document",
   openDocument: "open_document",
   importStep: "import_step",
+  saveDocument: "save_document",
+  exportStepFile: "export_step_file",
   openFileDialog: "open_file_dialog",
+  saveFileDialog: "save_file_dialog",
   getMesh: "get_mesh",
   applyEditCommand: "apply_edit_command",
   undo: "undo",
@@ -101,6 +106,7 @@ const EVT = {
   projectionUpdated: "projection-updated",
   regenFinished: "regen-finished",
   sketchSolved: "sketch-solved",
+  workerStatus: "worker-status",
 } as const;
 
 /** L2 preview pacing for the local seam (snappy; there is no backend preview verb). */
@@ -203,6 +209,7 @@ export function createTauriClient(): CadClient {
   // Fan-out for app-level subscribers.
   const docChangeListeners = new Set<(c: DocumentChange) => void>();
   const projectionListeners = new Set<(p: DocumentProjectionWire) => void>();
+  const workerStatusListeners = new Set<(s: WorkerStatus) => void>();
   // Latest authoritative revision (cached from any event).
   let latestRevision = 0;
   // Latest published snapshot id for promote_selection — carried by every
@@ -255,6 +262,10 @@ export function createTauriClient(): CadClient {
     for (const cb of [...projectionListeners]) cb(p);
   }
 
+  function onWorkerStatusEvent(s: WorkerStatus): void {
+    for (const cb of [...workerStatusListeners]) cb(s);
+  }
+
   /** Await the next regen publish (or null on the safety timeout). Register BEFORE invoking. */
   function awaitNextChange(baseRev: number): { promise: Promise<Resolved | null>; cancel(): void } {
     let awaiter!: Awaiter;
@@ -290,6 +301,7 @@ export function createTauriClient(): CadClient {
         await listen<SketchUpsertDto>(EVT.sketchSolved, (e) => {
           lastSketchSolved = e.payload;
         }),
+        await listen<WorkerStatus>(EVT.workerStatus, (e) => onWorkerStatusEvent(e.payload)),
       );
     } catch {
       // A missing event bridge must not break command-only flows.
@@ -369,16 +381,17 @@ export function createTauriClient(): CadClient {
     const map = await ensureBackendSketch(frontendId, planeKind);
     const dto = await call<SketchSessionDto>(CMD.enterSketch, { sketchId: map.backendSketchId });
     const entities = frontendEntitiesFromDto(dto.entities);
+    // Re-entry hydration: the backend returns the sketch's real constraints in the
+    // worker-wire form (Rust `wire_constraint`, field-identical to SketchConstraint);
+    // reverse-map them so the inspector shows live constraints (kills the []-seam).
+    const constraints = frontendConstraintsFromDto(dto.constraints);
     // Feed the plane into the local preview lane so beginPreview resolves it.
     lane.cacheSketchPlane(frontendId, dto.plane);
-    // NOTE: constraints are returned in the worker-wire form; the SketchController
-    // rebuilds constraints locally on each draw, so a fresh sketch needs none.
-    // Re-entering a sketch WITH existing constraints is an M2+ reverse-map seam.
     return {
       sketchId: frontendId, // keep the frontend id; the map holds the backend UUID
       plane: dto.plane,
       entities,
-      constraints: [],
+      constraints,
       dof: dto.dof,
       status: dto.status,
     };
@@ -504,6 +517,29 @@ export function createTauriClient(): CadClient {
     },
     async openFileDialog(): Promise<string | null> {
       return call<string | null>(CMD.openFileDialog);
+    },
+
+    async saveDocument(path?: string): Promise<void> {
+      // `path` null ⇒ the backend reuses the last save path (an unsaved document
+      // with no path rejects with an io error; the caller falls back to Save As).
+      await call<void>(CMD.saveDocument, { path: path ?? null });
+    },
+    async saveDocumentAs(): Promise<string | null> {
+      const path = await call<string | null>(CMD.saveFileDialog);
+      if (!path) return null; // cancelled
+      await call<void>(CMD.saveDocument, { path });
+      return path;
+    },
+    async exportStep(): Promise<string | null> {
+      // Rust owns the `.step` save dialog + the worker ExportStep verb; a cancel
+      // resolves to null (no path written).
+      return call<string | null>(CMD.exportStepFile, { path: null });
+    },
+
+    onWorkerStatus(cb: (s: WorkerStatus) => void): () => void {
+      void ensureEvents();
+      workerStatusListeners.add(cb);
+      return () => workerStatusListeners.delete(cb);
     },
 
     async getBodyMesh(bodyId: string, lod: Lod): Promise<ArrayBuffer> {

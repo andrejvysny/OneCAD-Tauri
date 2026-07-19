@@ -28,7 +28,7 @@ export interface AppState {
   importStep(): Promise<void>;
 }
 
-export const appStore = createStore<AppState>()((set) => {
+export const appStore = createStore<AppState>()((set, get) => {
   const enter = (document: DocumentSnapshot) =>
     set({ screen: "editor", document });
 
@@ -50,11 +50,16 @@ export const appStore = createStore<AppState>()((set) => {
 
     async openProject(path) {
       enter(await client.openDocument(path));
+      // The backend recorded this open in the recents store; refresh so the
+      // start-screen list reflects it (newest first) next time it renders.
+      void get().loadRecents();
     },
 
     async openDialogAndOpen() {
       const path = await client.openFileDialog();
-      if (path) enter(await client.openDocument(path));
+      if (!path) return; // cancelled
+      enter(await client.openDocument(path));
+      void get().loadRecents();
     },
 
     async importStep() {

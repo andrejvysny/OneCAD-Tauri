@@ -32,6 +32,7 @@ import type {
   SketchSession,
   SketchUpsertResult,
   Unsubscribe,
+  WorkerStatus,
 } from "./types";
 import { mockClient } from "./mockClient";
 import { createTauriClient } from "./tauriClient";
@@ -51,6 +52,30 @@ export interface CadClient {
    * webview gets zero fs/dialog capability); the mock returns a fake path.
    */
   openFileDialog(): Promise<string | null>;
+
+  /**
+   * Save the open document. `path` `undefined` reuses the last save path; a
+   * never-saved document then rejects (io error) and the caller falls back to
+   * Save As. Rust owns the filesystem write.
+   */
+  saveDocument(path?: string): Promise<void>;
+  /**
+   * Save As: show a native save dialog (`.onecad`), save to the chosen path, and
+   * return it — or null if the dialog was cancelled.
+   */
+  saveDocumentAs(): Promise<string | null>;
+  /**
+   * Export every body at head to a STEP file. Rust owns the `.step` save dialog +
+   * the worker ExportStep verb; resolves to the written path, or null on cancel.
+   */
+  exportStep(): Promise<string | null>;
+
+  /**
+   * Subscribe to worker-lifecycle `worker-status` events (starting / ready /
+   * restarting / failed). The real event arrives from the C++ sidecar supervisor;
+   * the mock never emits (returns a no-op unsubscribe).
+   */
+  onWorkerStatus(cb: (status: WorkerStatus) => void): Unsubscribe;
 
   /**
    * Fetch a body's MESH1 blob at `lod` (pull model). The real client returns a

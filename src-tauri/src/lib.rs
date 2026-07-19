@@ -20,7 +20,9 @@ pub mod document_runtime;
 pub mod dto;
 pub mod error;
 pub mod events;
+pub mod export;
 pub mod mesh_cache;
+pub mod recents;
 pub mod state;
 pub mod worker;
 
@@ -101,6 +103,9 @@ pub fn run() {
         .setup(|app| {
             // Spawn the single regen scheduler over the shared runtime + app handle.
             let state = app.state::<AppState>();
+            // Publish the app handle so the backend factory's worker-status
+            // forwarder can emit events (the factory is built before this exists).
+            let _ = state.app.set(app.handle().clone());
             let driver = make_regen_driver(state.runtime.clone(), app.handle().clone());
             let (scheduler, handle) = RegenScheduler::new(driver);
             tauri::async_runtime::spawn(scheduler.run());
@@ -112,6 +117,7 @@ pub fn run() {
             api::open_document,
             api::import_step,
             api::save_document,
+            api::export_step_file,
             api::close_document,
             api::apply_edit_command,
             api::undo,

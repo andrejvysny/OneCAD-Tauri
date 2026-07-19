@@ -27,6 +27,7 @@ use crate::dto::{
 };
 use crate::error::ApiError;
 use crate::events;
+use crate::recents;
 use crate::state::AppState;
 use crate::worker::{lod_from_str, wire};
 
@@ -67,6 +68,7 @@ pub async fn open_document(
         (snapshot_of(rt), rt.projection())
     };
     let _ = app.emit(events::PROJECTION_UPDATED, &projection);
+    recents::record(&app, Path::new(&path));
     // Rebuild geometry from the loaded (all-Dirty) timeline.
     if let Some(sched) = state.scheduler.get() {
         sched.request(RegenRequest::ToEnd { from: 0 });
@@ -87,25 +89,60 @@ pub async fn import_step(
 }
 
 /// Saves the open document (`CadClient` save). `path` `None` reuses the last save
-/// path; an unsaved document with no path is an error.
+/// path; an unsaved document with no path is an error (the frontend's Save action
+/// then falls back to Save As). Records the saved path in the recents store.
 #[tauri::command]
 pub async fn save_document(
     state: State<'_, AppState>,
+    app: AppHandle,
     path: Option<String>,
 ) -> Result<(), ApiError> {
-    let mut guard = state.runtime.lock().await;
-    let rt = guard
-        .as_mut()
-        .ok_or_else(|| ApiError::NoDocument("save".into()))?;
-    let target: PathBuf = match path {
-        Some(p) => PathBuf::from(p),
-        None => rt
-            .path()
-            .map(Path::to_path_buf)
-            .ok_or_else(|| ApiError::Io("no save path; provide one".into()))?,
+    let target: PathBuf = {
+        let mut guard = state.runtime.lock().await;
+        let rt = guard
+            .as_mut()
+            .ok_or_else(|| ApiError::NoDocument("save".into()))?;
+        let target: PathBuf = match path {
+            Some(p) => PathBuf::from(p),
+            None => rt
+                .path()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| ApiError::Io("no save path; provide one".into()))?,
+        };
+        rt.save(&target, save_meta())?;
+        target
     };
-    rt.save(&target, save_meta())?;
+    recents::record(&app, &target);
     Ok(())
+}
+
+/// Exports every body at head to a STEP file (`CadClient.exportStep`). `path`
+/// `None` shows a native save dialog (`.step` filter); a cancel resolves to `None`.
+/// Schema is AP214 (`"AP214IS"`); returns the written path. Rust owns the dialog
+/// and the worker `ExportStep` verb (the webview has zero fs capability).
+#[tauri::command]
+pub async fn export_step_file(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    path: Option<String>,
+) -> Result<Option<String>, ApiError> {
+    let target = match path {
+        Some(p) => p,
+        None => match pick_step_save(app).await {
+            Some(p) => p,
+            None => return Ok(None), // dialog cancelled
+        },
+    };
+    let bodies: Vec<BodyId> = {
+        let guard = state.runtime.lock().await;
+        let rt = guard
+            .as_ref()
+            .ok_or_else(|| ApiError::NoDocument("exportStep".into()))?;
+        rt.head_body_ids()
+    };
+    let exporter = state.exporter();
+    exporter.export_step(&target, &bodies, "AP214IS").await?;
+    Ok(Some(target))
 }
 
 /// Closes the open document, dropping its runtime + caches.
@@ -463,11 +500,12 @@ fn parse_sketch_id(s: &str) -> Result<SketchId, ApiError> {
 // Start screen + native dialogs (Rust-side; webview has zero fs/dialog cap)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Recent projects for the start screen. A persisted recents store is a later WP;
-/// V1 returns none (the frontend seeds its own until then).
+/// Recent projects for the start screen, read from the persisted recents store at
+/// `<app_config_dir>/recents.json` (a missing file ⇒ empty). Written on every
+/// successful open/save by [`recents::record`].
 #[tauri::command]
-pub async fn list_recents(_state: State<'_, AppState>) -> Result<Vec<RecentProjectDto>, ApiError> {
-    Ok(Vec::new())
+pub async fn list_recents(app: AppHandle) -> Result<Vec<RecentProjectDto>, ApiError> {
+    Ok(recents::list(&app))
 }
 
 /// Shows a native open dialog (Rust owns the dialog; `tauri-plugin-dialog` Rust
@@ -495,6 +533,24 @@ async fn pick_file(app: AppHandle, save: bool) -> Option<String> {
     } else {
         dialog.pick_file(cb);
     }
+    rx.await
+        .ok()
+        .flatten()
+        .and_then(|f| f.into_path().ok())
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Shows a native STEP save dialog (`.step`/`.stp` filter). Resolves to the chosen
+/// path or `None` on cancel. Mirrors [`pick_file`] but with the STEP filter.
+async fn pick_step_save(app: AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter("STEP", &["step", "stp"])
+        .save_file(move |file: Option<tauri_plugin_dialog::FilePath>| {
+            let _ = tx.send(file);
+        });
     rx.await
         .ok()
         .flatten()
@@ -543,14 +599,19 @@ fn save_meta() -> SaveMeta {
     }
 }
 
-/// The current UTC time as an RFC-3339 string (`YYYY-MM-DDThh:mm:ssZ`), computed
-/// from the Unix clock without a calendar dependency (Howard Hinnant's civil-date
-/// algorithm).
+/// The current UTC time as an RFC-3339 string (`YYYY-MM-DDThh:mm:ssZ`).
 fn now_rfc3339() -> String {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
+    rfc3339_from_secs(secs)
+}
+
+/// An RFC-3339 string (`YYYY-MM-DDThh:mm:ssZ`) for `secs` since the Unix epoch,
+/// computed without a calendar dependency (Howard Hinnant's civil-date algorithm).
+/// Shared with the recents store (last-opened timestamps).
+pub(crate) fn rfc3339_from_secs(secs: u64) -> String {
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
     let (hh, mm, ss) = (rem / 3600, (rem % 3600) / 60, rem % 60);

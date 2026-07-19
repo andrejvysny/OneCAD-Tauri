@@ -14,12 +14,14 @@ import {
 } from "@/stores/selectionStore";
 import { useToolStore } from "@/stores/toolStore";
 import { useViewportStore } from "@/stores/viewportStore";
+import { useSketchStore } from "@/stores/sketchStore";
 import { getModelToolController } from "@/tools/modelTools/modelToolBridge";
 import { HistoryList } from "./HistoryList";
-import { ConstraintList, type ConstraintRow } from "./ConstraintList";
+import { ConstraintList, summarizeConstraints } from "./ConstraintList";
 import { cn } from "@/ui/cn";
 import { sketchStatusText, sketchStatusSentence } from "@/features/sketch/constraintStatus";
 import type { SketchStatus } from "@/stores/documentStore";
+import type { SketchConstraint } from "@/ipc/types";
 
 /** Click a history chip → select that feature; double-click Extrude → re-edit. */
 function selectFeature(id: string): void {
@@ -28,13 +30,6 @@ function selectFeature(id: string): void {
 function editFeature(item: FeatureMeta): void {
   if (item.kind === "extrude") getModelToolController()?.editExtrudeFeature(item.id);
 }
-
-// Prototype 1c sketch constraints (Component.win cons array).
-const SKETCH_CONSTRAINTS: ConstraintRow[] = [
-  { label: "Coincident", count: "×4" },
-  { label: "Horizontal", count: "×1" },
-  { label: "Distance 90.00", count: "×1" },
-];
 
 /**
  * Context-aware inspector (prototype 1c), three states:
@@ -49,6 +44,7 @@ export function InspectorPanel() {
   const sketches = useDocumentStore((s) => s.sketches);
   const features = useDocumentStore((s) => s.features);
   const activeSketchId = useViewportStore((s) => s.activeSketchId);
+  const constraints = useSketchStore((s) => s.session?.constraints);
 
   const sketching = mode === "sketch";
 
@@ -59,6 +55,7 @@ export function InspectorPanel() {
           sketchName={sketches[activeSketchId ?? ""]?.name ?? "Sketch"}
           dof={sketches[activeSketchId ?? ""]?.dof ?? 0}
           status={sketches[activeSketchId ?? ""]?.status ?? "under"}
+          constraints={constraints ?? []}
         />
       ) : sel && sel.kind === "feature" ? (
         <FeatureState featureId={sel.id} features={features} />
@@ -162,13 +159,16 @@ function SketchState({
   sketchName,
   dof,
   status,
+  constraints,
 }: {
   sketchName: string;
   dof: number;
   status: SketchStatus;
+  constraints: SketchConstraint[];
 }) {
   const { label, tone } = sketchStatusText(status, dof);
   const solved = status === "ok";
+  const rows = summarizeConstraints(constraints);
   return (
     <>
       <div className="text-[15px] font-semibold text-ink">{sketchName}</div>
@@ -189,7 +189,13 @@ function SketchState({
       </div>
 
       <SectionLabel className="pb-1.5 pt-4">Constraints</SectionLabel>
-      <ConstraintList items={SKETCH_CONSTRAINTS} />
+      {rows.length > 0 ? (
+        <ConstraintList items={rows} />
+      ) : (
+        <div className="text-[12px] leading-normal text-ink-6">
+          No constraints yet.
+        </div>
+      )}
       <div className="mt-2 text-[11.5px] leading-normal text-ink-6">
         Drag geometry or add constraints until DOF reaches 0.
       </div>

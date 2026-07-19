@@ -352,6 +352,13 @@ impl DocumentRuntime {
         self.path.as_deref()
     }
 
+    /// The body ids present at head (the regen mirror's current bodies), for STEP
+    /// export (`export_step_file`). Read-only; visible-body filtering can wait.
+    #[must_use]
+    pub fn head_body_ids(&self) -> Vec<BodyId> {
+        self.regen.bodies.bodies().iter().map(|b| b.id).collect()
+    }
+
     /// Whether the document opened read-only (low-confidence migration).
     #[must_use]
     pub fn is_read_only(&self) -> bool {

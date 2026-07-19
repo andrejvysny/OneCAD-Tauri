@@ -144,6 +144,17 @@ pub struct RecentProjectDto {
     pub thumbnail: Option<String>,
 }
 
+/// The `worker-status` event payload (`types.ts` `WorkerStatus`) — the sidecar
+/// lifecycle the status bar surfaces. `state` is one of
+/// `starting`|`ready`|`restarting`|`failed`; `epoch` is the worker epoch that
+/// transition belongs to (`0` when unknown, e.g. terminal failure).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerStatusDto {
+    pub state: String,
+    pub epoch: u64,
+}
+
 /// One changed body in a `document-changed` event (`types.ts` `BodyMeshRef`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]

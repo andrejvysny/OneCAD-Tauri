@@ -279,6 +279,17 @@ export interface RegenFinished {
   outcome: string;
 }
 
+/**
+ * The `worker-status` event payload (mirrors Rust `WorkerStatusDto`) — the C++
+ * sidecar lifecycle the status bar surfaces. The mock never emits it.
+ */
+export interface WorkerStatus {
+  /** `starting` | `ready` | `restarting` | `failed`. */
+  state: "starting" | "ready" | "restarting" | "failed";
+  /** The worker epoch this transition belongs to (`0` when unknown). */
+  epoch: number;
+}
+
 // ── Model operations (SCHEMA §7.3 op payloads) ───────────────────────────────
 //
 // These mirror the JSON the C++ worker consumes inside `ExecutePlan.ops`. The

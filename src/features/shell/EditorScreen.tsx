@@ -1,4 +1,7 @@
+import { useEffect } from "react";
 import { useShortcuts } from "@/shortcuts/useShortcuts";
+import { createClient } from "@/ipc/client";
+import { workerStore } from "@/stores/workerStore";
 import { TitleBar } from "./TitleBar";
 import { StatusBar } from "./StatusBar";
 import { NavPill } from "./NavPill";
@@ -19,6 +22,12 @@ import { ViewportRoot } from "@/viewport/ViewportRoot";
  */
 export function EditorScreen() {
   useShortcuts();
+
+  // Relay the C++ sidecar's worker-status events into the store the status bar
+  // reads (the real client listens to the backend; the mock never emits).
+  useEffect(() => {
+    return createClient().onWorkerStatus((s) => workerStore.getState().set(s));
+  }, []);
 
   return (
     <div className="flex h-full w-full select-none flex-col overflow-hidden bg-white font-ui">
