@@ -16,6 +16,10 @@ function extrudeOp(sketchId: string, regionId: string, distance: number): Operat
   return { opType: "Extrude", sketchId, regionId, params: { distance } };
 }
 
+function revolveOp(sketchId: string, regionId: string, angleDeg: number, featureId?: string): OperationOp {
+  return { opType: "Revolve", sketchId, regionId, featureId, params: { angleDeg, booleanMode: "NewBody" } };
+}
+
 describe("mockClient operations", () => {
   beforeEach(() => {
     setMockLatency(0);
@@ -76,6 +80,32 @@ describe("mockClient operations", () => {
     expect(res.removedBodies).toContain(b2);
     expect(res.changedBodies.map((b) => b.bodyId)).toContain(b1);
     expect(res.features.some((f) => f.kind === "boolean" && f.label === "Union")).toBe(true);
+  });
+
+  it("applyOperation(Revolve) appends a revolve feature + synthesizes a body", async () => {
+    const regionId = await seedRegion();
+    const res = await mockClient.applyOperation(revolveOp("skA", regionId, 270));
+    expect(res.changedBodies).toHaveLength(1);
+    const feat = res.features.find((f) => f.kind === "revolve");
+    expect(feat).toBeTruthy();
+    expect(feat!.valueText).toBe("270°");
+    expect(res.opLabel).toBe("Revolve");
+    const bodyId = res.changedBodies[0].bodyId;
+    const mesh = await mockClient.getBodyMesh(bodyId, "coarse");
+    expect(mesh.byteLength).toBeGreaterThan(64); // a real MESH1 revolve body
+  });
+
+  it("re-editing a Revolve (featureId) updates the angle + reuses the same body", async () => {
+    const regionId = await seedRegion();
+    const created = await mockClient.applyOperation(revolveOp("skA", regionId, 360));
+    const featureId = created.features.find((f) => f.kind === "revolve")!.id;
+    const bodyId = created.changedBodies[0].bodyId;
+
+    const edited = await mockClient.applyOperation(revolveOp("skA", regionId, 90, featureId));
+    expect(edited.changedBodies.map((b) => b.bodyId)).toContain(bodyId); // rebuilt in place
+    const revFeatures = edited.features.filter((f) => f.kind === "revolve");
+    expect(revFeatures).toHaveLength(1); // no new row — same feature updated
+    expect(revFeatures[0].valueText).toBe("90°");
   });
 
   it("Fillet re-emits the target body + adds a radius feature (documented mock limit)", async () => {

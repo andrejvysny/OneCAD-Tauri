@@ -17,6 +17,7 @@
 import type { CadClient } from "@/ipc/client";
 import type {
   ApplyOperationResult,
+  AxisRef,
   BooleanOperation,
   FeatureRecord,
   OperationOp,
@@ -36,9 +37,11 @@ import { viewportStore } from "@/stores/viewportStore";
 import { documentStore, type FeatureMeta } from "@/stores/documentStore";
 import { selectionStore, type EntityRef } from "@/stores/selectionStore";
 import { toolChipStore } from "@/stores/toolChipStore";
-import { profileFromRegion, profileBounds } from "@/tools/preview/prismPreview";
+import { profileFromRegion, profileBounds, type PrismProfile } from "@/tools/preview/prismPreview";
 import { axisDepthFromRay, normalize, type Vec3 } from "@/tools/preview/depthProjection";
 import { radiusFromDrag } from "@/tools/preview/filletRadius";
+import { axisSplitsRegion, type LatheAxis } from "@/tools/preview/lathePreview";
+import { angleFromDrag, snapRevolveAngle, clampAngle, angleFromValueText } from "@/tools/preview/revolveAngle";
 import { PreviewThrottle } from "@/tools/preview/previewThrottle";
 import {
   booleanInit,
@@ -47,11 +50,15 @@ import {
   extrudeStep,
   filletInit,
   filletStep,
+  revolveInit,
+  revolveStep,
   DEFAULT_EXTRUDE_DEPTH,
   DEFAULT_FILLET_RADIUS,
+  DEFAULT_REVOLVE_ANGLE,
   type BooleanFsm,
   type ExtrudeFsm,
   type FilletFsm,
+  type RevolveFsm,
 } from "./modelToolMachine";
 
 const DRAG_PX = 4;
@@ -65,12 +72,20 @@ export interface ModelToolDeps {
   debug?: boolean;
 }
 
-type DragKind = "extrude" | "fillet" | null;
+type DragKind = "extrude" | "fillet" | "revolve" | null;
+
+/** One pickable revolve axis candidate (a sketch line), plane (u,v) endpoints. */
+interface AxisCandidate {
+  id: string;
+  a: [number, number];
+  b: [number, number];
+}
 
 export class ModelToolController {
   private extrude: ExtrudeFsm = extrudeInit();
   private fillet: FilletFsm = filletInit();
   private boolean: BooleanFsm = booleanInit();
+  private revolve: RevolveFsm = revolveInit();
   private readonly throttle = new PreviewThrottle<{ distance: number }>({ trailingMs: 80 });
 
   // Extrude preview context.
@@ -85,6 +100,20 @@ export class ModelToolController {
   private filletEdges: EntityRef[] = [];
   private filletDownY = 0;
   private filletStartRadius = DEFAULT_FILLET_RADIUS;
+
+  // Revolve context.
+  private revolveProfile: PrismProfile | null = null;
+  private revolveSketchId: string | null = null;
+  private revolveRegionId: string | null = null;
+  private revolveEditFeatureId: string | undefined;
+  private revolveAxisCandidates: AxisCandidate[] = [];
+  private revolveAxis: LatheAxis | null = null;
+  private revolveAxisLineId: string | null = null;
+  private revolveArmedDown = false; // LMB pressed while armed (maybe an angle drag)
+  private revolveDownX = 0;
+  private revolveLastX = 0;
+  private revolveStartAngle = DEFAULT_REVOLVE_ANGLE;
+  private commitRevolveBodyUnsub: (() => void) | null = null;
 
   // Commit reconciliation.
   private commitBodyId: string | null = null;
@@ -152,11 +181,12 @@ export class ModelToolController {
     this.cancelPreview();
     this.cancelFillet();
     this.cancelBoolean();
+    this.cancelRevolve();
     toolChipStore.getState().clear();
     if (tool === "extrude") this.armExtrudeFromSelection();
+    else if (tool === "revolve") this.armRevolveFromSelection();
     else if (tool === "fillet") this.armFilletFromSelection();
     else if (tool === "boolean") this.startBooleanFromSelection();
-    else if (tool === "revolve") viewportStore.getState().setStatusHint("Revolve — not yet implemented");
     else viewportStore.getState().setStatusHint(null);
   }
 
@@ -224,6 +254,252 @@ export class ModelToolController {
     this.sendPreview(v);
   }
 
+  // ── revolve ────────────────────────────────────────────────────────────────
+
+  private armRevolveFromSelection(): void {
+    const sketch = selectionStore.getState().selected.find((r) => r.kind === "sketch");
+    if (sketch) void this.armRevolve(sketch.id);
+    else viewportStore.getState().setStatusHint("Select a sketch to revolve");
+  }
+
+  /**
+   * Arm the revolve tool on a sketch: resolve its profile + candidate axis lines,
+   * then enter axis-pick (fresh) or go straight to armed (re-edit, `editFeatureId`).
+   */
+  private async armRevolve(
+    sketchId: string,
+    editFeatureId?: string,
+    startAngle = DEFAULT_REVOLVE_ANGLE,
+  ): Promise<void> {
+    const finish = await this.deps.client.finishSketch(sketchId);
+    const region = finish.regions[0];
+    const profile = region ? profileFromRegion(region) : null;
+    if (!region || !profile) {
+      viewportStore.getState().setStatusHint("No closed region to revolve");
+      toolStore.getState().setTool("select");
+      return;
+    }
+    const session = await this.deps.client.enterSketch(sketchId); // plane + entities
+    this.plane = session.plane;
+    this.lastArmedSketch = sketchId;
+    this.revolveProfile = profile;
+    this.revolveSketchId = sketchId;
+    this.revolveRegionId = region.regionId;
+    this.revolveEditFeatureId = editFeatureId;
+    this.revolveAxisCandidates = session.entities
+      .filter((e) => e.type === "Line" && e.p0 && e.p1)
+      .map((e) => ({ id: e.id, a: e.p0 as [number, number], b: e.p1 as [number, number] }));
+
+    const b = profileBounds(profile);
+    const c = planePointToWorld(this.plane, { x: b.centroidU, y: b.centroidV });
+    this.centroidWorld = [c.x, c.y, c.z];
+    this.normal = normalize(this.plane.normal as Vec3);
+    this.revolveArmedDown = false;
+
+    if (editFeatureId) {
+      // Re-edit is param-only (angle) — skip axis-pick; use the first candidate (or
+      // a fallback) purely so the L1 shell renders. The commit re-targets by id.
+      const cand = this.revolveAxisCandidates[0] ?? null;
+      this.revolveAxis = cand ? { a: cand.a, b: cand.b } : fallbackAxis(profile.ring);
+      this.revolveAxisLineId = cand?.id ?? null;
+      this.revolve = revolveStep(revolveInit(), {
+        kind: "arm",
+        angle: startAngle,
+        hasAxis: true,
+        axisLineId: this.revolveAxisLineId,
+      }).state;
+      this.deps.engine.setOrbitSuppressed(true);
+      this.deps.engine.showRevolvePreview(this.plane, profile.ring, this.revolveAxis, startAngle);
+      toolStore.setState({ phase: "armed" });
+      viewportStore.getState().setStatusHint("Drag to set angle, or type a value");
+      toolChipStore.getState().showRevolve(
+        startAngle,
+        this.revolveChipWorld(),
+        (v) => this.onRevolveChip(v),
+        () => this.resetRevolveAxis(),
+      );
+    } else {
+      this.revolveAxis = null;
+      this.revolveAxisLineId = null;
+      this.revolve = revolveStep(revolveInit(), { kind: "arm", angle: startAngle }).state; // → axisPick
+      this.deps.engine.showRevolveAxisCandidates(
+        this.plane,
+        this.revolveAxisCandidates.map((k) => ({ a: k.a, b: k.b })),
+      );
+      toolStore.setState({ phase: "armed" });
+      viewportStore.getState().setStatusHint(
+        this.revolveAxisCandidates.length
+          ? "Pick axis line"
+          : "Draw a sketch line to use as the revolve axis",
+      );
+    }
+    this.updateDebug();
+  }
+
+  private revolveChipWorld(): Vec3 {
+    return this.chipWorld();
+  }
+
+  private onRevolveChip(v: number): void {
+    if (this.revolve.phase !== "armed" && this.revolve.phase !== "dragging") return;
+    const angle = clampAngle(v);
+    this.revolve = revolveStep(this.revolve, { kind: "setAngle", angle }).state;
+    if (this.revolveAxis && this.revolveProfile) {
+      this.deps.engine.setRevolveAngle(this.revolveProfile.ring, this.revolveAxis, angle);
+    }
+    toolChipStore.getState().setValue(angle);
+  }
+
+  /** Chip "Axis" affordance: drop the chosen axis and return to axis-pick. */
+  private resetRevolveAxis(): void {
+    if (this.revolve.phase !== "armed" && this.revolve.phase !== "dragging") return;
+    this.revolve = revolveStep(this.revolve, { kind: "resetAxis" }).state;
+    this.revolveAxis = null;
+    this.revolveAxisLineId = null;
+    this.revolveArmedDown = false;
+    if (this.dragging === "revolve") this.dragging = null;
+    this.deps.engine.setOrbitSuppressed(false);
+    this.deps.engine.hideRevolvePreview();
+    if (this.plane) {
+      this.deps.engine.showRevolveAxisCandidates(
+        this.plane,
+        this.revolveAxisCandidates.map((k) => ({ a: k.a, b: k.b })),
+      );
+    }
+    toolChipStore.getState().clear();
+    viewportStore.getState().setStatusHint("Pick axis line");
+    toolStore.setState({ phase: "armed" });
+  }
+
+  /** Axis-pick hover: highlight the nearest candidate line under the pointer. */
+  private updateRevolveAxisHover(clientX: number, clientY: number): void {
+    if (!this.plane) return;
+    const p = this.deps.engine.screenToPlaneOn(this.plane, clientX, clientY);
+    const idx = p ? this.nearestAxisCandidate(p.x, p.y) : -1;
+    if (idx < 0) {
+      this.deps.engine.setRevolveAxisHover(null);
+      return;
+    }
+    const c = this.revolveAxisCandidates[idx];
+    this.deps.engine.setRevolveAxisHover({ a: c.a, b: c.b });
+  }
+
+  /** Axis-pick click: choose the nearest line, rejecting one that crosses the profile. */
+  private tryPickRevolveAxis(clientX: number, clientY: number): void {
+    if (!this.plane || !this.revolveProfile) return;
+    const p = this.deps.engine.screenToPlaneOn(this.plane, clientX, clientY);
+    if (!p) return;
+    const idx = this.nearestAxisCandidate(p.x, p.y);
+    if (idx < 0) return;
+    const cand = this.revolveAxisCandidates[idx];
+    const valid = !axisSplitsRegion(cand.a, cand.b, this.revolveProfile.ring);
+    this.revolve = revolveStep(this.revolve, { kind: "pickAxis", lineId: cand.id, valid }).state;
+    if (!valid) {
+      this.deps.engine.setRevolveAxisHover(null);
+      viewportStore.getState().setStatusHint("Axis can't cross the profile — pick another line");
+      return;
+    }
+    this.revolveAxis = { a: cand.a, b: cand.b };
+    this.revolveAxisLineId = cand.id;
+    this.deps.engine.setOrbitSuppressed(true);
+    this.deps.engine.showRevolvePreview(this.plane, this.revolveProfile.ring, this.revolveAxis, this.revolve.angle);
+    toolChipStore.getState().showRevolve(
+      this.revolve.angle,
+      this.revolveChipWorld(),
+      (v) => this.onRevolveChip(v),
+      () => this.resetRevolveAxis(),
+    );
+    viewportStore.getState().setStatusHint("Drag to set angle, click to revolve 360°, or type a value");
+    toolStore.setState({ phase: "armed" });
+    this.updateDebug();
+  }
+
+  private nearestAxisCandidate(u: number, v: number): number {
+    const tol = this.deps.engine.planePixelWorld() * 10;
+    let best = -1;
+    let bestD = tol;
+    this.revolveAxisCandidates.forEach((c, i) => {
+      const d = distPointSeg(u, v, c.a, c.b);
+      if (d <= bestD) {
+        bestD = d;
+        best = i;
+      }
+    });
+    return best;
+  }
+
+  /** Apply an in-progress angle drag from the current pointer x (Alt suppresses snap). */
+  private applyRevolveDrag(clientX: number): void {
+    if (!this.revolveAxis || !this.revolveProfile) return;
+    this.revolveLastX = clientX;
+    const raw = angleFromDrag(this.revolveStartAngle, clientX - this.revolveDownX);
+    const angle = snapRevolveAngle(raw, this.altHeld);
+    this.revolve = revolveStep(this.revolve, { kind: "drag", angle }).state;
+    this.deps.engine.setRevolveAngle(this.revolveProfile.ring, this.revolveAxis, angle);
+    toolChipStore.getState().setValue(angle);
+  }
+
+  private async commitRevolve(): Promise<void> {
+    const angle = this.revolve.angle;
+    const sketchId = this.revolveSketchId;
+    const regionId = this.revolveRegionId;
+    if (!sketchId || !regionId || !this.revolveProfile) {
+      this.finishRevolve(null);
+      return;
+    }
+    toolStore.setState({ phase: "committing" });
+    const axis: AxisRef | undefined = this.revolveAxisLineId
+      ? { kind: "sketchLine", sketchId, lineId: this.revolveAxisLineId }
+      : undefined;
+    const op: OperationOp = {
+      opType: "Revolve",
+      sketchId,
+      regionId,
+      featureId: this.revolveEditFeatureId,
+      inputs: [{ primary: { bodyId: "", kind: "face" }, anchor: {} }],
+      params: { angleDeg: angle, axis, booleanMode: "NewBody" },
+    };
+    try {
+      const res = await this.client.applyOperation(op);
+      this.applyResult(res);
+      const bodyId = res.changedBodies[0]?.bodyId ?? null;
+      if (bodyId) {
+        // Drop L1 only once the exact body enters the scene (mirror the extrude reconcile).
+        this.commitRevolveBodyUnsub = this.deps.onBodyLoaded((loaded) => {
+          if (loaded !== bodyId) return;
+          this.commitRevolveBodyUnsub?.();
+          this.commitRevolveBodyUnsub = null;
+          this.finishRevolve(bodyId);
+        });
+      } else {
+        this.finishRevolve(null);
+      }
+    } catch (e) {
+      this.finishRevolve(null);
+      viewportStore.getState().setStatusHint(`Revolve failed: ${errMessage(e)}`);
+    }
+  }
+
+  private finishRevolve(bodyId: string | null): void {
+    this.deps.engine.hideRevolvePreview();
+    this.deps.engine.setOrbitSuppressed(false);
+    toolChipStore.getState().clear();
+    this.revolve = revolveStep(this.revolve, { kind: "settle" }).state;
+    this.revolveProfile = null;
+    this.revolveAxis = null;
+    this.revolveAxisLineId = null;
+    this.revolveAxisCandidates = [];
+    this.revolveEditFeatureId = undefined;
+    this.revolveArmedDown = false;
+    if (this.dragging === "revolve") this.dragging = null;
+    if (bodyId) {
+      selectionStore.getState().set([{ kind: "body", id: bodyId }]);
+      viewportStore.getState().setStatusHint("Revolved");
+    }
+    toolStore.getState().setTool("select");
+    this.updateDebug();
+  }
+
   private armFilletFromSelection(): void {
     const edges = selectionStore.getState().selected.filter((r) => r.kind === "edge");
     if (edges.length === 0) {
@@ -278,6 +554,12 @@ export class ModelToolController {
       this.filletStartRadius = this.fillet.radius;
       this.fillet = filletStep(this.fillet, { kind: "grabEdge" }).state;
       toolStore.setState({ phase: "dragging" });
+    } else if (this.revolve.phase === "armed") {
+      // Defer grab to the first move: a plain click (no move) commits 360° instead.
+      this.revolveArmedDown = true;
+      this.revolveDownX = e.clientX;
+      this.revolveLastX = e.clientX;
+      this.revolveStartAngle = this.revolve.angle;
     }
   };
 
@@ -298,6 +580,16 @@ export class ModelToolController {
       const radius = radiusFromDrag(this.filletStartRadius, dy, { worldPerPx: this.engine.planePixelWorld() });
       this.fillet = filletStep(this.fillet, { kind: "drag", radius }).state;
       toolChipStore.getState().setValue(radius);
+    } else if (this.dragging === "revolve") {
+      this.applyRevolveDrag(e.clientX);
+    } else if (this.revolveArmedDown && this.moved && this.downButton === 0 && this.revolve.phase === "armed") {
+      // First movement past the threshold promotes the armed press into an angle drag.
+      this.dragging = "revolve";
+      this.revolve = revolveStep(this.revolve, { kind: "grab" }).state;
+      toolStore.setState({ phase: "dragging" });
+      this.applyRevolveDrag(e.clientX);
+    } else if (this.revolve.phase === "axisPick") {
+      this.updateRevolveAxisHover(e.clientX, e.clientY);
     } else if (this.extrude.phase === "armed") {
       this.engine.setExtrudeHandleHover(this.engine.hitExtrudeHandle(e.clientX, e.clientY));
     }
@@ -320,6 +612,26 @@ export class ModelToolController {
       this.dragging = null;
       this.fillet = filletStep(this.fillet, { kind: "release" }).state;
       void this.commitFillet();
+      return;
+    }
+    if (this.dragging === "revolve") {
+      this.dragging = null;
+      this.revolveArmedDown = false;
+      this.revolve = revolveStep(this.revolve, { kind: "release" }).state;
+      void this.commitRevolve();
+      return;
+    }
+    // Plain click after an axis is chosen commits the default full 360°.
+    if (wasClick && this.revolveArmedDown && this.revolve.phase === "armed") {
+      this.revolveArmedDown = false;
+      this.revolve = revolveStep(this.revolve, { kind: "quickCommit" }).state;
+      void this.commitRevolve();
+      return;
+    }
+    this.revolveArmedDown = false;
+    // Revolve axis-pick (a click, not a drag).
+    if (wasClick && this.revolve.phase === "axisPick") {
+      this.tryPickRevolveAxis(e.clientX, e.clientY);
       return;
     }
     // Boolean tool-body pick (a click, not a drag).
@@ -578,6 +890,20 @@ export class ModelToolController {
     void this.armExtrude(sketchId, featureId, depth);
   }
 
+  /** Re-arm the revolve tool on an existing revolve feature (param-only angle edit). */
+  editRevolveFeature(featureId: string): void {
+    const feat = documentStore.getState().features.find((f) => f.id === featureId);
+    if (!feat || feat.kind !== "revolve") return;
+    const sketchId = this.lastArmedSketch ?? Object.keys(documentStore.getState().sketches)[0];
+    if (!sketchId) {
+      viewportStore.getState().setStatusHint("No sketch to re-edit");
+      return;
+    }
+    const angle = angleFromValueText(feat.valueText);
+    toolStore.getState().setTool("revolve");
+    void this.armRevolve(sketchId, featureId, angle);
+  }
+
   // ── shared helpers ────────────────────────────────────────────────────────────
 
   private semanticRefFor(e: EntityRef): SemanticRef {
@@ -633,6 +959,8 @@ export class ModelToolController {
       if (this.dragging === "extrude") {
         this.extrude = extrudeStep(this.extrude, { kind: "drag", depth: this.extrude.depth, symmetric: true }).state;
         this.engine.setExtrudeDepth(this.extrude.depth, true);
+      } else if (this.dragging === "revolve") {
+        this.applyRevolveDrag(this.revolveLastX); // re-evaluate the snap without Alt
       }
     }
   };
@@ -643,6 +971,8 @@ export class ModelToolController {
       if (this.dragging === "extrude") {
         this.extrude = extrudeStep(this.extrude, { kind: "drag", depth: this.extrude.depth, symmetric: false }).state;
         this.engine.setExtrudeDepth(this.extrude.depth, false);
+      } else if (this.dragging === "revolve") {
+        this.applyRevolveDrag(this.revolveLastX); // re-apply the 45° snap
       }
     }
   };
@@ -681,10 +1011,27 @@ export class ModelToolController {
     toolChipStore.getState().clear();
   }
 
+  private cancelRevolve(): void {
+    this.commitRevolveBodyUnsub?.();
+    this.commitRevolveBodyUnsub = null;
+    this.deps.engine.setOrbitSuppressed(false);
+    this.engine.hideRevolvePreview();
+    this.revolve = revolveInit();
+    this.revolveProfile = null;
+    this.revolveAxis = null;
+    this.revolveAxisLineId = null;
+    this.revolveAxisCandidates = [];
+    this.revolveEditFeatureId = undefined;
+    this.revolveArmedDown = false;
+    if (this.dragging === "revolve") this.dragging = null;
+    toolChipStore.getState().clear();
+  }
+
   private cancelAll(): void {
     this.cancelPreview();
     this.cancelFillet();
     this.cancelBoolean();
+    this.cancelRevolve();
     toolChipStore.getState().clear();
     toolStore.setState({ phase: toolStore.getState().modelTool === "select" ? "idle" : "armed" });
     this.updateDebug();
@@ -699,6 +1046,7 @@ export class ModelToolController {
     window.removeEventListener("keyup", this.onKeyUp, true);
     if (this.trailingTimer) clearTimeout(this.trailingTimer);
     this.commitBodyUnsub?.();
+    this.commitRevolveBodyUnsub?.();
     if (this.session) removeMesh(this.session.previewBodyId);
     for (const u of this.unsubs) u();
     this.unsubs.length = 0;
@@ -712,4 +1060,30 @@ function toFeatureMeta(f: FeatureRecord): FeatureMeta {
 /** Human message from a rejected backend call (ApiError → JS Error message). */
 function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+/** Perpendicular distance from a plane point (u,v) to the segment a→b. */
+function distPointSeg(u: number, v: number, a: [number, number], b: [number, number]): number {
+  const vx = b[0] - a[0];
+  const vy = b[1] - a[1];
+  const wx = u - a[0];
+  const wy = v - a[1];
+  const c2 = vx * vx + vy * vy;
+  let t = c2 > 0 ? (vx * wx + vy * wy) / c2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(u - (a[0] + t * vx), v - (a[1] + t * vy));
+}
+
+/** A deterministic axis just left of a profile (re-edit fallback when no line exists). */
+function fallbackAxis(ring: [number, number][]): LatheAxis {
+  let minU = Infinity;
+  let minV = Infinity;
+  let maxV = -Infinity;
+  for (const [u, w] of ring) {
+    if (u < minU) minU = u;
+    if (w < minV) minV = w;
+    if (w > maxV) maxV = w;
+  }
+  const x = minU - 1;
+  return { a: [x, minV], b: [x, maxV] };
 }

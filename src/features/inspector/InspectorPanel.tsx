@@ -29,6 +29,7 @@ function selectFeature(id: string): void {
 }
 function editFeature(item: FeatureMeta): void {
   if (item.kind === "extrude") getModelToolController()?.editExtrudeFeature(item.id);
+  else if (item.kind === "revolve") getModelToolController()?.editRevolveFeature(item.id);
 }
 
 /**
@@ -146,6 +147,9 @@ function FeatureState({
       </div>
       {feat?.kind === "extrude" && (
         <div className="mt-1 text-[12px] text-ink-6">Double-click to edit the depth.</div>
+      )}
+      {feat?.kind === "revolve" && (
+        <div className="mt-1 text-[12px] text-ink-6">Double-click to edit the angle.</div>
       )}
       <SectionLabel className="pb-1.5 pt-4">History</SectionLabel>
       <HistoryList items={features} selectedId={featureId} onSelect={selectFeature} onEdit={editFeature} />

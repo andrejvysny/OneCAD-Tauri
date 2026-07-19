@@ -11,7 +11,7 @@
 import { createStore, useStore } from "zustand";
 import type { BooleanOperation } from "@/ipc/types";
 
-export type ChipKind = "none" | "extrudeDepth" | "filletRadius" | "booleanOp";
+export type ChipKind = "none" | "extrudeDepth" | "filletRadius" | "revolveAngle" | "booleanOp";
 
 export interface ToolChipState {
   kind: ChipKind;
@@ -27,9 +27,17 @@ export interface ToolChipState {
   onOp: ((op: BooleanOperation) => void) | null;
   /** Apply pressed (boolean chip). */
   onApply: (() => void) | null;
+  /** Axis-reset pressed (revolve chip). */
+  onResetAxis: (() => void) | null;
 
   showExtrude(value: number, worldPos: [number, number, number], onValue: (v: number) => void): void;
   showFillet(value: number, worldPos: [number, number, number], onValue: (v: number) => void): void;
+  showRevolve(
+    value: number,
+    worldPos: [number, number, number],
+    onValue: (v: number) => void,
+    onResetAxis: () => void,
+  ): void;
   showBoolean(
     op: BooleanOperation,
     worldPos: [number, number, number],
@@ -51,19 +59,23 @@ const CLEARED = {
   onValue: null,
   onOp: null,
   onApply: null,
+  onResetAxis: null,
 };
 
 export const toolChipStore = createStore<ToolChipState>()((set) => ({
   ...CLEARED,
 
   showExtrude(value, worldPos, onValue) {
-    set({ kind: "extrudeDepth", value, worldPos, onValue, onOp: null, onApply: null });
+    set({ kind: "extrudeDepth", value, worldPos, onValue, onOp: null, onApply: null, onResetAxis: null });
   },
   showFillet(value, worldPos, onValue) {
-    set({ kind: "filletRadius", value, worldPos, onValue, onOp: null, onApply: null });
+    set({ kind: "filletRadius", value, worldPos, onValue, onOp: null, onApply: null, onResetAxis: null });
+  },
+  showRevolve(value, worldPos, onValue, onResetAxis) {
+    set({ kind: "revolveAngle", value, worldPos, onValue, onResetAxis, onOp: null, onApply: null });
   },
   showBoolean(op, worldPos, onOp, onApply) {
-    set({ kind: "booleanOp", op, worldPos, onOp, onApply, onValue: null });
+    set({ kind: "booleanOp", op, worldPos, onOp, onApply, onValue: null, onResetAxis: null });
   },
   setValue(value) {
     set({ value });

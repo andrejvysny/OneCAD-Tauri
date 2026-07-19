@@ -60,7 +60,8 @@ Tracks: W = C++ worker, R = Rust core, F = frontend. Gates in **bold**.
 - [ ] param edit → history rebind → fillet survives or deterministic NeedsRepair; repair UI
 
 ## M5 — Lifecycle + recovery
-- [ ] revolve, boolean/split BodyId rules, checkpoints+envelopes, crash drills, 3-signature drift, onecad-regen CLI + CI gate, autosave/recovery, STL/OBJ
+- [x] Revolve frontend tool (2026-07-19): revolveStep FSM (idle→axisPick→armed→dragging→committing; plain-click=360° quickCommit; re-edit skips axis-pick), axis validity via axisSplitsRegion (strict-straddle reject, touching allowed), lathePreview Rodrigues sweep L1 (RevolvePreview engine object, candidate-axis highlight), revolveAngle px→deg + 45° detents (3° window, Alt suppress), editable ° chip + Axis reset, Revolve→addOperation/updateOperationParams mapping pinned (angleDeg Scalar DEGREES, internally-tagged AxisRef sketchLine, profile {sketchId,regionId}), HistoryList dblclick re-edit, mock lane parity (makeRevolveBodyMesh MESH1). Commit path = applyOperation (fillet-style; L2 preview lane is extrude-specific — seam noted). Frontend 346→373, build + hex gate clean — GATE PASSED (orchestrator-verified).
+- [ ] boolean/split BodyId rules, checkpoints+envelopes, crash drills, 3-signature drift, onecad-regen CLI + CI gate, autosave/recovery, STL/OBJ
 
 ## M6 — Hardening + backlog
 - [ ] Playwright e2e, perf baselines (1–5M tri bridge, solver tails), attack-surface tests, WebGPU spike, tauri-specta

@@ -132,6 +132,90 @@ export function filletStep(s: FilletFsm, e: FilletEvent): FilletStep {
   }
 }
 
+// ── Revolve ──────────────────────────────────────────────────────────────────
+//
+// Revolve adds an `axisPick` phase before the angle drag: the user first clicks a
+// sketch LINE to set the axis of revolution, then drags to sweep 0–360°. A plain
+// click after the axis is chosen commits the default full 360° (quickCommit).
+
+export const DEFAULT_REVOLVE_ANGLE = 360;
+
+export type RevolvePhase = "idle" | "axisPick" | "armed" | "dragging" | "committing";
+
+export interface RevolveFsm {
+  phase: RevolvePhase;
+  /** Revolution angle in DEGREES (0–360). */
+  angle: number;
+  hasRegion: boolean;
+  /** The chosen sketch-line axis id (null until an axis is picked). */
+  axisLineId: string | null;
+}
+
+export type RevolveEvent =
+  | { kind: "arm"; angle?: number; hasRegion?: boolean; hasAxis?: boolean; axisLineId?: string | null }
+  | { kind: "pickAxis"; lineId: string; valid: boolean }
+  | { kind: "resetAxis" }
+  | { kind: "grab" }
+  | { kind: "drag"; angle: number }
+  | { kind: "setAngle"; angle: number }
+  | { kind: "quickCommit" }
+  | { kind: "release" }
+  | { kind: "settle" }
+  | { kind: "cancel" };
+
+export interface RevolveStep {
+  state: RevolveFsm;
+  effect: ToolEffect;
+}
+
+export function revolveInit(): RevolveFsm {
+  return { phase: "idle", angle: DEFAULT_REVOLVE_ANGLE, hasRegion: false, axisLineId: null };
+}
+
+export function revolveStep(s: RevolveFsm, e: RevolveEvent): RevolveStep {
+  switch (e.kind) {
+    case "arm": {
+      if (e.hasRegion === false) return { state: revolveInit(), effect: "none" };
+      const angle = e.angle ?? DEFAULT_REVOLVE_ANGLE;
+      // A re-edit seeds an existing axis (param-only edit) → skip axis-pick.
+      if (e.hasAxis) {
+        return {
+          state: { phase: "armed", angle, hasRegion: true, axisLineId: e.axisLineId ?? null },
+          effect: "begin",
+        };
+      }
+      return { state: { phase: "axisPick", angle, hasRegion: true, axisLineId: null }, effect: "none" };
+    }
+    case "pickAxis":
+      if (s.phase !== "axisPick") return { state: s, effect: "none" };
+      if (!e.valid) return { state: s, effect: "none" }; // reject: stay in axis-pick
+      return { state: { ...s, phase: "armed", axisLineId: e.lineId }, effect: "begin" };
+    case "resetAxis":
+      if (s.phase !== "armed" && s.phase !== "dragging") return { state: s, effect: "none" };
+      return { state: { ...s, phase: "axisPick", axisLineId: null }, effect: "none" };
+    case "grab":
+      if (s.phase !== "armed") return { state: s, effect: "none" };
+      return { state: { ...s, phase: "dragging" }, effect: "none" };
+    case "drag":
+      if (s.phase !== "dragging") return { state: s, effect: "none" };
+      return { state: { ...s, angle: e.angle }, effect: "update" };
+    case "setAngle":
+      if (s.phase !== "armed" && s.phase !== "dragging") return { state: s, effect: "none" };
+      return { state: { ...s, angle: e.angle }, effect: "update" };
+    case "quickCommit":
+      if (s.phase !== "armed") return { state: s, effect: "none" };
+      return { state: { ...s, phase: "committing" }, effect: "commit" };
+    case "release":
+      if (s.phase !== "dragging") return { state: s, effect: "none" };
+      return { state: { ...s, phase: "committing" }, effect: "commit" };
+    case "settle":
+      return { state: revolveInit(), effect: "none" };
+    case "cancel":
+      if (s.phase === "idle") return { state: s, effect: "none" };
+      return { state: revolveInit(), effect: "cancel" };
+  }
+}
+
 // ── Boolean ──────────────────────────────────────────────────────────────────
 
 export type BooleanPhase = "idle" | "pickTool" | "armed" | "committing";

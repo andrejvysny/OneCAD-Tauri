@@ -26,7 +26,8 @@ import type {
   Unsubscribe,
   WorkerStatus,
 } from "./types";
-import { makeBoxMesh, makeCylinderMesh, makeExtrudeBodyMesh } from "./mockMeshes";
+import { makeBoxMesh, makeCylinderMesh, makeExtrudeBodyMesh, makeRevolveBodyMesh } from "./mockMeshes";
+import type { LatheAxis } from "@/tools/preview/lathePreview";
 import { createLocalSolverLane } from "./localSolver";
 
 const LATENCY_MS = 120;
@@ -196,6 +197,20 @@ function nextFeatureId(): string {
   return `mf${nextFeatureSeq++}`;
 }
 
+/** A deterministic axis just left of a profile (so a re-edit with no axis still forms a body). */
+function fallbackRevolveAxis(ring: [number, number][]): LatheAxis {
+  let minU = Infinity;
+  let minV = Infinity;
+  let maxV = -Infinity;
+  for (const [u, v] of ring) {
+    if (u < minU) minU = u;
+    if (v < minV) minV = v;
+    if (v > maxV) maxV = v;
+  }
+  const x = minU - 1;
+  return { a: [x, minV], b: [x, maxV] };
+}
+
 /** Apply one op forward (mutates features + bodies); returns the body diff. */
 function mutateOp(op: OperationOp): { changed: string[]; removed: string[]; label: string } {
   if (op.opType === "Extrude") {
@@ -213,6 +228,29 @@ function mutateOp(op: OperationOp): { changed: string[]; removed: string[]; labe
       mockFeatures = [...mockFeatures, { id: featureId, kind: "extrude", label: "Extrude", valueText, status: "ok" }];
     }
     return { changed: [bodyId], removed: [], label: "Extrude" };
+  }
+  if (op.opType === "Revolve") {
+    const { plane, profile } = lane.resolveExtrudeInput(op.sketchId, op.regionId);
+    const angle = op.params.angleDeg ?? 360;
+    const axisLine =
+      op.params.axis?.kind === "sketchLine"
+        ? lane.resolveSketchLine(op.sketchId, op.params.axis.lineId)
+        : null;
+    // Fall back to a vertical axis just left of the profile so a body still forms
+    // (re-edit carries no axis; the mock only needs a deterministic revolve).
+    const axis = axisLine ?? fallbackRevolveAxis(profile.ring);
+    const editing = op.featureId !== undefined && featureBodies.has(op.featureId);
+    const featureId = op.featureId ?? nextFeatureId();
+    const bodyId = editing ? featureBodies.get(featureId)! : nextBodyId();
+    syntheticBodies.set(bodyId, makeRevolveBodyMesh(profile.ring, axis, plane, angle));
+    featureBodies.set(featureId, bodyId);
+    const valueText = `${Math.round(Math.abs(angle))}°`;
+    if (editing) {
+      mockFeatures = mockFeatures.map((f) => (f.id === featureId ? { ...f, valueText } : f));
+    } else {
+      mockFeatures = [...mockFeatures, { id: featureId, kind: "revolve", label: "Revolve", valueText, status: "ok" }];
+    }
+    return { changed: [bodyId], removed: [], label: "Revolve" };
   }
   if (op.opType === "Fillet") {
     // MOCK LIMIT: no real rounding — re-emit the target body + add a feature.

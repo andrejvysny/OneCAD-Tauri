@@ -288,6 +288,57 @@ describe("operationToEditCommand", () => {
     expect(p.profile).toEqual({ sketchId: "sk", regionId: "r1" });
   });
 
+  it("maps Revolve to addOperation with angleDeg (DEGREES), sketchLine axis + profile", () => {
+    const cmd = operationToEditCommand({
+      opType: "Revolve",
+      sketchId: "sk",
+      regionId: "r1",
+      params: {
+        angleDeg: 270,
+        axis: { kind: "sketchLine", sketchId: "sk", lineId: "line-7" },
+        booleanMode: "NewBody",
+      },
+    });
+    expect(cmd.cmd).toBe("addOperation");
+    if (cmd.cmd !== "addOperation") throw new Error("unreachable");
+    expect(cmd.record.opType).toBe("Revolve");
+    const p = cmd.record.params as unknown as Record<string, unknown>;
+    // Unit pinned: angle passes through as a Scalar in DEGREES (no radians).
+    expect(p.angleDeg).toEqual({ value: 270 });
+    expect(p.axis).toEqual({ kind: "sketchLine", sketchId: "sk", lineId: "line-7" });
+    expect(p.booleanMode).toBe("NewBody");
+    expect(p.profile).toEqual({ sketchId: "sk", regionId: "r1" });
+  });
+
+  it("defaults Revolve booleanMode + omits an absent axis", () => {
+    const cmd = operationToEditCommand({
+      opType: "Revolve",
+      sketchId: "sk",
+      regionId: "r1",
+      params: { angleDeg: 360 },
+    });
+    if (cmd.cmd !== "addOperation") throw new Error("unreachable");
+    const p = cmd.record.params as unknown as Record<string, unknown>;
+    expect(p.angleDeg).toEqual({ value: 360 });
+    expect(p.booleanMode).toBe("NewBody");
+    expect("axis" in p).toBe(false);
+    expect("targetBodyId" in p).toBe(false);
+  });
+
+  it("maps a Revolve featureId edit to updateOperationParams (param-only re-edit)", () => {
+    const cmd = operationToEditCommand({
+      opType: "Revolve",
+      featureId: "rev-record-uuid",
+      sketchId: "sk",
+      regionId: "r1",
+      params: { angleDeg: 90 },
+    });
+    if (cmd.cmd !== "updateOperationParams") throw new Error("unreachable");
+    expect(cmd.record).toBe("rev-record-uuid");
+    expect(cmd.op.opType).toBe("Revolve");
+    expect((cmd.op.params as unknown as Record<string, unknown>).angleDeg).toEqual({ value: 90 });
+  });
+
   it("maps Boolean to addOperation with real body refs + operation", () => {
     const cmd = operationToEditCommand({
       opType: "Boolean",

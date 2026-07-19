@@ -27,12 +27,14 @@
  * lanes are wired (Boolean now; Extrude/Fillet with R-WP12 + AcquireElementIds).
  */
 import type {
+  AxisRef,
   BooleanParams,
   ExtrudeMode,
   ExtrudeParams,
   FeatureBooleanMode,
   FilletParams,
   OperationOp,
+  RevolveParams,
 } from "./types";
 
 /** A dimension value on the wire (Rust `Scalar {value, expr?}`). */
@@ -52,6 +54,20 @@ interface WireExtrudeParams {
   distance2: WireScalar;
 }
 
+/** Rust `AxisRef` (serde internally-tagged on `kind`, camelCase fields). */
+type WireAxisRef =
+  | { kind: "sketchLine"; sketchId: string; lineId: string }
+  | { kind: "edge"; bodyId: string; edgeId: string };
+
+interface WireRevolveParams {
+  profile?: { sketchId: string; regionId: string };
+  /** Rust `angleDeg` Scalar — DEGREES (no radians conversion). */
+  angleDeg: WireScalar;
+  axis?: WireAxisRef;
+  booleanMode: FeatureBooleanMode;
+  targetBodyId?: string;
+}
+
 interface WireFilletParams {
   radius: WireScalar;
   edgeIds: string[];
@@ -67,6 +83,7 @@ interface WireBooleanParams {
 /** A known op on the wire — adjacently tagged `{opType, params}` (SCHEMA §7.3). */
 type WireOperation =
   | { opType: "Extrude"; params: WireExtrudeParams }
+  | { opType: "Revolve"; params: WireRevolveParams }
   | { opType: "Fillet"; params: WireFilletParams }
   | { opType: "Boolean"; params: WireBooleanParams };
 
@@ -110,6 +127,23 @@ function extrudeParams(p: ExtrudeParams): WireExtrudeParams {
   return wire;
 }
 
+function axisRef(a: AxisRef): WireAxisRef {
+  return a.kind === "sketchLine"
+    ? { kind: "sketchLine", sketchId: a.sketchId, lineId: a.lineId }
+    : { kind: "edge", bodyId: a.bodyId, edgeId: a.edgeId };
+}
+
+function revolveParams(p: RevolveParams): WireRevolveParams {
+  const wire: WireRevolveParams = {
+    // Rust `angleDeg` is DEGREES — pass through unchanged (unit pinned).
+    angleDeg: scalar(p.angleDeg),
+    booleanMode: p.booleanMode ?? "NewBody",
+  };
+  if (p.axis !== undefined) wire.axis = axisRef(p.axis);
+  if (p.targetBodyId !== undefined) wire.targetBodyId = p.targetBodyId;
+  return wire;
+}
+
 function filletParams(p: FilletParams): WireFilletParams {
   return {
     radius: scalar(p.radius),
@@ -138,6 +172,14 @@ function wireOperation(op: OperationOp): WireOperation {
         params.profile = { sketchId: op.sketchId, regionId: op.regionId };
       }
       return { opType: "Extrude", params };
+    }
+    case "Revolve": {
+      const params = revolveParams(op.params);
+      // The profile is a SketchRegionRef (ids real once R-WP12 lands, as Extrude).
+      if (op.sketchId && op.regionId) {
+        params.profile = { sketchId: op.sketchId, regionId: op.regionId };
+      }
+      return { opType: "Revolve", params };
     }
     case "Fillet":
       return { opType: "Fillet", params: filletParams(op.params) };

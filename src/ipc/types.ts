@@ -297,7 +297,7 @@ export interface WorkerStatus {
 // for the tool layer. Values keep OneCAD-CPP `operationTypeName` spelling
 // (PascalCase). The vertical slice authors Extrude | Fillet | Boolean.
 
-export type OpType = "Extrude" | "Fillet" | "Boolean";
+export type OpType = "Extrude" | "Revolve" | "Fillet" | "Boolean";
 
 /** Extrude end condition (SCHEMA §7.3 ExtrudeParams). */
 export type ExtrudeMode = "Blind" | "ThroughAll" | "Symmetric" | "ToNext" | "ToFace";
@@ -336,6 +336,28 @@ export interface ExtrudeParams {
   distance2?: number;
 }
 
+/**
+ * A revolve/pattern axis (SCHEMA §7.3 `axis`, Rust `AxisRef`, serde tag `kind`).
+ * The vertical-slice revolve tool only authors the `sketchLine` variant (a line
+ * entity in the profile's sketch); `edge` mirrors the Rust variant for parity.
+ */
+export type AxisRef =
+  | { kind: "sketchLine"; sketchId: string; lineId: string }
+  | { kind: "edge"; bodyId: string; edgeId: string };
+
+/**
+ * Revolve op params (SCHEMA §7.3 / Rust `RevolveParams`). `angleDeg` is the sweep
+ * in DEGREES — the same unit Rust's `angleDeg` Scalar carries, so the command
+ * mapper passes it through with NO conversion. `axis` is the sketch line to
+ * revolve around; `booleanMode`/`targetBodyId` mirror ExtrudeParams.
+ */
+export interface RevolveParams {
+  angleDeg: number;
+  axis?: AxisRef;
+  booleanMode?: FeatureBooleanMode;
+  targetBodyId?: string;
+}
+
 /** Fillet/Chamfer op params (SCHEMA §7.3 FilletChamferParams; `mode` distinguishes). */
 export interface FilletParams {
   mode: "Fillet" | "Chamfer";
@@ -368,6 +390,15 @@ export type OperationOp =
       regionId: string;
       inputs?: SemanticRef[];
       params: ExtrudeParams;
+    }
+  | {
+      opType: "Revolve";
+      opId?: string;
+      featureId?: string;
+      sketchId: string;
+      regionId: string;
+      inputs?: SemanticRef[];
+      params: RevolveParams;
     }
   | {
       opType: "Fillet";

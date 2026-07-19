@@ -49,7 +49,18 @@ export function ModelToolChips() {
   if (kind === "none" || !worldPos) return null;
 
   const content =
-    kind === "extrudeDepth" || kind === "filletRadius" ? (
+    kind === "revolveAngle" ? (
+      <div className="pointer-events-auto inline-flex items-center gap-1">
+        <DimensionInput value={value} suffix="°" onCommit={(v) => toolChipStore.getState().onValue?.(v)} />
+        <button
+          type="button"
+          onClick={() => toolChipStore.getState().onResetAxis?.()}
+          className="rounded-sm bg-chip px-2 py-1 text-[11px] font-medium text-ink-3 hover:bg-hover-2"
+        >
+          Axis
+        </button>
+      </div>
+    ) : kind === "extrudeDepth" || kind === "filletRadius" ? (
       <DimensionInput value={value} suffix="mm" onCommit={(v) => toolChipStore.getState().onValue?.(v)} />
     ) : (
       <div className="pointer-events-auto inline-flex items-center gap-1 rounded-md border border-border bg-white p-1 shadow-panel">

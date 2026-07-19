@@ -6,10 +6,14 @@ import {
   filletStep,
   booleanInit,
   booleanStep,
+  revolveInit,
+  revolveStep,
   DEFAULT_EXTRUDE_DEPTH,
+  DEFAULT_REVOLVE_ANGLE,
   type ExtrudeFsm,
   type FilletFsm,
   type BooleanFsm,
+  type RevolveFsm,
 } from "./modelToolMachine";
 
 describe("extrude FSM", () => {
@@ -78,6 +82,98 @@ describe("fillet FSM", () => {
     const committed = filletStep(dragged.state, { kind: "release" });
     expect(committed.effect).toBe("commit");
     expect(committed.state.phase).toBe("committing");
+  });
+});
+
+describe("revolve FSM", () => {
+  it("runs arm → axisPick → pickAxis → grab → drag → release → settle", () => {
+    let s: RevolveFsm = revolveInit();
+    expect(s.phase).toBe("idle");
+    expect(s.angle).toBe(DEFAULT_REVOLVE_ANGLE);
+
+    let step = revolveStep(s, { kind: "arm" });
+    expect(step.effect).toBe("none"); // no axis yet → axis-pick, no preview
+    expect(step.state.phase).toBe("axisPick");
+    s = step.state;
+
+    step = revolveStep(s, { kind: "pickAxis", lineId: "L1", valid: true });
+    expect(step.effect).toBe("begin"); // axis chosen → L1 lathe begins
+    expect(step.state.phase).toBe("armed");
+    expect(step.state.axisLineId).toBe("L1");
+    s = step.state;
+
+    s = revolveStep(s, { kind: "grab" }).state;
+    expect(s.phase).toBe("dragging");
+
+    step = revolveStep(s, { kind: "drag", angle: 90 });
+    expect(step.effect).toBe("update");
+    expect(step.state.angle).toBe(90);
+    s = step.state;
+
+    step = revolveStep(s, { kind: "release" });
+    expect(step.effect).toBe("commit");
+    expect(step.state.phase).toBe("committing");
+    s = step.state;
+
+    expect(revolveStep(s, { kind: "settle" }).state.phase).toBe("idle");
+  });
+
+  it("rejects an invalid axis and stays in axis-pick", () => {
+    const axisPick = revolveStep(revolveInit(), { kind: "arm" }).state;
+    const step = revolveStep(axisPick, { kind: "pickAxis", lineId: "L9", valid: false });
+    expect(step.effect).toBe("none");
+    expect(step.state.phase).toBe("axisPick");
+    expect(step.state.axisLineId).toBeNull();
+  });
+
+  it("plain click after axis-pick commits the default 360° (quickCommit)", () => {
+    const armed = revolveStep(
+      revolveStep(revolveInit(), { kind: "arm" }).state,
+      { kind: "pickAxis", lineId: "L1", valid: true },
+    ).state;
+    expect(armed.angle).toBe(360);
+    const step = revolveStep(armed, { kind: "quickCommit" });
+    expect(step.effect).toBe("commit");
+    expect(step.state.phase).toBe("committing");
+    expect(step.state.angle).toBe(360);
+    // quickCommit is only legal from armed (not from axis-pick).
+    const axisPick = revolveStep(revolveInit(), { kind: "arm" }).state;
+    expect(revolveStep(axisPick, { kind: "quickCommit" }).effect).toBe("none");
+  });
+
+  it("re-edit arms straight into armed with the seeded angle (skips axis-pick)", () => {
+    const step = revolveStep(revolveInit(), { kind: "arm", angle: 120, hasAxis: true, axisLineId: "L2" });
+    expect(step.effect).toBe("begin");
+    expect(step.state.phase).toBe("armed");
+    expect(step.state.angle).toBe(120);
+    expect(step.state.axisLineId).toBe("L2");
+  });
+
+  it("resetAxis returns to axis-pick, clearing the axis; setAngle works while armed", () => {
+    const armed = revolveStep(
+      revolveStep(revolveInit(), { kind: "arm" }).state,
+      { kind: "pickAxis", lineId: "L1", valid: true },
+    ).state;
+    const set = revolveStep(armed, { kind: "setAngle", angle: 45 });
+    expect(set.effect).toBe("update");
+    expect(set.state.angle).toBe(45);
+
+    const reset = revolveStep(set.state, { kind: "resetAxis" });
+    expect(reset.state.phase).toBe("axisPick");
+    expect(reset.state.axisLineId).toBeNull();
+    // drag/quickCommit are ignored back in axis-pick.
+    expect(revolveStep(reset.state, { kind: "drag", angle: 10 }).effect).toBe("none");
+  });
+
+  it("cancel from any active phase resets; idle cancel is a no-op", () => {
+    const armed = revolveStep(
+      revolveStep(revolveInit(), { kind: "arm" }).state,
+      { kind: "pickAxis", lineId: "L1", valid: true },
+    ).state;
+    const step = revolveStep(armed, { kind: "cancel" });
+    expect(step.effect).toBe("cancel");
+    expect(step.state.phase).toBe("idle");
+    expect(revolveStep(revolveInit(), { kind: "cancel" }).effect).toBe("none");
   });
 });
 
