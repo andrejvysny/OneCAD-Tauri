@@ -925,6 +925,104 @@ async fn h5b_destructive_edit_is_deterministic_needs_repair() {
         report.needs_repair
     );
 
+    // ── Finding 2: a refId-only resolve (exactly what RepairPanel sends) hydrates ──
+    // the STORED fillet edge ref, so it returns the IDENTICAL evidence as passing the
+    // full ref. Before the fix the lean request resolved against an EMPTY bodyId → a
+    // degenerate "No candidates" even when the explicit ref surfaces candidates.
+    let snap_id = SnapshotId(report.snapshot_id);
+    let ref_id = rt
+        .repair_items()
+        .iter()
+        .find(|i| i.step_index == 2)
+        .map(|i| i.ref_id.clone())
+        .expect("the fillet step has a repair item with a refId");
+
+    // (a) refId-only — the panel's `resolveRefs([{refId}])`, an EMPTY ElementRef.
+    let empty_ref = ElementRef {
+        primary: None,
+        intent: None,
+        anchor: None,
+        extra: Default::default(),
+    };
+    let lean = rt
+        .resolve_refs(ResolveRequest {
+            snapshot_id: snap_id,
+            refs: vec![ResolveRef {
+                ref_id: ref_id.clone(),
+                element: empty_ref,
+            }],
+        })
+        .await
+        .expect("refId-only resolve (hydrated from the stored ref)");
+
+    // (b) explicit — the FULL stored fillet edge ref; same refId for a 1:1 compare.
+    let explicit_ref = ElementRef {
+        primary: Some(PrimaryRef {
+            body: setup.body,
+            element: setup.edge_el.clone(),
+            kind: ElementKind::Edge,
+            extra: Default::default(),
+        }),
+        intent: None,
+        anchor: Some(AnchorIntent {
+            world_point: setup.edge_anchor,
+            surface_uv: None,
+            local_frame: None,
+            adjacency_hint: None,
+            extra: Default::default(),
+        }),
+        extra: Default::default(),
+    };
+    let explicit = rt
+        .resolve_refs(ResolveRequest {
+            snapshot_id: snap_id,
+            refs: vec![ResolveRef {
+                ref_id: ref_id.clone(),
+                element: explicit_ref,
+            }],
+        })
+        .await
+        .expect("explicit-ref resolve");
+
+    assert_eq!(lean.len(), 1);
+    assert_eq!(explicit.len(), 1);
+    // The hydrated refId-only resolve is byte-identical to the explicit-ref resolve.
+    assert_eq!(
+        lean[0].outcome, explicit[0].outcome,
+        "Finding 2: refId-only resolve must hydrate the stored ref and match the explicit-ref result"
+    );
+    let candidate_keys = |o: &ResolveOutcome| -> Vec<String> {
+        match o {
+            ResolveOutcome::NeedsRepair(item) => item
+                .candidates
+                .iter()
+                .map(|c| c.topo_key.as_str().to_string())
+                .collect(),
+            _ => Vec::new(),
+        }
+    };
+    let lean_keys = candidate_keys(&lean[0].outcome);
+    assert_eq!(
+        lean_keys,
+        candidate_keys(&explicit[0].outcome),
+        "the hydrated resolve carries the SAME candidate evidence as the explicit ref"
+    );
+    assert!(
+        matches!(lean[0].outcome, ResolveOutcome::NeedsRepair(_)),
+        "the refId-only resolve is a proper NeedsRepair (never a silent bind), got {:?}",
+        lean[0].outcome
+    );
+    assert!(
+        !lean_keys.is_empty(),
+        "the hydrated refId-only resolve surfaces candidates (NOT the pre-fix empty-body \
+         'No candidates') — {} candidate(s)",
+        lean_keys.len()
+    );
+    eprintln!(
+        "FINDING-2 PASS: refId-only resolve ({ref_id}) hydrated to {} candidate(s), identical to explicit-ref",
+        lean_keys.len()
+    );
+
     wm.shutdown().await;
 }
 
@@ -1010,6 +1108,89 @@ async fn stale_region_id_after_sketch_edit_fails_deterministically() {
         "the failure reason is IDENTICAL on replay (determinism)"
     );
     eprintln!("STALE-REGION PASS: stale '{region_a}' after edit ⇒ deterministic OP_FAILED, no body — {reason}");
+
+    wm.shutdown().await;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Finding 1 — a fillet built from the EXACT JSON the FRONTEND MAPPER emits
+// (`operationToEditCommand` → `filletParams`) applies through the real worker.
+// Before the fix the UI authored a pure-`edgeIds` fillet whose `derive_inputs`
+// populated NO body → `FilletChamferOp::target_body_of` failed "requires body input".
+// The mapper now carries typed `edges` (bare-uuid `primary.bodyId` + anchor) in
+// lockstep with `edgeIds`, so a UI-selected fillet reaches the worker with a body.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn fillet_applies_from_frontend_mapper_json() {
+    let Some(bin) = real_worker() else {
+        eprintln!("skip: no worker binary (set ONECAD_WORKER_PATH)");
+        return;
+    };
+    let wm = spawn_worker(bin).await;
+    let mut rt = runtime_over(&wm);
+    let sid = SketchId(Uuid::from_u128(0x5F));
+
+    // Build + publish a box; pick a vertical edge (topoKey + world-midpoint anchor).
+    let sketch = single_rect(sid, 0.0, 0.0, 40.0, 20.0);
+    add_op(&mut rt, sketch_record(&sketch));
+    add_op(&mut rt, extrude_record(sid, "", 25.0));
+    let report = regen_all(&mut rt).await;
+    let _ = published(&report, "frontend-json box");
+    let body = report.changed[0].0;
+    let mesh = body_mesh(&mut rt, body).await;
+    let view = validate_mesh_blob(&mesh).expect("box MESH1 validates");
+    assert_eq!(view.face_count, 6, "a box has 6 faces");
+    let (edge_key, edge_anchor) = vertical_edge_pick(&view, &mesh);
+
+    // The EXACT `apply_edit_command` payload the frontend mapper emits for a
+    // UI-selected fillet: `{recordId, opType, params}` with typed `edges` (bare-uuid
+    // `primary.bodyId`, `elementId` == `edgeIds[0]` — F2 lockstep — + the pick anchor)
+    // parallel to `edgeIds`. `bodyId` is the BARE uuid the frontend holds after
+    // `bareBodyId` (core `BodyId` serde is `#[serde(transparent)]`).
+    let record_id = Uuid::from_u128(FILLET_REC);
+    let json = serde_json::json!({
+        "cmd": "addOperation",
+        "atCursor": true,
+        "record": {
+            "recordId": record_id.to_string(),
+            "opType": "Fillet",
+            "params": {
+                "radius": { "value": 2.0 },
+                "edgeIds": [edge_key.clone()],
+                "chainTangentEdges": true,
+                "edges": [{
+                    "primary": { "bodyId": body.to_string(), "elementId": edge_key.clone(), "kind": "edge" },
+                    "anchor": { "worldPoint": [edge_anchor.x, edge_anchor.y, edge_anchor.z] }
+                }]
+            }
+        }
+    });
+    let cmd: EditCommand =
+        serde_json::from_value(json).expect("frontend fillet JSON deserializes to an EditCommand");
+    rt.apply(cmd)
+        .expect("apply the frontend-shaped fillet (lockstep validation passes)");
+
+    let rep_f = regen_all(&mut rt).await;
+    let snap_f = published(&rep_f, "frontend-json fillet").clone();
+    // The body input RESOLVED (not the pre-fix "requires body input"): the fillet APPLIES
+    // — a rolled face is added on the same body (6 → ≥7). A vertical box edge reliably
+    // applies (as `build_filleted_box` asserts), so NeedsRepair here would be a regression.
+    assert_eq!(
+        snap_f.repair_summary.needs_repair_count, 0,
+        "the frontend-shaped fillet binds its body + applies (no NeedsRepair)"
+    );
+    let fmesh = body_mesh(&mut rt, body).await;
+    let fview = validate_mesh_blob(&fmesh).expect("filleted MESH1 validates");
+    assert!(
+        fview.face_count >= 7,
+        "fillet APPLIED — a rolled face is added (6 → ≥7), got {}",
+        fview.face_count
+    );
+    eprintln!(
+        "FINDING-1 PASS: frontend-mapper fillet JSON APPLIES — faces {} → {} on edge {edge_key}",
+        view.face_count, fview.face_count
+    );
 
     wm.shutdown().await;
 }

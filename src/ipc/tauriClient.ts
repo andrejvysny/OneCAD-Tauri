@@ -98,6 +98,7 @@ const CMD = {
   saveFileDialog: "save_file_dialog",
   getMesh: "get_mesh",
   applyEditCommand: "apply_edit_command",
+  getOperationParams: "get_operation_params",
   undo: "undo",
   redo: "redo",
   enterSketch: "enter_sketch",
@@ -534,6 +535,12 @@ export function createTauriClient(): CadClient {
     return applyEdit(CMD.applyEditCommand, { command }, editCommandLabel(command));
   }
 
+  async function getOperationParams(recordId: string): Promise<Record<string, unknown>> {
+    // Read-only: the stored op's params (EditCommand `op.params` serde shape), so a
+    // scalar re-edit can deep-merge without clobbering axis / openFaces / edges.
+    return call<Record<string, unknown>>(CMD.getOperationParams, { recordId });
+  }
+
   // ── Promotion (pick → ElementId) ──────────────────────────────────────────
   async function promoteSelection(bodyId: string, picks: PromotePick[]): Promise<PromotedElement[]> {
     // promote_selection wants the `body_<uuid>` wire form; document-changed hands
@@ -647,6 +654,7 @@ export function createTauriClient(): CadClient {
     promoteSelection,
     resolveRefs,
     applyEditCommand,
+    getOperationParams,
 
     // ── Two-level preview (local seam; backend preview verb TBD) ──────────────
     beginPreview: lane.beginPreview,

@@ -152,6 +152,7 @@ pub fn run() {
             api::check_recovery,
             api::recover_document,
             api::apply_edit_command,
+            api::get_operation_params,
             api::undo,
             api::redo,
             api::get_projection,

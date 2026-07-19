@@ -32,6 +32,7 @@ import type {
   WorkerStatus,
 } from "./types";
 import type { WireEditCommand } from "./tauriCommandMap";
+import { wireParamsOf } from "./tauriCommandMap";
 import { makeBoxMesh, makeCylinderMesh, makeExtrudeBodyMesh, makeRevolveBodyMesh } from "./mockMeshes";
 import type { LatheAxis } from "@/tools/preview/lathePreview";
 import { createLocalSolverLane } from "./localSolver";
@@ -178,6 +179,9 @@ let nextFeatureSeq = 100;
 /** featureId → bodyId, so a parametric edit rebuilds the SAME body. */
 const featureBodies = new Map<string, string>();
 
+/** featureId → last committed wire params (the `get_operation_params` source). */
+const featureParams = new Map<string, Record<string, unknown>>();
+
 interface DocSnap {
   label: string;
   features: FeatureRecord[];
@@ -239,7 +243,12 @@ function fallbackRevolveAxis(ring: [number, number][]): LatheAxis {
 }
 
 /** Apply one op forward (mutates features + bodies); returns the body diff. */
-function mutateOp(op: OperationOp): { changed: string[]; removed: string[]; label: string } {
+function mutateOp(op: OperationOp): {
+  changed: string[];
+  removed: string[];
+  label: string;
+  featureId: string;
+} {
   if (op.opType === "Extrude") {
     const { plane, profile } = lane.resolveExtrudeInput(op.sketchId, op.regionId);
     const distance = op.params.distance ?? 10;
@@ -254,7 +263,7 @@ function mutateOp(op: OperationOp): { changed: string[]; removed: string[]; labe
     } else {
       mockFeatures = [...mockFeatures, { id: featureId, kind: "extrude", label: "Extrude", valueText, status: "ok" }];
     }
-    return { changed: [bodyId], removed: [], label: "Extrude" };
+    return { changed: [bodyId], removed: [], label: "Extrude", featureId };
   }
   if (op.opType === "Revolve") {
     const { plane, profile } = lane.resolveExtrudeInput(op.sketchId, op.regionId);
@@ -277,7 +286,7 @@ function mutateOp(op: OperationOp): { changed: string[]; removed: string[]; labe
     } else {
       mockFeatures = [...mockFeatures, { id: featureId, kind: "revolve", label: "Revolve", valueText, status: "ok" }];
     }
-    return { changed: [bodyId], removed: [], label: "Revolve" };
+    return { changed: [bodyId], removed: [], label: "Revolve", featureId };
   }
   if (op.opType === "Fillet") {
     // MOCK LIMIT: no real rounding — re-emit the target body + add a feature.
@@ -285,7 +294,7 @@ function mutateOp(op: OperationOp): { changed: string[]; removed: string[]; labe
     const featureId = op.featureId ?? nextFeatureId();
     const valueText = `${op.params.radius.toFixed(1)} mm`;
     mockFeatures = [...mockFeatures, { id: featureId, kind: "fillet", label: "Fillet", valueText, status: "ok" }];
-    return { changed: [bodyId], removed: [], label: "Fillet" };
+    return { changed: [bodyId], removed: [], label: "Fillet", featureId };
   }
   if (op.opType === "Shell") {
     // MOCK LIMIT: no real hollowing — re-emit the shelled body + a feature. A
@@ -299,7 +308,7 @@ function mutateOp(op: OperationOp): { changed: string[]; removed: string[]; labe
     } else {
       mockFeatures = [...mockFeatures, { id: featureId, kind: "shell", label: "Shell", valueText, status: "ok" }];
     }
-    return { changed: [bodyId], removed: [], label: "Shell" };
+    return { changed: [bodyId], removed: [], label: "Shell", featureId };
   }
   if (op.opType === "LinearPattern") {
     // MOCK LIMIT: no real instancing — re-emit the source body + a feature.
@@ -315,7 +324,7 @@ function mutateOp(op: OperationOp): { changed: string[]; removed: string[]; labe
         { id: featureId, kind: "linearPattern", label: "Linear Pattern", valueText, status: "ok" },
       ];
     }
-    return { changed: [bodyId], removed: [], label: "Linear Pattern" };
+    return { changed: [bodyId], removed: [], label: "Linear Pattern", featureId };
   }
   if (op.opType === "CircularPattern") {
     const bodyId = op.params.sourceBodyId ?? op.inputs?.[0]?.primary.bodyId ?? "body1";
@@ -330,7 +339,7 @@ function mutateOp(op: OperationOp): { changed: string[]; removed: string[]; labe
         { id: featureId, kind: "circularPattern", label: "Circular Pattern", valueText, status: "ok" },
       ];
     }
-    return { changed: [bodyId], removed: [], label: "Circular Pattern" };
+    return { changed: [bodyId], removed: [], label: "Circular Pattern", featureId };
   }
   if (op.opType === "MirrorBody") {
     const bodyId = op.params.sourceBodyId ?? op.inputs?.[0]?.primary.bodyId ?? "body1";
@@ -342,7 +351,7 @@ function mutateOp(op: OperationOp): { changed: string[]; removed: string[]; labe
     } else {
       mockFeatures = [...mockFeatures, { id: featureId, kind: "mirror", label: "Mirror", valueText, status: "ok" }];
     }
-    return { changed: [bodyId], removed: [], label: "Mirror" };
+    return { changed: [bodyId], removed: [], label: "Mirror", featureId };
   }
   // Boolean: MOCK removes the tool body, keeps the target (no real fusion).
   const { targetBodyId, toolBodyId, operation } = op.params;
@@ -352,14 +361,17 @@ function mutateOp(op: OperationOp): { changed: string[]; removed: string[]; labe
     ...mockFeatures,
     { id: featureId, kind: "boolean", label: operation, valueText: "", status: "ok" },
   ];
-  return { changed: [targetBodyId], removed: [toolBodyId], label: operation };
+  return { changed: [targetBodyId], removed: [toolBodyId], label: operation, featureId };
 }
 
 /** Commit an op: push undo, mutate, bump revision, build the result. */
 function commitOp(op: OperationOp): ApplyOperationResult {
   undoStack.push(snap(labelForOp(op)));
   redoStack.length = 0;
-  const { changed, removed, label } = mutateOp(op);
+  const { changed, removed, label, featureId } = mutateOp(op);
+  // Remember the committed wire params so `getOperationParams` can serve a re-edit
+  // its non-scalar inputs (axis / openFaces / edges) verbatim.
+  featureParams.set(featureId, wireParamsOf(op));
   mockRevision += 1;
   return {
     revision: mockRevision,
@@ -430,6 +442,45 @@ function mockResolveRefs(refs: ResolveRefRequest[]): ResolveRefResult[] {
   });
 }
 
+/** The numeric value of a wire `Scalar` (`{value}`), or `undefined` if not one. */
+function scalarValue(v: unknown): number | undefined {
+  if (v && typeof v === "object" && "value" in (v as Record<string, unknown>)) {
+    const n = (v as { value: unknown }).value;
+    if (typeof n === "number") return n;
+  }
+  return undefined;
+}
+
+/** The feature-chip value text for a re-edited op's wire params (mirrors mutateOp). */
+function valueTextForFeature(
+  kind: FeatureRecord["kind"],
+  params: Record<string, unknown>,
+): string | undefined {
+  switch (kind) {
+    case "extrude": {
+      const d = scalarValue(params.distance);
+      return d === undefined ? undefined : `${Math.abs(d).toFixed(1)} mm`;
+    }
+    case "revolve": {
+      const a = scalarValue(params.angleDeg);
+      return a === undefined ? undefined : `${Math.round(Math.abs(a))}°`;
+    }
+    case "fillet": {
+      const r = scalarValue(params.radius);
+      return r === undefined ? undefined : `${r.toFixed(1)} mm`;
+    }
+    case "shell": {
+      const t = scalarValue(params.thickness);
+      return t === undefined ? undefined : `${t.toFixed(1)} mm`;
+    }
+    case "linearPattern":
+    case "circularPattern":
+      return typeof params.count === "number" ? `×${params.count}` : undefined;
+    default:
+      return undefined;
+  }
+}
+
 /** Apply one raw EditCommand against the mock document model (M4b). */
 async function mockApplyEditCommand(command: WireEditCommand): Promise<ApplyOperationResult> {
   await wait();
@@ -449,10 +500,38 @@ async function mockApplyEditCommand(command: WireEditCommand): Promise<ApplyOper
       emitMockDocumentChanged({ revision: res.revision, changedBodies: [], removedBodies: [] });
       return res;
     }
-    case "updateOperationParams":
+    case "updateOperationParams": {
+      // A parametric re-edit deep-merged the scalar into the stored params at the
+      // mapper (preserving axis / openFaces / edges). Reflect it: store the merged
+      // params, refresh the feature's value text from the changed scalar, and re-emit
+      // its body (the lean mock keeps the same mesh — a documented geometry limit).
+      const feat = mockFeatures.find((f) => f.id === command.record);
+      const params = command.op.params as unknown as Record<string, unknown>;
+      if (feat) {
+        undoStack.push(snap("Update"));
+        redoStack.length = 0;
+        featureParams.set(command.record, { ...(featureParams.get(command.record) ?? {}), ...params });
+        const valueText = valueTextForFeature(feat.kind, params);
+        if (valueText !== undefined) {
+          mockFeatures = mockFeatures.map((f) => (f.id === command.record ? { ...f, valueText } : f));
+        }
+      }
+      mockRevision += 1;
+      const bodyId = featureBodies.get(command.record);
+      const changedBodies = bodyId ? [bodyRef(bodyId)] : [];
+      const res: ApplyOperationResult = {
+        revision: mockRevision,
+        changedBodies,
+        removedBodies: [],
+        features: mockFeatures.map(cloneFeature),
+        opLabel: "Update",
+      };
+      emitMockDocumentChanged({ revision: res.revision, changedBodies, removedBodies: [] });
+      return res;
+    }
     case "editOperationInput": {
-      // Rebind / param edit: no structural change in the lean mock, but bump the
-      // revision + emit document-changed so the regen correlation resolves.
+      // Rebind: no structural change in the lean mock, but bump the revision + emit
+      // document-changed so the regen correlation resolves.
       mockRevision += 1;
       const res = noopResult();
       emitMockDocumentChanged({ revision: res.revision, changedBodies: [], removedBodies: [] });
@@ -482,6 +561,7 @@ export function resetMockSketches(): void {
 export function resetMockDocument(): void {
   syntheticBodies.clear();
   featureBodies.clear();
+  featureParams.clear();
   lane.resetPreview();
   mockFeatures = MOCK_BASE_FEATURES.map(cloneFeature);
   mockRevision = 5;
@@ -596,6 +676,14 @@ export const mockClient: CadClient = {
   },
   applyEditCommand(command: WireEditCommand): Promise<ApplyOperationResult> {
     return mockApplyEditCommand(command);
+  },
+
+  async getOperationParams(recordId: string): Promise<Record<string, unknown>> {
+    await wait();
+    const params = featureParams.get(recordId);
+    if (!params) throw new Error(`get_operation_params: unknown record ${recordId}`);
+    // Deep clone so a caller's deep-merge never mutates the stored params.
+    return JSON.parse(JSON.stringify(params)) as Record<string, unknown>;
   },
 
   // ── Model operations (SCHEMA §7.3) — the mock's local document model ───────

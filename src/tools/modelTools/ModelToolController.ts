@@ -29,6 +29,7 @@ import type {
   SketchPlane,
 } from "@/ipc/types";
 import type { ViewportEngine } from "@/viewport/engine/ViewportEngine";
+import { updateScalarParamsCommand } from "@/ipc/tauriCommandMap";
 import { planePointToWorld } from "@/viewport/engine/sketchBasis";
 import { parseMeshPayload } from "@/viewport/mesh/parseMeshPayload";
 import { buildBodyObjects, getEntry, remove as removeMesh, swap as swapMesh } from "@/viewport/mesh/meshRegistry";
@@ -130,12 +131,16 @@ export class ModelToolController {
   private filletDownY = 0;
   private filletStartRadius = DEFAULT_FILLET_RADIUS;
   private filletEditFeatureId: string | undefined;
+  /** Stored params of the fillet being re-edited (radius-only edit preserves edges). */
+  private filletStoredParams: Record<string, unknown> | undefined;
 
   // Shell context (mirrors fillet: face selection + vertical thickness drag).
   private shellFaces: EntityRef[] = [];
   private shellDownY = 0;
   private shellStartThickness = DEFAULT_SHELL_THICKNESS;
   private shellEditFeatureId: string | undefined;
+  /** Stored params of the shell being re-edited (thickness-only edit preserves faces). */
+  private shellStoredParams: Record<string, unknown> | undefined;
 
   // Pattern / mirror context (chip-driven; ghost clones of the source body).
   private patternEditFeatureId: string | undefined;
@@ -145,6 +150,8 @@ export class ModelToolController {
   private revolveSketchId: string | null = null;
   private revolveRegionId: string | null = null;
   private revolveEditFeatureId: string | undefined;
+  /** Stored params of the revolve being re-edited (angle-only edit preserves the axis). */
+  private revolveStoredParams: Record<string, unknown> | undefined;
   private revolveAxisCandidates: AxisCandidate[] = [];
   private revolveAxis: LatheAxis | null = null;
   private revolveAxisLineId: string | null = null;
@@ -331,6 +338,11 @@ export class ModelToolController {
     this.revolveSketchId = sketchId;
     this.revolveRegionId = region.regionId;
     this.revolveEditFeatureId = editFeatureId;
+    // Re-edit: fetch the stored params so the angle-only commit deep-merges instead of
+    // clobbering the user-picked axis (the projection does not expose it).
+    this.revolveStoredParams = editFeatureId
+      ? await this.deps.client.getOperationParams(editFeatureId).catch(() => undefined)
+      : undefined;
     this.revolveAxisCandidates = session.entities
       .filter((e) => e.type === "Line" && e.p0 && e.p1)
       .map((e) => ({ id: e.id, a: e.p0 as [number, number], b: e.p1 as [number, number] }));
@@ -505,7 +517,17 @@ export class ModelToolController {
       params: { angleDeg: angle, axis, booleanMode: "NewBody" },
     };
     try {
-      const res = await this.client.applyOperation(op);
+      // A re-edit changes ONLY the angle: deep-merge into the stored params so the
+      // user-picked axis / profile / target survive (a whole-params replace would drop
+      // them). A fresh revolve (or a re-edit whose params fetch failed) commits the op.
+      const res =
+        this.revolveEditFeatureId && this.revolveStoredParams
+          ? await this.client.applyEditCommand(
+              updateScalarParamsCommand(this.revolveEditFeatureId, "Revolve", this.revolveStoredParams, {
+                angleDeg: { value: angle },
+              }),
+            )
+          : await this.client.applyOperation(op);
       this.applyResult(res);
       const bodyId = res.changedBodies[0]?.bodyId ?? null;
       if (bodyId) {
@@ -535,6 +557,7 @@ export class ModelToolController {
     this.revolveAxisLineId = null;
     this.revolveAxisCandidates = [];
     this.revolveEditFeatureId = undefined;
+    this.revolveStoredParams = undefined;
     this.revolveArmedDown = false;
     if (this.dragging === "revolve") this.dragging = null;
     if (bodyId) {
@@ -641,10 +664,6 @@ export class ModelToolController {
       opType: "Shell",
       featureId: editFeatureId, // parametric re-edit → UpdateOperationParams
       inputs: faces.map((f) => this.semanticRefFor(f)),
-      // SEAM (shell re-edit): the projection does not expose a shell's current open
-      // faces, so a thickness-only re-edit sends no openFaces — the mock ignores
-      // them (updates thickness) but the real backend needs the preserved faces (a
-      // follow-up threads them via EditOperationInput, as for fillet edges).
       params: {
         thickness,
         openFaces: faces.map((f) => f.elementId ?? f.topoKey ?? f.id),
@@ -654,7 +673,16 @@ export class ModelToolController {
     this.deps.engine.setOrbitSuppressed(false);
     toolChipStore.getState().clear();
     try {
-      const res = await this.client.applyOperation(op);
+      // A re-edit changes ONLY the thickness: deep-merge into the stored params so the
+      // shell's open faces + target survive (a whole-params replace would wipe them).
+      const res =
+        editFeatureId && this.shellStoredParams
+          ? await this.client.applyEditCommand(
+              updateScalarParamsCommand(editFeatureId, "Shell", this.shellStoredParams, {
+                thickness: { value: thickness },
+              }),
+            )
+          : await this.client.applyOperation(op);
       this.applyResult(res);
       viewportStore.getState().setStatusHint(editFeatureId ? "Shell thickness updated" : "Shelled");
     } catch (e) {
@@ -663,16 +691,21 @@ export class ModelToolController {
     this.shell = shellInit();
     this.shellFaces = [];
     this.shellEditFeatureId = undefined;
+    this.shellStoredParams = undefined;
     toolStore.getState().setTool("select");
     this.updateDebug();
   }
 
   /** Re-arm the shell tool on an existing shell feature (thickness re-edit seed). */
-  editShellFeature(featureId: string): void {
+  async editShellFeature(featureId: string): Promise<void> {
     const feat = documentStore.getState().features.find((f) => f.id === featureId);
     if (!feat || feat.kind !== "shell") return;
     const thickness = thicknessFromValueText(feat.valueText);
-    toolStore.getState().setTool("shell");
+    // Fetch the stored params so the thickness-only commit deep-merges instead of
+    // wiping the shell's open faces + target (the projection does not expose them).
+    const stored = await this.deps.client.getOperationParams(featureId).catch(() => undefined);
+    toolStore.getState().setTool("shell"); // fires cancelShell (clears shellStoredParams)
+    this.shellStoredParams = stored; // set AFTER the tool-change cancel
     this.armShell([], featureId, thickness);
   }
 
@@ -1205,16 +1238,22 @@ export class ModelToolController {
       opType: "Fillet",
       featureId: editFeatureId, // parametric re-edit → UpdateOperationParams
       inputs: edges.map((e) => this.semanticRefFor(e)),
-      // SEAM (fillet re-edit): the projection does not expose a fillet's current
-      // edge set, so a radius-only re-edit sends no edgeIds — the mock ignores them
-      // (updates the radius) but the real backend needs the preserved edges. A
-      // follow-up must thread them (get_operation_params / EditOperationInput).
       params: { mode: "Fillet", radius, edgeIds: edges.map((e) => e.topoKey ?? e.id), chainTangentEdges: true },
     };
     this.deps.engine.setOrbitSuppressed(false);
     toolChipStore.getState().clear();
     try {
-      const res = await this.client.applyOperation(op);
+      // A re-edit changes ONLY the radius: deep-merge into the stored params so the
+      // fillet's edgeIds + typed edges survive (a whole-params replace would drop
+      // them). A fresh fillet commits the op (its typed edges ride via inputs).
+      const res =
+        editFeatureId && this.filletStoredParams
+          ? await this.client.applyEditCommand(
+              updateScalarParamsCommand(editFeatureId, "Fillet", this.filletStoredParams, {
+                radius: { value: radius },
+              }),
+            )
+          : await this.client.applyOperation(op);
       this.applyResult(res);
       viewportStore.getState().setStatusHint(
         editFeatureId
@@ -1226,6 +1265,7 @@ export class ModelToolController {
     }
     this.fillet = filletInit();
     this.filletEditFeatureId = undefined;
+    this.filletStoredParams = undefined;
     this.filletEdges = [];
     toolStore.getState().setTool("select");
     this.updateDebug();
@@ -1236,11 +1276,15 @@ export class ModelToolController {
    * mirrors editRevolveFeature). Seeds the chip with the feature's CURRENT radius;
    * committing routes through `UpdateOperationParams` (edge refs unchanged).
    */
-  editFilletFeature(featureId: string): void {
+  async editFilletFeature(featureId: string): Promise<void> {
     const feat = documentStore.getState().features.find((f) => f.id === featureId);
     if (!feat || feat.kind !== "fillet") return;
     const radius = radiusFromValueText(feat.valueText);
-    toolStore.getState().setTool("fillet");
+    // Fetch the stored params so the radius-only commit deep-merges instead of
+    // dropping the fillet's edgeIds + typed edges (the projection does not expose them).
+    const stored = await this.deps.client.getOperationParams(featureId).catch(() => undefined);
+    toolStore.getState().setTool("fillet"); // fires cancelFillet (clears filletStoredParams)
+    this.filletStoredParams = stored; // set AFTER the tool-change cancel
     this.filletEdges = [];
     this.filletEditFeatureId = featureId;
     // edgeCount 1 keeps the FSM out of its bail path (a re-edit has no picks yet).
@@ -1461,6 +1505,7 @@ export class ModelToolController {
     this.fillet = filletInit();
     this.filletEdges = [];
     this.filletEditFeatureId = undefined;
+    this.filletStoredParams = undefined;
     toolChipStore.getState().clear();
   }
 
@@ -1474,6 +1519,7 @@ export class ModelToolController {
     this.shell = shellInit();
     this.shellFaces = [];
     this.shellEditFeatureId = undefined;
+    this.shellStoredParams = undefined;
     if (this.dragging === "shell") this.dragging = null;
     toolChipStore.getState().clear();
   }
@@ -1498,6 +1544,7 @@ export class ModelToolController {
     this.revolveAxisLineId = null;
     this.revolveAxisCandidates = [];
     this.revolveEditFeatureId = undefined;
+    this.revolveStoredParams = undefined;
     this.revolveArmedDown = false;
     if (this.dragging === "revolve") this.dragging = null;
     toolChipStore.getState().clear();

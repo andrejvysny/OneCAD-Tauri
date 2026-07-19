@@ -36,8 +36,8 @@ function editFeature(item: FeatureMeta): void {
   const c = getModelToolController();
   if (item.kind === "extrude") c?.editExtrudeFeature(item.id);
   else if (item.kind === "revolve") c?.editRevolveFeature(item.id);
-  else if (item.kind === "fillet") c?.editFilletFeature(item.id);
-  else if (item.kind === "shell") c?.editShellFeature(item.id);
+  else if (item.kind === "fillet") void c?.editFilletFeature(item.id);
+  else if (item.kind === "shell") void c?.editShellFeature(item.id);
   else if (item.kind === "linearPattern") c?.editLinearPatternFeature(item.id);
   else if (item.kind === "circularPattern") c?.editCircularPatternFeature(item.id);
   else if (item.kind === "mirror") c?.editMirrorFeature(item.id);

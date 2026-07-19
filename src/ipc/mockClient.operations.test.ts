@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { mockClient, resetMockDocument, resetMockSketches, setMockLatency } from "./mockClient";
+import { updateScalarParamsCommand } from "./tauriCommandMap";
 import type { OperationOp, SketchEntity } from "./types";
 
 const CIRCLE: SketchEntity = { id: "e1", type: "Circle", center: [0, 0], radius: 10 };
@@ -106,6 +107,45 @@ describe("mockClient operations", () => {
     const revFeatures = edited.features.filter((f) => f.kind === "revolve");
     expect(revFeatures).toHaveLength(1); // no new row — same feature updated
     expect(revFeatures[0].valueText).toBe("90°");
+  });
+
+  it("get_operation_params returns the stored wire params; a re-edit deep-merge keeps the axis (Findings 3+4)", async () => {
+    const regionId = await seedRegion();
+    // A revolve authored with a NON-DEFAULT axis (the user-picked sketch line).
+    const created = await mockClient.applyOperation({
+      opType: "Revolve",
+      sketchId: "skA",
+      regionId,
+      params: {
+        angleDeg: 360,
+        axis: { kind: "sketchLine", sketchId: "skA", lineId: "line-7" },
+        booleanMode: "NewBody",
+      },
+    });
+    const featureId = created.features.find((f) => f.kind === "revolve")!.id;
+
+    // On re-edit arm, the controller fetches the stored params (wire shape).
+    const stored = await mockClient.getOperationParams(featureId);
+    expect(stored.angleDeg).toEqual({ value: 360 });
+    expect(stored.axis).toEqual({ kind: "sketchLine", sketchId: "skA", lineId: "line-7" });
+    expect(stored.profile).toEqual({ sketchId: "skA", regionId });
+
+    // The angle-only commit deep-merges: the axis + profile survive byte-for-byte.
+    const cmd = updateScalarParamsCommand(featureId, "Revolve", stored, { angleDeg: { value: 90 } });
+    if (cmd.cmd !== "updateOperationParams") throw new Error("unreachable");
+    const p = cmd.op.params as unknown as Record<string, unknown>;
+    expect(p.angleDeg).toEqual({ value: 90 }); // only the scalar changed
+    expect(p.axis).toEqual({ kind: "sketchLine", sketchId: "skA", lineId: "line-7" }); // NOT clobbered
+    expect(p.profile).toEqual({ sketchId: "skA", regionId });
+
+    // Applying it updates the feature's value text without appending a row.
+    const edited = await mockClient.applyEditCommand(cmd);
+    const rev = edited.features.filter((f) => f.kind === "revolve");
+    expect(rev).toHaveLength(1);
+    expect(rev[0].valueText).toBe("90°");
+
+    // get_operation_params on an unknown record rejects.
+    await expect(mockClient.getOperationParams("no-such-record")).rejects.toThrow();
   });
 
   it("Fillet re-emits the target body + adds a radius feature (documented mock limit)", async () => {

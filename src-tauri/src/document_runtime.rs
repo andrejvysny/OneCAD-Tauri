@@ -45,16 +45,16 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use onecad_core::document::element_index::ElementEntry;
-use onecad_core::document::record::OperationRecord;
-use onecad_core::document::refs::AnchorIntent;
+use onecad_core::document::record::{ExtrudeMode, KnownOperation, Operation, OperationRecord};
+use onecad_core::document::refs::{AnchorIntent, ElementRef};
 use onecad_core::document::repair::RepairItem;
 use onecad_core::document::Document;
 use onecad_core::edit::{CommandOutcome, DocumentSession, EditCommand, SketchEditOp};
 use onecad_core::error::DomainError;
 use onecad_core::history::{DependencyGraph, StepState, Timeline};
 use onecad_core::ids::{
-    BodyId, DocumentId, DocumentRevision, ElementId, EntityId, JobId, SketchId, SnapshotId,
-    TopoKey, WorkerEpoch,
+    BodyId, DocumentId, DocumentRevision, ElementId, EntityId, JobId, RecordId, SketchId,
+    SnapshotId, TopoKey, WorkerEpoch,
 };
 use onecad_core::io::container::{
     CheckpointCache, ContainerCaches, ContainerReader, ContainerWriter, SaveMeta, CHECKPOINTS_DIR,
@@ -1223,15 +1223,62 @@ impl DocumentRuntime {
     }
 
     /// Dry-run ladder resolution for repair dialogs (SCHEMA §7.5 `ResolveRefs`) —
-    /// binds nothing. Thin passthrough to the engine.
+    /// binds nothing.
+    ///
+    /// The lean `needs-repair` event carries no `ElementRef`, so the repair panel
+    /// dry-runs with `refId` ONLY (an empty ref). Such a request is hydrated from the
+    /// STORED ref at that op-input slot — the refId grammar `<recordId>.input<k>` the
+    /// worker's `PlanExecutor` mints (`<opId>.input<i>`, `opId` = the record uuid) —
+    /// so the ladder resolves against the FULL authored evidence (primary + anchor +
+    /// intent) instead of an empty ref against an empty body ("No candidates" even when
+    /// candidates exist). A request that already carries an `element` is left untouched.
     ///
     /// # Errors
     /// [`EngineError`] on a worker failure.
     pub async fn resolve_refs(
         &self,
-        req: ResolveRequest,
+        mut req: ResolveRequest,
     ) -> Result<Vec<RefResolution>, EngineError> {
+        for r in &mut req.refs {
+            if element_ref_is_empty(&r.element) {
+                if let Some(stored) = self.stored_input_ref(&r.ref_id) {
+                    r.element = stored;
+                }
+            }
+        }
         self.engine.resolve_refs(req).await
+    }
+
+    /// The STORED [`ElementRef`] at the op-input slot a repair `refId`
+    /// (`<recordId>.input<k>`) names, or `None` when the id does not parse, the record
+    /// is unknown, or that slot carries no typed element ref. Hydrates a lean
+    /// refId-only [`resolve_refs`](Self::resolve_refs) request.
+    fn stored_input_ref(&self, ref_id: &str) -> Option<ElementRef> {
+        let (record_id, index) = parse_input_ref_id(ref_id)?;
+        let record = self
+            .regen
+            .timeline
+            .records()
+            .iter()
+            .find(|r| r.record_id == record_id)?;
+        element_ref_input(&record.op, index).cloned()
+    }
+
+    /// The stored op's params as the serde JSON the `EditCommand` `op.params` path
+    /// accepts (camelCase; `Scalar` = `{value}`), for a scalar parametric re-edit that
+    /// must PRESERVE the op's non-scalar inputs (revolve `axis` / shell `openFaces` /
+    /// fillet `edges`) rather than rebuild params from scratch. `None` when the record
+    /// is unknown or its op carries no `params` object.
+    #[must_use]
+    pub fn operation_params(&self, record: RecordId) -> Option<serde_json::Value> {
+        let rec = self
+            .regen
+            .timeline
+            .records()
+            .iter()
+            .find(|r| r.record_id == record)?;
+        let op = serde_json::to_value(&rec.op).ok()?;
+        op.get("params").cloned()
     }
 
     // ── Sketch-flow helpers ──────────────────────────────────────────────────
@@ -1371,6 +1418,53 @@ fn kind_str(kind: onecad_core::document::refs::ElementKind) -> &'static str {
         ElementKind::Face => "face",
         ElementKind::Edge => "edge",
         ElementKind::Vertex => "vertex",
+    }
+}
+
+/// Parses a repair `refId` `<recordId>.input<k>` into `(RecordId, index)`. The opId
+/// segment is the op's record uuid — the worker's `PlanExecutor` mints
+/// `<opId>.input<i>` where `opId` is the `opId` Rust sent (`record_id.to_string()`;
+/// `wire::wire_op`). `None` on a shape/parse mismatch (fails soft).
+fn parse_input_ref_id(ref_id: &str) -> Option<(RecordId, usize)> {
+    let (op, k) = ref_id.rsplit_once(".input")?;
+    let record = RecordId::from_str(op).ok()?;
+    let index: usize = k.parse().ok()?;
+    Some((record, index))
+}
+
+/// True iff an [`ElementRef`] carries no evidence — the lean refId-only request shape
+/// (an empty ref flattened from a `{refId}`-only body).
+fn element_ref_is_empty(r: &ElementRef) -> bool {
+    r.primary.is_none() && r.intent.is_none() && r.anchor.is_none()
+}
+
+/// The `index`-th topological input [`ElementRef`] of an op, in the SAME order the
+/// wire `inputs[]` array carries (mirrors `wire::wire_op_inputs`): fillet/chamfer
+/// `edges`, then extrude ToFace target faces. Ops whose inputs are whole bodies
+/// (Boolean / pattern / mirror) or bare ids (Shell open faces) expose no typed
+/// element ref here, so a refId-only resolve for them stays un-hydrated.
+fn element_ref_input(op: &Operation, index: usize) -> Option<&ElementRef> {
+    let Operation::Known(k) = op else {
+        return None;
+    };
+    match k {
+        KnownOperation::Fillet(p) => p.edges.get(index),
+        KnownOperation::Chamfer(p) => p.edges.get(index),
+        KnownOperation::Extrude(p) => {
+            let mut faces: Vec<&ElementRef> = Vec::new();
+            if p.mode == ExtrudeMode::ToFace {
+                if let Some(f) = &p.target_face {
+                    faces.push(f);
+                }
+            }
+            if p.two_directions && p.mode2 == ExtrudeMode::ToFace {
+                if let Some(f) = &p.target_face2 {
+                    faces.push(f);
+                }
+            }
+            faces.get(index).copied()
+        }
+        _ => None,
     }
 }
 

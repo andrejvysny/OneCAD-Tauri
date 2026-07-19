@@ -16,7 +16,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use onecad_core::document::refs::{AnchorIntent, ElementRef};
 use onecad_core::edit::{EditCommand, SketchEditOp};
-use onecad_core::ids::{BodyId, EntityId, SketchId, SnapshotId, TopoKey};
+use onecad_core::ids::{BodyId, EntityId, RecordId, SketchId, SnapshotId, TopoKey};
 use onecad_core::io::container::SaveMeta;
 use onecad_core::io::recovery::{scan_stale_markers, RecoveryOffer};
 use onecad_core::regen::{RegenRequest, ResolveRef, ResolveRequest};
@@ -653,6 +653,30 @@ pub async fn resolve_refs(
         .into_iter()
         .map(ResolveRefDto::from_resolution)
         .collect())
+}
+
+/// The stored params of an operation record (read-only; `CadClient.getOperationParams`)
+/// as the `EditCommand` `op.params` serde JSON. A parametric scalar re-edit (revolve
+/// angle / shell thickness / fillet radius) fetches these on arm and deep-merges the
+/// changed scalar on commit, so it preserves the op's non-scalar inputs (axis /
+/// openFaces / edges) the projection does not expose — a whole-params replace would
+/// otherwise silently clobber them.
+#[tauri::command]
+pub async fn get_operation_params(
+    state: State<'_, AppState>,
+    record_id: String,
+) -> Result<serde_json::Value, ApiError> {
+    let record = RecordId::from_str(&record_id)
+        .map_err(|e| ApiError::InvalidCommand(format!("bad recordId {record_id:?}: {e}")))?;
+    let guard = state.runtime.lock().await;
+    let rt = guard
+        .as_ref()
+        .ok_or_else(|| ApiError::NoDocument("getOperationParams".into()))?;
+    rt.operation_params(record).ok_or_else(|| {
+        ApiError::InvalidCommand(format!(
+            "no params for record {record_id} (unknown or opaque)"
+        ))
+    })
 }
 
 fn parse_sketch_id(s: &str) -> Result<SketchId, ApiError> {

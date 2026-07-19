@@ -4,9 +4,11 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  bareBodyId,
   edgeElementRef,
   rewriteFilletEdgeParams,
   updateFilletParamsCommand,
+  updateScalarParamsCommand,
   filletEdgeRebindCommand,
   suppressOperationCommand,
   rollbackToCursorCommand,
@@ -16,6 +18,7 @@ import {
   operationToEditCommand,
   opLabelFor,
   type CurrentFilletParams,
+  type WireElementRef,
 } from "./tauriCommandMap";
 import type { OperationOp } from "./types";
 
@@ -52,6 +55,104 @@ describe("edgeElementRef", () => {
     expect(edgeElementRef("body1", "el_9")).toEqual({
       primary: { bodyId: "body1", elementId: "el_9", kind: "edge" },
     });
+  });
+
+  it("strips a `body_<uuid>` wire-form bodyId to the bare core uuid", () => {
+    // promoteSelection returns the worker wire form; the core EditCommand serde wants
+    // a bare uuid (BodyId is #[serde(transparent)]).
+    expect(bareBodyId("body_abc-123")).toBe("abc-123");
+    expect(bareBodyId("abc-123")).toBe("abc-123"); // already bare — no-op
+    expect(bareBodyId("body1")).toBe("body1"); // mock id (no underscore) — untouched
+    expect(edgeElementRef("body_abc-123", "el_9").primary?.bodyId).toBe("abc-123");
+  });
+});
+
+describe("filletParams — R-WP2.1 dual edge rule (AddOperation from UI selection)", () => {
+  it("emits typed `edges` in lockstep with `edgeIds` (bodyId bare, elementId = edgeId, anchor)", () => {
+    const bodyUuid = "11111111-1111-4111-8111-111111111111";
+    const op: OperationOp = {
+      opType: "Fillet",
+      // The per-edge SemanticRefs the fillet tool authors: a `body_<uuid>` wire-form
+      // body id (must be stripped) + the pick anchor world-point.
+      inputs: [
+        { primary: { bodyId: `body_${bodyUuid}`, kind: "edge" }, anchor: { worldPoint: [1, 2, 3] } },
+        { primary: { bodyId: bodyUuid, kind: "edge" }, anchor: { worldPoint: [4, 5, 6] } },
+      ],
+      params: { mode: "Fillet", radius: 2, edgeIds: ["e:5", "e:9"], chainTangentEdges: true },
+    };
+    const p = addedParams(op);
+    expect(p.radius).toEqual({ value: 2 });
+    expect(p.edgeIds).toEqual(["e:5", "e:9"]);
+    expect(p.chainTangentEdges).toBe(true);
+    const edges = p.edges as WireElementRef[];
+    expect(edges).toHaveLength(2);
+    // bodyId stripped to the bare uuid; primary.element == edgeIds[i] (F2 lockstep).
+    expect(edges[0].primary).toEqual({ bodyId: bodyUuid, elementId: "e:5", kind: "edge" });
+    expect(edges[1].primary).toEqual({ bodyId: bodyUuid, elementId: "e:9", kind: "edge" });
+    // anchor world-point rides through so the worker's ladder resolves the edge.
+    expect(edges[0].anchor).toEqual({ worldPoint: [1, 2, 3] });
+    expect(edges[1].anchor).toEqual({ worldPoint: [4, 5, 6] });
+  });
+
+  it("marshals a bare-`edgeIds` fillet (no typed edges) when an edge carries no body", () => {
+    const op: OperationOp = {
+      opType: "Fillet",
+      inputs: [{ primary: { bodyId: "", kind: "edge" }, anchor: {} }],
+      params: { mode: "Fillet", radius: 1, edgeIds: ["e:3"] },
+    };
+    const p = addedParams(op);
+    expect(p.edgeIds).toEqual(["e:3"]);
+    expect("edges" in p).toBe(false);
+  });
+
+  it("marshals a bare-`edgeIds` fillet when the op carries no inputs (legacy path)", () => {
+    const op: OperationOp = {
+      opType: "Fillet",
+      params: { mode: "Fillet", radius: 1, edgeIds: ["e:3"] },
+    };
+    const p = addedParams(op);
+    expect("edges" in p).toBe(false);
+  });
+});
+
+describe("updateScalarParamsCommand — re-edit deep-merge (Findings 3+4)", () => {
+  it("changes ONLY the scalar, preserving a revolve axis verbatim", () => {
+    const stored = {
+      angleDeg: { value: 360 },
+      axis: { kind: "sketchLine", sketchId: "sk", lineId: "line-7" },
+      booleanMode: "NewBody",
+      profile: { sketchId: "sk", regionId: "r1" },
+    };
+    const cmd = updateScalarParamsCommand("rev-rec", "Revolve", stored, { angleDeg: { value: 90 } });
+    if (cmd.cmd !== "updateOperationParams") throw new Error("unreachable");
+    expect(cmd.record).toBe("rev-rec");
+    expect(cmd.op.opType).toBe("Revolve");
+    const p = cmd.op.params as unknown as Record<string, unknown>;
+    expect(p.angleDeg).toEqual({ value: 90 }); // only the scalar changed
+    expect(p.axis).toEqual({ kind: "sketchLine", sketchId: "sk", lineId: "line-7" }); // untouched
+    expect(p.profile).toEqual({ sketchId: "sk", regionId: "r1" });
+    expect(p.booleanMode).toBe("NewBody");
+  });
+
+  it("preserves shell openFaces + targetBodyId while changing thickness", () => {
+    const stored = { thickness: { value: 2 }, openFaces: ["el_a", "el_b"], targetBodyId: "b-uuid" };
+    const cmd = updateScalarParamsCommand("shell-rec", "Shell", stored, { thickness: { value: 4 } });
+    if (cmd.cmd !== "updateOperationParams") throw new Error("unreachable");
+    const p = cmd.op.params as unknown as Record<string, unknown>;
+    expect(p.thickness).toEqual({ value: 4 });
+    expect(p.openFaces).toEqual(["el_a", "el_b"]); // NOT wiped
+    expect(p.targetBodyId).toBe("b-uuid");
+  });
+
+  it("preserves fillet edgeIds + typed edges while changing radius", () => {
+    const edges = [{ primary: { bodyId: "b", elementId: "e:5", kind: "edge" } }];
+    const stored = { radius: { value: 2 }, edgeIds: ["e:5"], edges, chainTangentEdges: true };
+    const cmd = updateScalarParamsCommand("fil-rec", "Fillet", stored, { radius: { value: 5 } });
+    if (cmd.cmd !== "updateOperationParams") throw new Error("unreachable");
+    const p = cmd.op.params as unknown as Record<string, unknown>;
+    expect(p.radius).toEqual({ value: 5 });
+    expect(p.edgeIds).toEqual(["e:5"]); // NOT dropped
+    expect(p.edges).toEqual(edges);
   });
 });
 

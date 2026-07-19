@@ -38,6 +38,7 @@ import type {
   MirrorBodyParams,
   OperationOp,
   RevolveParams,
+  SemanticRef,
   ShellParams,
 } from "./types";
 
@@ -186,6 +187,22 @@ export type WireEditCommand =
 
 const scalar = (n: number): WireScalar => ({ value: n });
 
+/**
+ * Normalize a body id to the BARE uuid the core `EditCommand` serde expects
+ * (`BodyId` is `#[serde(transparent)]`, so it (de)serializes as the bare uuid).
+ *
+ * The frontend mostly HOLDS bare uuids — `document-changed`/`projection-updated`
+ * emit `body.to_string()` (bare), so tree/scene/selection body ids are bare. The
+ * one exception is `promoteSelection`, whose `PromotedElementDto.bodyId` comes back
+ * in the worker `body_<uuid>` WIRE form (`body_id_wire`). Any body id that flows
+ * into a typed ref bound for `apply_edit_command` MUST be stripped here, or the core
+ * rejects the whole command (`"body_…"` is not a uuid). Idempotent: a bare uuid — or
+ * a mock id like `body1` (no underscore) — passes through unchanged.
+ */
+export function bareBodyId(id: string): string {
+  return id.startsWith("body_") ? id.slice("body_".length) : id;
+}
+
 /** Mint a client-side record id (real UUID; V1 has no server-side pre-mint step). */
 function mintRecordId(): string {
   const c = globalThis.crypto;
@@ -229,14 +246,33 @@ function revolveParams(p: RevolveParams): WireRevolveParams {
   return wire;
 }
 
-function filletParams(p: FilletParams): WireFilletParams {
-  return {
+function filletParams(p: FilletParams, inputs?: SemanticRef[]): WireFilletParams {
+  const edgeIds = [...p.edgeIds];
+  const wire: WireFilletParams = {
     radius: scalar(p.radius),
     // Chamfer shares FilletChamferParams in C++, but the vertical-slice tool only
     // authors Fillet; a Chamfer would map to opType "Chamfer" (future).
-    edgeIds: [...p.edgeIds],
+    edgeIds,
     chainTangentEdges: p.chainTangentEdges ?? true,
   };
+  // R-WP2.1 dual rule: carry the typed `edges` in LOCKSTEP with `edgeIds`, built from
+  // the op's per-edge SemanticRefs (`OperationOp.inputs`). Each typed ref supplies the
+  // operated body — `record.rs::derive_inputs` recovers it from `primary.body`, and
+  // `wire.rs::edge_input_refs` sends it as `primary.bodyId`, so a UI-selected fillet
+  // reaches the worker with a body (`FilletChamferOp::target_body_of`). Without the
+  // typed `edges` a pure-`edgeIds` fillet derives NO body (M4a note) and the worker
+  // fails "Fillet requires body input". `primary.element` MUST equal `edgeIds[i]`
+  // (session.rs F2 lockstep); the anchor world-point rides so the worker's ladder can
+  // resolve the edge. The core `ElementRef.primary` REQUIRES a bodyId, so the typed
+  // `edges` is emitted only when every edge input carries one — otherwise the op
+  // marshals as a bare-`edgeIds` fillet (the unchanged legacy path).
+  const edgeInputs = (inputs ?? []).filter((r) => r.primary.kind === "edge");
+  if (edgeInputs.length === edgeIds.length && edgeInputs.every((r) => r.primary.bodyId)) {
+    wire.edges = edgeIds.map((id, i) =>
+      edgeElementRef(edgeInputs[i].primary.bodyId, id, edgeInputs[i].anchor?.worldPoint),
+    );
+  }
+  return wire;
 }
 
 function booleanParams(p: BooleanParams): WireBooleanParams {
@@ -309,7 +345,7 @@ function wireOperation(op: OperationOp): WireOperation {
       return { opType: "Revolve", params };
     }
     case "Fillet":
-      return { opType: "Fillet", params: filletParams(op.params) };
+      return { opType: "Fillet", params: filletParams(op.params, op.inputs) };
     case "Boolean":
       return { opType: "Boolean", params: booleanParams(op.params) };
     case "Shell":
@@ -338,6 +374,35 @@ export function operationToEditCommand(op: OperationOp): WireEditCommand {
     record: { recordId: mintRecordId(), ...operation },
     atCursor: false,
   };
+}
+
+/** The wire `params` object for an OperationOp (the EditCommand `op.params` shape). */
+export function wireParamsOf(op: OperationOp): Record<string, unknown> {
+  return wireOperation(op).params as unknown as Record<string, unknown>;
+}
+
+/** A scalar-only re-edit patch (only the changed dimension(s), keyed by wire field). */
+export type ScalarPatch = Record<string, WireScalar>;
+
+/**
+ * `UpdateOperationParams` that changes ONLY the given scalar field(s) of a stored op,
+ * preserving every OTHER param (revolve `axis`, shell `openFaces`, fillet `edges` /
+ * `edgeIds`, `targetBodyId`, `profile`) VERBATIM. `storedParams` is the op's params
+ * JSON from `get_operation_params` (already the EditCommand `op.params` serde shape).
+ *
+ * A parametric re-edit (double-click a feature → change one dimension) cannot rebuild
+ * these non-scalar inputs from the projection, so a whole-params replace would silently
+ * clobber them (drop the picked revolve axis / wipe the shell's open faces + target).
+ * Deep-merging the scalar into the stored params here is the fix.
+ */
+export function updateScalarParamsCommand(
+  recordId: string,
+  opType: WireOperation["opType"],
+  storedParams: Record<string, unknown>,
+  patch: ScalarPatch,
+): WireEditCommand {
+  const op = { opType, params: { ...storedParams, ...patch } } as unknown as WireOperation;
+  return { cmd: "updateOperationParams", record: recordId, op };
 }
 
 /** Human label for a committed/undone op, for the status-bar hint. */
@@ -372,13 +437,19 @@ export interface CurrentFilletParams {
   chainTangentEdges?: boolean;
 }
 
-/** Build the typed edge `ElementRef` for a rebound edge (primary + anchor). */
+/**
+ * Build the typed edge `ElementRef` for a rebound edge (primary + anchor). The
+ * `bodyId` is normalized to the bare-uuid core form ([`bareBodyId`]) so BOTH the
+ * fresh-fillet path (picks carry bare uuids) and the M4b repair rebind path
+ * (`promoteSelection` returns the `body_<uuid>` wire form) marshal a body id the
+ * core `EditCommand` serde accepts.
+ */
 export function edgeElementRef(
   bodyId: string,
   elementId: string,
   worldPos?: [number, number, number],
 ): WireElementRef {
-  const ref: WireElementRef = { primary: { bodyId, elementId, kind: "edge" } };
+  const ref: WireElementRef = { primary: { bodyId: bareBodyId(bodyId), elementId, kind: "edge" } };
   if (worldPos) ref.anchor = { worldPoint: worldPos };
   return ref;
 }

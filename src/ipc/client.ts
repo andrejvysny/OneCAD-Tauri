@@ -188,6 +188,16 @@ export interface CadClient {
    */
   applyEditCommand(command: WireEditCommand): Promise<ApplyOperationResult>;
 
+  /**
+   * Fetch a stored operation's params (the EditCommand `op.params` serde shape),
+   * keyed by its record id. A parametric re-edit that changes ONE scalar (revolve
+   * angle / shell thickness / fillet radius) fetches these on arm and deep-merges
+   * the scalar on commit, so it preserves the non-scalar inputs the projection does
+   * not expose (axis / openFaces / edges). The real client routes to
+   * `get_operation_params`; the mock returns the op's stored params.
+   */
+  getOperationParams(recordId: string): Promise<Record<string, unknown>>;
+
   // ── Model operations + two-level preview (SCHEMA §7.3 / NEW_SPEC §15) ──────
   // The real client routes these to the worker's ExecutePlan (op) + solver-style
   // preview lane; the mock synthesizes bodies + a feature timeline locally.
