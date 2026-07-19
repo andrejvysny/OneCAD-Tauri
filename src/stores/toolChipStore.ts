@@ -23,7 +23,8 @@ export type ChipKind =
   | "shellThickness"
   | "linearPattern"
   | "circularPattern"
-  | "mirror";
+  | "mirror"
+  | "dimension";
 
 export interface ToolChipState {
   kind: ChipKind;
@@ -37,10 +38,14 @@ export interface ToolChipState {
   plane: MirrorPlane;
   /** Selected boolean operation (booleanOp chip). */
   op: BooleanOperation;
+  /** Unit suffix for the numeric chip (mm / ° — sketch dimension chip). */
+  suffix: string;
   /** World anchor for the overlay driver, or null. */
   worldPos: [number, number, number] | null;
   /** Committed value from the editable chip (Enter/blur). */
   onValue: ((v: number) => void) | null;
+  /** Esc / cancel from the dimension chip. */
+  onCancel: (() => void) | null;
   /** Boolean op selected. */
   onOp: ((op: BooleanOperation) => void) | null;
   /** Apply pressed (boolean / pattern / mirror chip). */
@@ -98,6 +103,14 @@ export interface ToolChipState {
     worldPos: [number, number, number],
     handlers: { onPlane: (plane: MirrorPlane) => void; onApply: () => void },
   ): void;
+  /** Show the sketch Dimension chip (seeded, auto-focused; Enter commits, Esc cancels). */
+  showDimension(
+    value: number,
+    suffix: string,
+    worldPos: [number, number, number],
+    onValue: (v: number) => void,
+    onCancel: () => void,
+  ): void;
   /** Update just the live value during a drag / edit. */
   setValue(value: number): void;
   /** Update just the live instance count. */
@@ -118,8 +131,10 @@ const CLEARED = {
   axis: "X" as PatternAxis,
   plane: "XY" as MirrorPlane,
   op: "Union" as BooleanOperation,
+  suffix: "",
   worldPos: null,
   onValue: null,
+  onCancel: null,
   onOp: null,
   onApply: null,
   onResetAxis: null,
@@ -176,6 +191,9 @@ export const toolChipStore = createStore<ToolChipState>()((set) => ({
   },
   showMirror(plane, worldPos, handlers) {
     set({ ...CLEARED, kind: "mirror", plane, worldPos, onPlane: handlers.onPlane, onApply: handlers.onApply });
+  },
+  showDimension(value, suffix, worldPos, onValue, onCancel) {
+    set({ ...CLEARED, kind: "dimension", value, suffix, worldPos, onValue, onCancel });
   },
   setValue(value) {
     set({ value });

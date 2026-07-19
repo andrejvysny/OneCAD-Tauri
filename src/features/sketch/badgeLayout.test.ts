@@ -64,3 +64,40 @@ describe("layoutBadges", () => {
     expect(layoutBadges(null)).toEqual([]);
   });
 });
+
+describe("layoutBadges — M6c constraint glyph coverage", () => {
+  const s: SketchSession = {
+    sketchId: "sk",
+    plane: planeFor("XY"),
+    entities: [
+      { id: "e1", type: "Line", p0: [0, 0], p1: [40, 40] },
+      { id: "e2", type: "Line", p0: [40, 40], p1: [0, 80] },
+      { id: "a1", type: "Arc", center: [10, 10], radius: 10, start: [10, 0], end: [0, 10] },
+    ],
+    constraints: [
+      { id: "p1", type: "Perpendicular", entities: ["e2", "e1"] },
+      { id: "p2", type: "Parallel", entities: ["e2", "e1"] },
+      { id: "t1", type: "Tangent", entities: ["a1", "e1"] },
+      { id: "an1", type: "Angle", entities: ["e1", "e2"], value: 90 },
+    ],
+    dof: 0,
+    status: "FullyConstrained",
+  };
+  const badges = layoutBadges(s);
+
+  it("renders a Perpendicular glyph", () => {
+    expect(badges.find((b) => b.id === "p1")!.glyph).toBe("⟂");
+  });
+  it("renders a Parallel glyph", () => {
+    expect(badges.find((b) => b.id === "p2")!.glyph).toBe("∥");
+  });
+  it("renders a Tangent glyph", () => {
+    expect(badges.find((b) => b.id === "t1")!.glyph).toBe("T");
+  });
+  it("renders an editable Angle badge with a ° value", () => {
+    const an = badges.find((b) => b.id === "an1")!;
+    expect(an.editable).toBe(true);
+    expect(an.value).toBe(90);
+    expect(an.glyph).toBe("90.0°");
+  });
+});

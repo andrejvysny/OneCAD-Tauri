@@ -112,6 +112,7 @@ export function ModelToolChips() {
   const axis = useToolChipStore((s) => s.axis);
   const plane = useToolChipStore((s) => s.plane);
   const op = useToolChipStore((s) => s.op);
+  const suffix = useToolChipStore((s) => s.suffix);
   const worldPos = useToolChipStore((s) => s.worldPos);
   // A plain DOM host, created once; the engine owns its DOM position.
   const [host] = useState(() => {
@@ -157,6 +158,23 @@ export function ModelToolChips() {
     );
   } else if (kind === "extrudeDepth" || kind === "filletRadius" || kind === "shellThickness") {
     content = numericChip("mm");
+  } else if (kind === "dimension") {
+    // Sketch Dimension tool: seeded + auto-focused; Enter commits, Esc cancels,
+    // and a canvas click must NOT blur-commit (a 2nd line click upgrades a length
+    // into an angle), so `commitOnBlur` is off. Keying by anchor+value remounts
+    // (re-focuses) on each new pick — e.g. when a length upgrades to an angle —
+    // but stays stable while typing (the value prop is unchanged mid-edit).
+    content = (
+      <DimensionInput
+        key={`dim-${anchorKey}-${value}`}
+        value={value}
+        suffix={suffix}
+        autoFocus
+        commitOnBlur={false}
+        onCommit={(v) => toolChipStore.getState().onValue?.(v)}
+        onCancel={() => toolChipStore.getState().onCancel?.()}
+      />
+    );
   } else if (kind === "linearPattern") {
     content = panel(
       <>

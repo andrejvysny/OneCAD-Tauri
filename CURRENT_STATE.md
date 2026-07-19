@@ -16,7 +16,7 @@ stays untouched.
 | FX file/app UX | DONE — save/open/recents/STEP-export UI, worker-status, live constraints |
 | **M4 topology slice (backend + repair UI)** | **DONE, review-closed** (H5-B proven vs real worker) |
 | **M5 lifecycle** (Revolve tool, STL/OBJ, checkpoints, splits, autosave+recovery, onecad-regen CLI, crash drills, drift gate) | **DONE** |
-| M6 hardening + backlog | Shell+Patterns+Mirror DONE end-to-end; remaining: snap/autoconstrain parity, datum, Loft/Sweep, e2e |
+| M6 hardening + backlog | Shell+Patterns+Mirror + sketch parity (snaps, autoconstrain, Dimension) DONE; remaining: datum, Loft/Sweep, Playwright e2e, perf |
 
 ## What works end-to-end (real worker, automated gates)
 Sketch (PlaneGCS, dof) → regions → extrude (multi-region by normative FNV id;
@@ -37,7 +37,7 @@ hydration on sketch re-entry.
 - Rust: 379 tests, clippy -D warnings + fmt clean (chaos 14, real-worker 5,
   m2_gate 2, wire_contract 8, topology_rebind 5, breadth_ops 6, checkpoints, regen CLI — vs real binary;
   ONECAD_REQUIRE_WORKER=1 guard in CI prevents vacuous greens)
-- Frontend: 481 vitest, build green, hex-token gate 0
+- Frontend: 559 vitest, build green, hex-token gate 0
 
 ## Architecture decisions log (D-series + session additions)
 - D1: NewBody BodyIds worker-minted `body_<opId>`, Rust adopts+fences

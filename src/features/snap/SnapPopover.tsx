@@ -12,6 +12,9 @@ const SNAP_ROWS: { key: SnapKey; label: string }[] = [
   { key: "grid", label: "Grid" },
   { key: "sketchGuideLines", label: "Sketch guide lines" },
   { key: "sketchGuidePoints", label: "Sketch guide points" },
+  { key: "quadrant", label: "Quadrant points" },
+  { key: "intersection", label: "Intersections" },
+  { key: "onCurve", label: "On-curve points" },
   { key: "guidePoints3d", label: "3D guide points" },
   { key: "distantEdges", label: "Distant edges" },
 ];
