@@ -9,6 +9,8 @@ vi.mock("./fileActions", () => ({
   saveDocument: vi.fn(),
   saveDocumentAs: vi.fn(),
   exportStep: vi.fn(),
+  exportStl: vi.fn(),
+  exportObj: vi.fn(),
 }));
 
 import { FileMenu } from "./FileMenu";
@@ -17,7 +19,7 @@ import * as fileActions from "./fileActions";
 describe("FileMenu", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("opens on click and shows the four file actions with shortcuts", async () => {
+  it("opens on click and shows the file actions with shortcuts", async () => {
     const user = userEvent.setup();
     render(<FileMenu />);
 
@@ -30,6 +32,8 @@ describe("FileMenu", () => {
     expect(screen.getByText("⌘S")).toBeInTheDocument();
     expect(screen.getByText("⇧⌘S")).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /Export STEP/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Export STL/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Export OBJ/ })).toBeInTheDocument();
   });
 
   it("dispatches each menu item to its file action", async () => {
@@ -47,6 +51,14 @@ describe("FileMenu", () => {
     await user.click(screen.getByRole("button", { name: /File/ }));
     await user.click(screen.getByRole("menuitem", { name: /Export STEP/ }));
     expect(fileActions.exportStep).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: /File/ }));
+    await user.click(screen.getByRole("menuitem", { name: /Export STL/ }));
+    expect(fileActions.exportStl).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: /File/ }));
+    await user.click(screen.getByRole("menuitem", { name: /Export OBJ/ }));
+    expect(fileActions.exportObj).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole("button", { name: /File/ }));
     await user.click(screen.getByRole("menuitem", { name: /Open/ }));

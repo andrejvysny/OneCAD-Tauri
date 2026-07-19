@@ -118,6 +118,8 @@ pub fn run() {
             api::import_step,
             api::save_document,
             api::export_step_file,
+            api::export_stl_file,
+            api::export_obj_file,
             api::close_document,
             api::apply_edit_command,
             api::undo,

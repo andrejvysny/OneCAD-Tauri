@@ -3,17 +3,20 @@ import { Icon } from "@/icons/Icon";
 import { Popover } from "@/ui/Popover";
 import { MonoValue } from "@/ui/MonoValue";
 import {
+  exportObj,
   exportStep,
+  exportStl,
   openDocumentDialog,
   saveDocument,
   saveDocumentAs,
 } from "./fileActions";
 
 /**
- * Compact File menu in the title bar: Open… / Save / Save As… / Export STEP…,
- * each routed through the shared `fileActions` bridge (same path the ⌘O/⌘S/⇧⌘S
- * shortcuts use). Mirrors the start-screen SortMenu pattern (a hairline trigger +
- * anchored Popover) so it reuses the existing primitives + design tokens.
+ * Compact File menu in the title bar: Open… / Save / Save As… / Export STEP… /
+ * Export STL… / Export OBJ…, each routed through the shared `fileActions` bridge
+ * (same path the ⌘O/⌘S/⇧⌘S shortcuts use). Mirrors the start-screen SortMenu pattern
+ * (a hairline trigger + anchored Popover) so it reuses the existing primitives +
+ * design tokens.
  */
 export function FileMenu() {
   const [open, setOpen] = useState(false);
@@ -53,6 +56,8 @@ export function FileMenu() {
         <MenuItem label="Save As…" shortcut="⇧⌘S" onClick={() => run(saveDocumentAs)} />
         <div aria-hidden="true" className="my-1 h-px bg-border" />
         <MenuItem label="Export STEP…" onClick={() => run(exportStep)} />
+        <MenuItem label="Export STL…" onClick={() => run(exportStl)} />
+        <MenuItem label="Export OBJ…" onClick={() => run(exportObj)} />
       </Popover>
     </div>
   );

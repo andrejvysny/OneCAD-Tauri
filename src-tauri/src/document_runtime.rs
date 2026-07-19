@@ -56,14 +56,16 @@ use onecad_core::ids::{
     BodyId, DocumentId, DocumentRevision, ElementId, EntityId, JobId, SketchId, SnapshotId,
     TopoKey, WorkerEpoch,
 };
-use onecad_core::io::container::{ContainerCaches, ContainerReader, ContainerWriter, SaveMeta};
+use onecad_core::io::container::{
+    CheckpointCache, ContainerCaches, ContainerReader, ContainerWriter, SaveMeta, CHECKPOINTS_DIR,
+};
 use onecad_core::io::IoError;
 use onecad_core::math::Vec2;
 use onecad_core::regen::{
-    mint_element_ids, AcquireRequest, CancelToken, EngineError, GeometryEngine, Lod, MeshKey,
-    ModelSnapshot, Outcome, Pick, PlanArtifacts, PlanContext, PlanRequest, PolicyVersions,
-    RefResolution, RegenExecutor, RegenPlanner, RegenRequest, RegenSession, ResolveRequest,
-    SnapshotPublisher, TessellateSpec,
+    mint_element_ids, AcquireRequest, CancelToken, CheckpointArtifacts, CheckpointStore,
+    EngineError, GeometryEngine, InMemoryCheckpointStore, Lod, MeshKey, ModelSnapshot, Outcome,
+    Pick, PlanArtifacts, PlanContext, PlanRequest, PolicyVersions, RefResolution, RegenExecutor,
+    RegenPlanner, RegenRequest, RegenSession, ResolveRequest, SnapshotPublisher, TessellateSpec,
 };
 use onecad_core::sketch::Sketch;
 
@@ -231,6 +233,17 @@ pub struct DocumentRuntime {
     /// only echoes ids it already holds; Rust owns id identity, so this map upholds
     /// the invariant across `AcquireElementIds` calls.
     promoted: HashMap<(BodyId, TopoKey), ElementId>,
+    /// The regen checkpoint cache (SCHEMA §7.7). Populated by
+    /// [`take_checkpoint_at_head`](Self::take_checkpoint_at_head) (policy: on explicit
+    /// `save_document` only — the cheapest sound policy), persisted into the `.onecad`
+    /// container, and reloaded on open. [`begin_regen`](Self::begin_regen) hands its
+    /// metadata to the planner so a post-checkpoint edit regens incrementally
+    /// (RestoreCheckpoint) instead of from 0. A **disposable cache**: an incompatible
+    /// or unavailable checkpoint degrades to replay, never a wrong result (Invariant 7).
+    checkpoints: InMemoryCheckpointStore,
+    /// Whether the most recent [`begin_regen`](Self::begin_regen) compiled a
+    /// checkpoint-accelerated plan (observability for tests / diagnostics).
+    last_regen_used_checkpoint: bool,
 }
 
 impl DocumentRuntime {
@@ -273,7 +286,7 @@ impl DocumentRuntime {
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Document".to_string());
-        Ok(Self::from_document(
+        let mut rt = Self::from_document(
             doc,
             title,
             Some(path.to_path_buf()),
@@ -281,7 +294,11 @@ impl DocumentRuntime {
             engine,
             meshes,
             solver,
-        ))
+        );
+        // Reload the persisted checkpoint cache so a post-open edit can regen
+        // incrementally (SCHEMA §7.7). Disposable — a stale entry is skipped.
+        rt.load_checkpoints(&loaded);
+        Ok(rt)
     }
 
     fn from_document(
@@ -301,6 +318,13 @@ impl DocumentRuntime {
             repair: doc.repair.clone(),
             elements: doc.elements.clone(),
         };
+        // Repopulate the wire split-id interner from the persisted `split_of` BEFORE
+        // any plan compiles (the cross-process fix): a fresh process starts with an
+        // empty interner, so a downstream op that references a split child would
+        // otherwise render a bare derived uuid the worker never minted (REF_UNRESOLVED)
+        // — replay-from-0 compiles the whole plan up front, before the worker re-mints
+        // the child.
+        reintern_split_children(regen.bodies.bodies());
         Self {
             session: DocumentSession::new(doc),
             regen,
@@ -321,6 +345,8 @@ impl DocumentRuntime {
             active_gesture: None,
             gesture_seq: 0,
             promoted: HashMap::new(),
+            checkpoints: InMemoryCheckpointStore::new(),
+            last_regen_used_checkpoint: false,
         }
     }
 
@@ -491,8 +517,18 @@ impl DocumentRuntime {
             occt_fingerprint: self.occt_fingerprint.clone(),
         };
         let graph = DependencyGraph::new(); // linear timeline: order is authoritative.
-        let plan = RegenPlanner::plan(&self.regen.timeline, &graph, &[], request, &ctx);
+                                            // Hand the checkpoint metadata to the planner (SCHEMA §7.7): a compatible
+                                            // checkpoint at/below the dirty floor accelerates the base (incremental regen).
+        let checkpoint_metas = self.checkpoints.list();
+        let plan = RegenPlanner::plan(
+            &self.regen.timeline,
+            &graph,
+            &checkpoint_metas,
+            request,
+            &ctx,
+        );
         if plan.is_empty() {
+            self.last_regen_used_checkpoint = false;
             return None;
         }
         let job = self.next_job_id();
@@ -503,8 +539,18 @@ impl DocumentRuntime {
                 include_edges: true,
             }),
         };
-        let plan_req =
+        let mut plan_req =
             plan.into_request(job, plan_rev, epoch, PolicyVersions::default(), artifacts);
+        // Attach the selected checkpoint's stored artifacts so the executor's
+        // RestoreCheckpoint reconstructs the base from them (review F3). A missing
+        // stored checkpoint leaves them `None` ⇒ the worker reports `restored:false`
+        // ⇒ replay-from-0 (Invariant 7).
+        self.last_regen_used_checkpoint = plan_req.base_checkpoint.is_some();
+        if let Some(cp) = &plan_req.base_checkpoint {
+            if let Some(stored) = self.checkpoints.load(cp.step_index) {
+                plan_req.base_checkpoint_artifacts = Some(stored.artifacts);
+            }
+        }
         // D1: worker-minted `created` ids must match a known op in this plan and be
         // unique. Replay-from-0 base is empty, so collisions are in-plan.
         let known_ops: HashSet<Uuid> = plan_req.ops.iter().map(|o| o.record_id.as_uuid()).collect();
@@ -686,8 +732,9 @@ impl DocumentRuntime {
 
     // ── Save ─────────────────────────────────────────────────────────────────
 
-    /// Atomically saves the document (+ merged regen geometry outputs) to `path`.
-    /// Timestamps come from the caller (the pure core never reads the wall clock).
+    /// Atomically saves the document (+ merged regen geometry outputs + the regen
+    /// checkpoint cache) to `path`. Timestamps come from the caller (the pure core
+    /// never reads the wall clock).
     ///
     /// # Errors
     /// [`IoError`] on a serialization / filesystem failure; the target is left
@@ -698,10 +745,107 @@ impl DocumentRuntime {
         doc.bodies = self.regen.bodies.clone();
         doc.elements = self.regen.elements.clone();
         doc.repair = self.regen.repair.clone();
-        ContainerWriter::save(path, &doc, &ContainerCaches::none(), &meta)?;
+        let caches = ContainerCaches {
+            checkpoints: self.checkpoint_caches(),
+            ..ContainerCaches::none()
+        };
+        ContainerWriter::save(path, &doc, &caches, &meta)?;
         self.path = Some(path.to_path_buf());
         self.dirty = false;
         Ok(())
+    }
+
+    // ── Checkpoints (SCHEMA §7.7) ────────────────────────────────────────────
+
+    /// Takes a checkpoint of the current head into the cache (the SaveCheckpoint
+    /// policy: on explicit `save_document` only — the cheapest sound policy, so a save
+    /// is the natural moment a durable acceleration base is minted). No-op unless the
+    /// latest published snapshot is exactly the timeline head (so the worker's head
+    /// geometry matches the checkpoint step). Best-effort: a worker failure skips the
+    /// checkpoint (the cache is disposable — Invariant 7).
+    pub async fn take_checkpoint_at_head(&mut self) {
+        let applied = self.regen.timeline.cursor();
+        if applied == 0 {
+            return;
+        }
+        let head_step = applied - 1;
+        // The worker head must be the fully-regenerated document head (its last valid
+        // step == head_step), else a checkpoint keyed at head_step would mis-describe
+        // the worker's actual geometry.
+        if self.latest_snapshot.as_ref().and_then(|s| s.step_index) != Some(head_step) {
+            return;
+        }
+        if let Ok(artifacts) = self.engine.save_checkpoint(head_step).await {
+            // Adopt the worker's real OCCT fingerprint from the checkpoint so the
+            // PlanContext compatibility check (which governs checkpoint selection)
+            // matches the envelope — the V1 `occt_fingerprint` placeholder would
+            // otherwise reject every checkpoint (Invariant 7 fingerprint gate).
+            if let Some(env) = artifacts.representative_envelope() {
+                self.occt_fingerprint = env.occt_fingerprint.clone();
+            }
+            self.checkpoints.save(head_step, artifacts);
+        }
+    }
+
+    /// Whether the most recent [`begin_regen`](Self::begin_regen) compiled a
+    /// checkpoint-accelerated (incremental) plan. Observability for tests.
+    #[must_use]
+    pub fn last_regen_used_checkpoint(&self) -> bool {
+        self.last_regen_used_checkpoint
+    }
+
+    /// The number of checkpoints in the cache (tests / diagnostics).
+    #[must_use]
+    pub fn checkpoint_count(&self) -> usize {
+        self.checkpoints.list().len()
+    }
+
+    /// Serializes the checkpoint cache into container [`CheckpointCache`] entries
+    /// (`checkpoints/<step>.json`). V1 stores the whole [`CheckpointArtifacts`] as
+    /// JSON (BREP bytes inline as an array) — a size inefficiency (documented
+    /// divergence from the §7.7 split json/bin), sound for the small V1 artifacts.
+    fn checkpoint_caches(&self) -> Vec<CheckpointCache> {
+        self.checkpoints
+            .list()
+            .iter()
+            .filter_map(|m| {
+                let stored = self.checkpoints.load(m.step)?;
+                let json = serde_json::to_vec(&stored.artifacts).ok()?;
+                Some(CheckpointCache {
+                    step: m.step,
+                    json,
+                    bin: None,
+                })
+            })
+            .collect()
+    }
+
+    /// Loads persisted checkpoints from an opened container into the cache. A stale /
+    /// unparseable / hash-mismatched entry is skipped (Invariant 7 — a bad cache
+    /// degrades to replay, never a wrong result).
+    fn load_checkpoints(&mut self, loaded: &onecad_core::io::container::LoadedContainer) {
+        use onecad_core::io::container::CacheRead;
+        for entry in loaded.cache_entries() {
+            let Some(rest) = entry.path.strip_prefix(CHECKPOINTS_DIR) else {
+                continue;
+            };
+            let Some(step_str) = rest.strip_suffix(".json") else {
+                continue;
+            };
+            let Ok(step) = step_str.parse::<usize>() else {
+                continue;
+            };
+            if let Ok(CacheRead::Present(bytes)) = loaded.read_cache(&entry.path) {
+                if let Ok(artifacts) = serde_json::from_slice::<CheckpointArtifacts>(&bytes) {
+                    // Adopt the persisted worker fingerprint so a post-open regen's
+                    // PlanContext matches the loaded envelopes (see take_checkpoint).
+                    if let Some(env) = artifacts.representative_envelope() {
+                        self.occt_fingerprint = env.occt_fingerprint.clone();
+                    }
+                    self.checkpoints.save(step, artifacts);
+                }
+            }
+        }
     }
 
     // ── Projection ───────────────────────────────────────────────────────────
@@ -1131,6 +1275,22 @@ pub struct DrivenRegen {
         onecad_core::ids::WorkerEpoch,
     ),
     lod: Lod,
+}
+
+/// Repopulates the wire split-id interner from a registry's persisted `split_of`
+/// entries (the cross-process fix — see [`DocumentRuntime::from_document`]). A body
+/// with no split origin is skipped. Idempotent + deterministic (the derived uuid is a
+/// pure function of `(opId, k)`).
+fn reintern_split_children(bodies: &[onecad_core::document::body::BodyMeta]) {
+    for b in bodies {
+        if let Some(split) = &b.split_of {
+            let derived = crate::worker::wire::intern_split_child(split.op.as_uuid(), split.k);
+            debug_assert_eq!(
+                derived, b.id,
+                "persisted split_of must re-derive the stored BodyId (deterministic)"
+            );
+        }
+    }
 }
 
 /// Renders a [`MeshKey`] as the `"<bodyId>:<lod>:<generation>"` string the

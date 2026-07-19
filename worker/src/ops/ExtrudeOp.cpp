@@ -359,12 +359,9 @@ OpOutcome execute_extrude(OpContext& ctx, const json& op, const std::string& op_
     if (br.error_code == "CANCELLED") return OpOutcome::cancelled();
     if (!br.error_code.empty()) return OpOutcome::fail(br.error_code, br.error_message);
 
-    ctx.bodies.create(target_id, op_id, br.shape);
-    if (builder) {
-        ctx.partition.apply_history(target_id, br.shape, *builder, out.delta, &out.needs_repair);
-    }
-    out.body_events.push_back({"modified", target_id});
-    out.body_ids.push_back(target_id);
+    // Publish the successor: a single-solid result modifies the target in place; a
+    // multi-solid boolean-Cut splits into deterministic children (SCHEMA §2, D1).
+    publish_boolean_result(ctx, op_id, target_id, br.shape, builder.get(), out);
     return out;
 }
 

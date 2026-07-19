@@ -59,7 +59,7 @@ use crate::regen::snapshot::Lod;
 /// A 64-bit FNV-1a topology signature, hex-encoded (SCHEMA §12).
 ///
 /// Opaque to the core — computed worker-side, compared for drift/Invariant 5.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Signature(pub String);
 
 impl Signature {
@@ -78,7 +78,7 @@ impl Signature {
 
 /// The **three** per-step signatures (SCHEMA §12). Counts alone cannot detect a
 /// symmetric `ElementId` swap, so `referenced_binding` is carried separately.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StepSignatures {
     /// Over per-body counts (faces/edges/vertices), quantized bbox, adjacency.
     pub geometry: Signature,
@@ -186,6 +186,10 @@ pub struct PlanRequest {
     /// Optional checkpoint to restore as the base instead of replaying from
     /// empty (SCHEMA §7.2 `baseCheckpoint`). `None` ⇒ replay-from-0.
     pub base_checkpoint: Option<CheckpointRef>,
+    /// The stored artifacts for `base_checkpoint` (the app attaches them post-plan
+    /// from its checkpoint store; the planner leaves them `None`). Threaded into the
+    /// [`RestoreRequest`] so the engine reconstructs the base state (SCHEMA §7.7).
+    pub base_checkpoint_artifacts: Option<CheckpointArtifacts>,
     /// The ordered op slice (suppressed ops already skipped). Executed in
     /// ascending `step_index`; each op runs on its predecessor's exact snapshot
     /// (Invariant 3).
@@ -684,6 +688,14 @@ pub struct RefResolution {
 pub struct RestoreRequest {
     pub checkpoint: CheckpointRef,
     pub expected_history_prefix_hash: HistoryPrefixHash,
+    /// The stored checkpoint artifacts (the app supplies them from its
+    /// [`CheckpointStore`](super::checkpoint::CheckpointStore)). The engine
+    /// reconstructs the base [`BodyRegistry`](crate::document::body::BodyRegistry) +
+    /// [`ElementIndex`](crate::document::element_index::ElementIndex) from them
+    /// (review F3 — seed from the immutable artifacts, never live session state).
+    /// `None` ⇒ the engine cannot reconstruct a base ⇒ `restored:false` ⇒ the
+    /// executor replays from 0 (Invariant 7).
+    pub artifacts: Option<CheckpointArtifacts>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

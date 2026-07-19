@@ -30,6 +30,7 @@ use std::time::Duration;
 
 use uuid::Uuid;
 
+use onecad_core::document::body::split_child_uuid;
 use onecad_core::document::record::{
     BooleanMode, BooleanOp, BooleanParams, ExtrudeMode, ExtrudeParams, FilletParams,
     KnownOperation, Operation, OperationRecord, PlaneKind, SketchOpParams, SketchPlaneRef,
@@ -44,6 +45,7 @@ use onecad_core::ids::{
     BodyId, ConstraintId, DocumentRevision, ElementId, EntityId, JobId, RecordId, RegionId,
     SketchId, SnapshotId, TopoKey, WorkerEpoch,
 };
+use onecad_core::io::container::SaveMeta;
 use onecad_core::math::{Vec2, Vec3};
 use onecad_core::regen::{
     history_prefix_hash, CancelToken, GeometryEngine, HistoryPrefixHash, Lod, ModelSnapshot,
@@ -53,7 +55,9 @@ use onecad_core::sketch::{Constraint, Sketch, SketchEntity, WorldPlane};
 
 use onecad_lib::document_runtime::{DocumentRuntime, RegenReport};
 use onecad_lib::worker::manager::SupervisorConfig;
-use onecad_lib::worker::wire::{body_id_wire, execute_plan_args, sketch_wire};
+use onecad_lib::worker::wire::{
+    body_id_wire, clear_split_interner_for_test, execute_plan_args, sketch_wire,
+};
 use onecad_lib::worker::{resolve_worker_path, MeshProvider, SolverEngine, WorkerManager};
 
 use onecad_protocol::mesh::{f32_le, u32_le, validate_mesh_blob, MeshHeaderView};
@@ -520,6 +524,284 @@ async fn standalone_boolean_union() {
         "Union volume = 30000, got {vol}"
     );
     eprintln!("boolean Union PASS: volume {vol} == 30000 (exact box arithmetic)");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Boolean SPLIT children (`body_<opId>:<k>`, SCHEMA §2 / §14, D1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A Cut that BISECTS a box mints two deterministic split children, both adopted
+/// (D1), with exact volumes and ids stable across a replay. Box A (sketch 40×20,
+/// extrude 25) is bisected by a slab tool that overshoots A everywhere except the
+/// middle band, so `A − tool` = two disconnected 7500-volume pieces.
+/// Serializes the two split tests: `split_persist_survives_cold_interner` clears the
+/// process-global split interner, which would corrupt a concurrent split render. A
+/// tokio mutex so the guard may be held across `.await` (a std mutex cannot).
+static SPLIT_INTERNER_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn boolean_split_children_adopted() {
+    let _guard = SPLIT_INTERNER_LOCK.lock().await;
+    if real_worker().is_none() {
+        eprintln!("skip: no worker binary (set ONECAD_WORKER_PATH)");
+        return;
+    }
+    const SKETCH_TOOL: u128 = 0xD00;
+    const EXTRUDE_TOOL: u128 = 0xD01;
+
+    let bin = real_worker().unwrap();
+    let wm = spawn_worker(bin).await;
+    let mut rt = runtime_over(&wm);
+
+    let sa = SketchId(Uuid::from_u128(0xA));
+    let st = SketchId(Uuid::from_u128(0xD));
+    // Box A: sketch [0,40]×[0,20] extrude 25.
+    add_op(
+        &mut rt,
+        sketch_record(SKETCH_A, &rect_sketch(sa, 0x1000, 0.0, 0.0, 40.0, 20.0)),
+    );
+    add_op(
+        &mut rt,
+        extrude_record(EXTRUDE_A, sa, 25.0, BooleanMode::NewBody, None),
+    );
+    // Tool slab: sketch x∈[15,25] (the middle band), y∈[-10,30] (overshoots A),
+    // extrude 30 (overshoots A's top) ⇒ a full through-cut in the sketch-x direction.
+    add_op(
+        &mut rt,
+        sketch_record(
+            SKETCH_TOOL,
+            &rect_sketch(st, 0x3000, 15.0, -10.0, 10.0, 40.0),
+        ),
+    );
+    add_op(
+        &mut rt,
+        extrude_record(EXTRUDE_TOOL, st, 30.0, BooleanMode::NewBody, None),
+    );
+    // Cut A − tool ⇒ two disconnected pieces (a split).
+    add_op(
+        &mut rt,
+        boolean_record(
+            OP_TAIL,
+            BooleanOp::Cut,
+            body_of(EXTRUDE_A),
+            body_of(EXTRUDE_TOOL),
+        ),
+    );
+
+    let report = regen_all(&mut rt).await;
+    let snap = published(&report, "split");
+    // The parent + tool are gone; exactly the two children survive.
+    let children: Vec<BodyId> = snap.bodies.iter().map(|b| b.body).collect();
+    assert_eq!(
+        children.len(),
+        2,
+        "cut bisected A into two children, got {children:?}"
+    );
+    assert!(
+        !children.contains(&body_of(EXTRUDE_A)) && !children.contains(&body_of(EXTRUDE_TOOL)),
+        "children are fresh split ids, not the parent/tool ids"
+    );
+
+    // Both children adopted with EXACT volumes (7500 each).
+    let mut vols = Vec::new();
+    for &child in &children {
+        let mesh = body_mesh(&mut rt, child).await;
+        let view = validate_mesh_blob(&mesh).expect("split child MESH1 validates");
+        let v = mesh_volume(&view, &mesh);
+        assert!(
+            (v - 7500.0).abs() < 1.0,
+            "split child volume = 15·20·25 = 7500, got {v}"
+        );
+        vols.push(v);
+    }
+    let total: f64 = vols.iter().sum();
+    assert!(
+        (total - 15_000.0).abs() < 2.0,
+        "A(20000) − band(5000) = 15000, got {total}"
+    );
+
+    // Ids stable across a replay (derived deterministically from opId + ordinal).
+    let report2 = regen_all(&mut rt).await;
+    let snap2 = published(&report2, "split replay");
+    let set1: std::collections::HashSet<BodyId> = children.into_iter().collect();
+    let set2: std::collections::HashSet<BodyId> = snap2.bodies.iter().map(|b| b.body).collect();
+    assert_eq!(set1, set2, "split child ids are identical across a replay");
+
+    wm.shutdown().await;
+    eprintln!("boolean split PASS: 2 children, volumes {vols:?} == 7500 each, ids stable");
+}
+
+/// The cross-process persistence gate (orchestrator review, M5a): a downstream op that
+/// references a split child by its (persisted) derived `BodyId` must still render
+/// `body_<opId>:<k>` on the wire in a **FRESH process** — where the split interner is
+/// cold. The persisted `BodyMeta.split_of` (re-interned at document open) is the fix.
+///
+/// Doc: box A → bisecting Cut (2 children) → Cut targeting child `:1` (a slab off its
+/// far end, 7500 → 5000). Save, **clear the interner** (simulate a fresh process + the
+/// pre-fix cold-interner state), reopen with a FRESH runtime + FRESH worker, replay
+/// from 0, and assert the reopened head is byte-identical (signature + child volumes)
+/// to a warm from-0 baseline — i.e. op-B resolved child `:1` across the process boundary
+/// instead of failing REF_UNRESOLVED.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn split_persist_survives_cold_interner() {
+    let _guard = SPLIT_INTERNER_LOCK.lock().await;
+    let Some(bin) = real_worker() else {
+        eprintln!("skip: no worker binary (set ONECAD_WORKER_PATH)");
+        return;
+    };
+    // Record ids: box A, bisecting tool, the SPLIT cut, the chunk tool, the child-cut.
+    const EX_TOOL1: u128 = 0xB01;
+    const SK_TOOL1: u128 = 0xB00;
+    const SPLIT_CUT: u128 = 0xC00; // op that splits A into :0 / :1
+    const SK_TOOL2: u128 = 0xD00;
+    const EX_TOOL2: u128 = 0xD01;
+    const CHILD_CUT: u128 = 0xE00; // op that cuts child :1
+    let child1 = BodyId(split_child_uuid(Uuid::from_u128(SPLIT_CUT), 1));
+    let child0 = BodyId(split_child_uuid(Uuid::from_u128(SPLIT_CUT), 0));
+
+    // Phase 1: box A + the bisecting Cut (produces child :0 / :1). Regen after this so
+    // the child exists before phase 2 references it — the ONLY way a real workflow can
+    // select a split child (you cannot target a body that a not-yet-run op will mint).
+    let build_split = |rt: &mut DocumentRuntime| {
+        let sa = SketchId(Uuid::from_u128(0xA));
+        let st1 = SketchId(Uuid::from_u128(0xB));
+        add_op(
+            rt,
+            sketch_record(SKETCH_A, &rect_sketch(sa, 0x1000, 0.0, 0.0, 40.0, 20.0)),
+        );
+        add_op(
+            rt,
+            extrude_record(EXTRUDE_A, sa, 25.0, BooleanMode::NewBody, None),
+        );
+        add_op(
+            rt,
+            sketch_record(SK_TOOL1, &rect_sketch(st1, 0x3000, 15.0, -10.0, 10.0, 40.0)),
+        );
+        add_op(
+            rt,
+            extrude_record(EX_TOOL1, st1, 30.0, BooleanMode::NewBody, None),
+        );
+        add_op(
+            rt,
+            boolean_record(
+                SPLIT_CUT,
+                BooleanOp::Cut,
+                body_of(EXTRUDE_A),
+                body_of(EX_TOOL1),
+            ),
+        );
+    };
+    // Phase 2: a chunk tool + a Cut whose TARGET is split child :1 (the cross-process ref).
+    let build_child_cut = |rt: &mut DocumentRuntime| {
+        let st2 = SketchId(Uuid::from_u128(0xD));
+        add_op(
+            rt,
+            sketch_record(SK_TOOL2, &rect_sketch(st2, 0x5000, 35.0, -5.0, 10.0, 30.0)),
+        );
+        add_op(
+            rt,
+            extrude_record(EX_TOOL2, st2, 30.0, BooleanMode::NewBody, None),
+        );
+        add_op(
+            rt,
+            boolean_record(CHILD_CUT, BooleanOp::Cut, child1, body_of(EX_TOOL2)),
+        );
+    };
+
+    // ── Warm baseline (own worker): the from-0 head signature + child volumes ──────
+    let (base_sig, base_v0, base_v1) = {
+        let wm = spawn_worker(bin.clone()).await;
+        let mut rt = runtime_over(&wm);
+        build_split(&mut rt);
+        let _ = published(&regen_all(&mut rt).await, "warm phase-1"); // child :1 now interned
+        build_child_cut(&mut rt);
+        let report = regen_all(&mut rt).await;
+        let snap = published(&report, "warm baseline");
+        assert_eq!(snap.bodies.len(), 2, "child :0 + cut child :1");
+        let sig = snap
+            .signatures
+            .as_ref()
+            .map(|s| s.geometry.as_str().to_string());
+        let v0 = mesh_vol(&mut rt, child0).await;
+        let v1 = mesh_vol(&mut rt, child1).await;
+        wm.shutdown().await;
+        (sig, v0, v1)
+    };
+    assert!(
+        (base_v0 - 7500.0).abs() < 1.0,
+        "child :0 untouched = 7500, got {base_v0}"
+    );
+    assert!(
+        (base_v1 - 5000.0).abs() < 1.0,
+        "child :1 cut = 7500 − 2500 = 5000, got {base_v1}"
+    );
+
+    // ── Save, then simulate a FRESH PROCESS (cold interner) + reopen + replay ──────
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("split.onecad");
+    {
+        let wm = spawn_worker(bin.clone()).await;
+        let mut rt = runtime_over(&wm);
+        build_split(&mut rt);
+        let _ = published(&regen_all(&mut rt).await, "save phase-1");
+        build_child_cut(&mut rt);
+        let _ = published(&regen_all(&mut rt).await, "save phase-2");
+        rt.save(&path, split_save_meta()).expect("save split doc");
+        wm.shutdown().await;
+    }
+    // A fresh process starts with an EMPTY interner — this is the pre-fix failure state.
+    clear_split_interner_for_test();
+
+    let wm = spawn_worker(bin.clone()).await;
+    let engine: Arc<dyn GeometryEngine> = Arc::new(wm.clone());
+    let meshes: Arc<dyn MeshProvider> = Arc::new(wm.clone());
+    let solver: Arc<dyn SolverEngine> = Arc::new(wm.clone());
+    // `open` re-interns the split children from the persisted `split_of` BEFORE any
+    // plan compiles — the fix. Without it the replay below would REF_UNRESOLVED on the
+    // CHILD_CUT op's `body_<derived-uuid>` target.
+    let mut rt = DocumentRuntime::open(&path, engine, meshes, solver).expect("reopen split doc");
+    let report = regen_all(&mut rt).await;
+    let snap = published(&report, "reopen replay-from-0");
+    assert_eq!(snap.bodies.len(), 2, "reopen: 2 bodies");
+    let reopen_sig = snap
+        .signatures
+        .as_ref()
+        .map(|s| s.geometry.as_str().to_string());
+    assert_eq!(
+        reopen_sig, base_sig,
+        "reopen head signature IDENTICAL to the warm baseline"
+    );
+    let rv0 = mesh_vol(&mut rt, child0).await;
+    let rv1 = mesh_vol(&mut rt, child1).await;
+    assert!(
+        (rv0 - 7500.0).abs() < 1.0,
+        "reopen child :0 = 7500, got {rv0}"
+    );
+    assert!(
+        (rv1 - 5000.0).abs() < 1.0,
+        "reopen child :1 = 5000, got {rv1}"
+    );
+
+    clear_split_interner_for_test(); // leave the interner clean for other tests
+    wm.shutdown().await;
+    eprintln!(
+        "split-persist PASS: cold-interner reopen resolved child :1 (vol {rv1}), sig identical"
+    );
+}
+
+async fn mesh_vol(rt: &mut DocumentRuntime, body: BodyId) -> f64 {
+    let mesh = body_mesh(rt, body).await;
+    let view = validate_mesh_blob(&mesh).expect("child MESH1 validates");
+    mesh_volume(&view, &mesh)
+}
+
+fn split_save_meta() -> SaveMeta {
+    SaveMeta {
+        app_version: "0.1.0-test".into(),
+        occt_fingerprint: None,
+        created: "2026-07-19T00:00:00Z".into(),
+        modified: "2026-07-19T00:00:00Z".into(),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

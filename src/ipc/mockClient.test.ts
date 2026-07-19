@@ -23,6 +23,16 @@ describe("mockClient file seam", () => {
     expect(path).toMatch(/\.step$/);
   });
 
+  it("exportStl returns a fake .stl path", async () => {
+    const path = await mockClient.exportStl();
+    expect(path).toMatch(/\.stl$/);
+  });
+
+  it("exportObj returns a fake .obj path", async () => {
+    const path = await mockClient.exportObj();
+    expect(path).toMatch(/\.obj$/);
+  });
+
   it("onWorkerStatus never fires and returns a no-op unsubscribe", () => {
     let fired = false;
     const unsub = mockClient.onWorkerStatus(() => {

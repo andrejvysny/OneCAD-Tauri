@@ -30,11 +30,12 @@ use onecad_core::ids::{
     BodyId, DocumentRevision, ElementId, EntityId, JobId, SnapshotId, TopoKey, WorkerEpoch,
 };
 use onecad_core::regen::{
-    AcceptResult, AcquireRequest, BodySelector, Diagnostic, ElementMapDelta, ElementMapEntry,
-    EngineError, HistoryPrefixHash, OpFailureCode, OpenSessionRequest, PlanPrepared, PlanRequest,
-    PlanStepEvent, PlannedOp, RefResolution, ResolveOutcome, ResolveRequest, SessionMode, Severity,
-    Signature, StepResult, StepSignatures, StepStatus, StoppedReason, TessellateRequest,
-    WorkerElementEvidence, WorkerHead,
+    AcceptResult, AcquireRequest, BodySelector, CheckpointArtifact, CheckpointArtifacts,
+    CheckpointEnvelope, Diagnostic, ElementMapDelta, ElementMapEntry, EngineError,
+    HistoryPrefixHash, OpFailureCode, OpenSessionRequest, PlanPrepared, PlanRequest, PlanStepEvent,
+    PlannedOp, RefResolution, ResolveOutcome, ResolveRequest, RestoreRequest, SessionMode,
+    Severity, Signature, StepResult, StepSignatures, StepStatus, StoppedReason, TessellateRequest,
+    WorkerElementEvidence, WorkerHead, ARTIFACT_SCHEMA_VERSION,
 };
 use onecad_core::sketch::WorldPlane;
 use onecad_core::sketch::{Constraint, CurvePosition, Sketch, SketchAttachment, SketchEntity};
@@ -51,25 +52,108 @@ use super::lod_str;
 // BodyId ↔ wire (`body_<opId>`)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The wire form of a [`BodyId`]: `body_<uuid>` (SCHEMA §2 — a NewBody id is
-/// `body_<opId>`, the `opId` being the Rust-minted record-id uuid).
+// ── Split-child BodyId representation (M5a, SCHEMA §2 / §14) ──────────────────
+//
+// A NewBody id is `body_<opId>` and maps 1:1 to `BodyId(opId uuid)`. A boolean SPLIT
+// mints `body_<opId>:<k>` (deterministic `k`-ordering; see the worker `ordered_solids`).
+// `BodyId` is a `Uuid` newtype, so a `:<k>` child cannot reuse the opId uuid — it maps
+// to a **deterministic derived uuid** `uuid5(SPLIT_NS, "<opId>:<k>")` (pure function ⇒
+// replay-stable + persistence-stable: the doc stores the derived uuid, a from-0 replay
+// re-mints the SAME id). Because that uuid5 is one-way, `body_id_wire` cannot rebuild
+// the `body_<opId>:<k>` string from the uuid alone; the [`split_interner`] records
+// `derived → "body_<opId>:<k>"` at [`parse_body_id`] time (the worker ALWAYS mints a
+// child, so Rust parses it, BEFORE Rust ever renders it back over the wire — tessellate,
+// export, a downstream op input). The interner is a bounded, append-only, deterministic
+// map (identical strings ⇒ identical uuids ⇒ identical strings), so it is self-healing
+// across reopen and cannot be cross-contaminated between documents/tests.
+
+use std::collections::HashMap;
+use std::sync::{OnceLock, RwLock};
+
+use onecad_core::document::body::split_child_uuid;
+
+/// `derived split-child BodyId uuid → its "body_<opId>:<k>" wire string`. See the
+/// section header for why the reverse map is needed + why it is sound. Repopulated
+/// on document open / checkpoint restore from the persisted `BodyMeta.split_of`
+/// ([`intern_split_child`]) so a downstream reference to a child renders correctly in
+/// a **fresh process** — before the plan compiles, when nothing has been parsed yet.
+fn split_interner() -> &'static RwLock<HashMap<Uuid, String>> {
+    static INTERNER: OnceLock<RwLock<HashMap<Uuid, String>>> = OnceLock::new();
+    INTERNER.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Interns split child `k` of op `op`: computes the deterministic derived uuid
+/// (core [`split_child_uuid`]) and records `derived → "body_<op>:<k>"` so
+/// [`body_id_wire`] renders the exact form the worker keys its BodyStore by. Returns
+/// the child [`BodyId`]. Called at document open / checkpoint restore from the
+/// persisted `split_of` so the interner is warm before any plan compiles (the
+/// cross-process fix).
+pub fn intern_split_child(op: Uuid, k: usize) -> BodyId {
+    let derived = split_child_uuid(op, k);
+    if let Ok(mut map) = split_interner().write() {
+        map.insert(derived, format!("body_{op}:{k}"));
+    }
+    BodyId(derived)
+}
+
+/// Clears the split-id interner — TEST SUPPORT ONLY (simulates a fresh process so a
+/// test can prove the persisted-`split_of` re-intern path, not a warm interner).
+#[doc(hidden)]
+pub fn clear_split_interner_for_test() {
+    if let Ok(mut map) = split_interner().write() {
+        map.clear();
+    }
+}
+
+/// The interned `body_<opId>:<k>` wire string for a split-child [`BodyId`], if it is
+/// one (i.e. it was produced by [`parse_body_id`]). `None` for a plain `body_<opId>`.
+#[must_use]
+pub fn split_wire(body: BodyId) -> Option<String> {
+    split_interner().read().ok()?.get(&body.0).cloned()
+}
+
+/// The `(opId, ordinal)` a split-child [`BodyId`] was derived from, if it is one.
+/// Used by adoption ([`validate_created`](super::validate_created)) to re-check the
+/// opId against the plan + the `k`-contiguity.
+#[must_use]
+pub fn split_parts(body: BodyId) -> Option<(Uuid, usize)> {
+    let s = split_wire(body)?;
+    let rest = s.strip_prefix("body_")?;
+    let (op, k) = rest.split_once(':')?;
+    Some((Uuid::parse_str(op).ok()?, k.parse().ok()?))
+}
+
+/// The wire form of a [`BodyId`]: `body_<opId>:<k>` for a split child (from the
+/// interner), else `body_<uuid>` (SCHEMA §2 — a NewBody id is `body_<opId>`, the
+/// `opId` being the Rust-minted record-id uuid).
 #[must_use]
 pub fn body_id_wire(body: BodyId) -> String {
+    if let Some(s) = split_wire(body) {
+        return s;
+    }
     format!("body_{}", body.0)
 }
 
-/// Parses a worker `body_<opId>` string back to a core [`BodyId`] (R-WP10 flag):
-/// strip the `body_` prefix and parse the remainder as the op uuid. Split children
-/// (`body_<opId>:<k>`) are deferred (W-WP6) and rejected here.
+/// Parses a worker `body_<opId>` (or split `body_<opId>:<k>`) string back to a core
+/// [`BodyId`] (SCHEMA §2, D1). A plain id maps to `BodyId(opId uuid)`; a split child
+/// maps to the deterministic derived uuid [`split_child_uuid`] and INTERNS the reverse
+/// mapping so [`body_id_wire`] can rebuild the exact `body_<opId>:<k>` string.
 ///
 /// # Errors
-/// A human reason on a missing prefix, a split-child form, or a non-uuid opId.
+/// A human reason on a missing prefix, a non-uuid opId, or a non-integer ordinal.
 pub fn parse_body_id(s: &str) -> Result<BodyId, String> {
     let op = s
         .strip_prefix("body_")
         .ok_or_else(|| format!("bodyId {s:?} missing 'body_' prefix (D1)"))?;
-    if op.contains(':') {
-        return Err(format!("split-child bodyId {s:?} deferred to W-WP6"));
+    if let Some((op_str, k_str)) = op.split_once(':') {
+        let op_uuid = Uuid::parse_str(op_str)
+            .map_err(|e| format!("split-child bodyId {s:?} opId is not a uuid: {e}"))?;
+        let k: usize = k_str
+            .parse()
+            .map_err(|e| format!("split-child bodyId {s:?} ordinal is not an integer: {e}"))?;
+        // Interns the CANONICAL reconstruction so `body_id_wire` always emits the exact
+        // form the worker keys its BodyStore by (lowercase uuid + ordinal).
+        return Ok(intern_split_child(op_uuid, k));
     }
     Uuid::parse_str(op)
         .map(BodyId)
@@ -163,6 +247,14 @@ fn wire_op(op: &PlannedOp) -> Value {
     json!({
         "opType": op_type,
         "opId": op.record_id.to_string(),
+        // The op's TIMELINE step index (SCHEMA §7.3). Load-bearing for an INCREMENTAL
+        // plan (start_step > 0): the worker keys `lastValidStep` / `perStepResults` on
+        // it, and Rust's prefix-echo verification maps `lastValidStep` back through
+        // `planned_steps`. Omitting it made the worker fall back to the execution-order
+        // index (0-based), so an incremental plan mis-reported its last valid step (a
+        // from-0 plan's exec index equals its step index, so the bug was latent until
+        // checkpoints enabled incremental plans, M5a).
+        "stepIndex": op.step_index,
         "inputs": wire_op_inputs(op),
         "params": params,
         "determinism": serde_json::to_value(&op.determinism).unwrap_or(Value::Null),
@@ -640,6 +732,151 @@ pub fn export_step_args(path: &str, bodies: &[BodyId], schema: &str) -> Value {
         "bodyIds": bodies.iter().map(|b| body_id_wire(*b)).collect::<Vec<_>>(),
         "schema": schema,
     })
+}
+
+/// `ExportStl.args` (SCHEMA §7.8): `{path, bodyIds, binary, lod}`.
+#[must_use]
+pub fn export_stl_args(path: &str, bodies: &[BodyId], binary: bool, lod: &str) -> Value {
+    json!({
+        "path": path,
+        "bodyIds": bodies.iter().map(|b| body_id_wire(*b)).collect::<Vec<_>>(),
+        "binary": binary,
+        "lod": lod,
+    })
+}
+
+/// `ExportObj.args` (SCHEMA §7.8): `{path, bodyIds, lod}`.
+#[must_use]
+pub fn export_obj_args(path: &str, bodies: &[BodyId], lod: &str) -> Value {
+    json!({
+        "path": path,
+        "bodyIds": bodies.iter().map(|b| body_id_wire(*b)).collect::<Vec<_>>(),
+        "lod": lod,
+    })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Checkpoints (SCHEMA §7.7)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `SaveCheckpoint.args` (SCHEMA §7.7): `{stepIndex}`.
+#[must_use]
+pub fn save_checkpoint_args(step_index: usize) -> Value {
+    json!({ "stepIndex": step_index })
+}
+
+/// `RestoreCheckpoint.args` (SCHEMA §7.7 + `workerEpoch` for D4 fencing +
+/// `stepIndex` so the worker keys its in-session retained checkpoint).
+#[must_use]
+pub fn restore_checkpoint_args(req: &RestoreRequest, worker_epoch: WorkerEpoch) -> Value {
+    json!({
+        "checkpointId": req.checkpoint.checkpoint_id.as_str(),
+        "stepIndex": req.checkpoint.step_index,
+        "expectedHistoryPrefixHash": req.expected_history_prefix_hash.as_str(),
+        "workerEpoch": worker_epoch.0,
+    })
+}
+
+/// Extracts the bytes of a named `bin` section from a resp's binary tail.
+fn extract_bin_section(
+    name: Option<&Value>,
+    sections: &[BinSection],
+    tail: &[u8],
+) -> Result<Vec<u8>, String> {
+    let name = name
+        .and_then(Value::as_str)
+        .ok_or("checkpoint artifact missing 'bin' name")?;
+    let sec = sections
+        .iter()
+        .find(|s| s.name == name)
+        .ok_or_else(|| format!("checkpoint bin section {name:?} missing"))?;
+    let (start, end) = (sec.off as usize, (sec.off + sec.len) as usize);
+    tail.get(start..end)
+        .map(<[u8]>::to_vec)
+        .ok_or_else(|| format!("checkpoint bin section {name:?} out of range"))
+}
+
+/// Parses a `SaveCheckpoint` resp + its binary tail into core
+/// [`CheckpointArtifacts`] (SCHEMA §7.7). Envelope version axes come from the
+/// current policy (`occt_fingerprint` + version 1s), so a later regen validates the
+/// checkpoint against the running worker's fingerprint (Invariant 7).
+pub fn parse_save_checkpoint(
+    result: &Value,
+    sections: &[BinSection],
+    tail: &[u8],
+    occt_fingerprint: &str,
+) -> Result<CheckpointArtifacts, String> {
+    let step = result.get("stepIndex").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let history_prefix_hash = HistoryPrefixHash::new(
+        result
+            .get("historyPrefixHash")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+    );
+    let signatures = parse_signatures(result.get("signatures"));
+    let mut artifacts = Vec::new();
+    if let Some(arr) = result.get("artifacts").and_then(Value::as_array) {
+        for a in arr {
+            let body = parse_body_id(a.get("bodyId").and_then(Value::as_str).unwrap_or(""))?;
+            let bytes = extract_bin_section(a.get("bin"), sections, tail)?;
+            let content_hash = a
+                .get("contentHash")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let envelope = CheckpointEnvelope {
+                artifact_schema_version: ARTIFACT_SCHEMA_VERSION,
+                body,
+                step,
+                history_prefix_hash: history_prefix_hash.clone(),
+                brep_content_hash: content_hash.clone(),
+                occt_fingerprint: occt_fingerprint.to_string(),
+                descriptor_version: 1,
+                resolver_version: 1,
+                quantization_version: 1,
+                signature_version: 1,
+                codec: a
+                    .get("codec")
+                    .and_then(Value::as_str)
+                    .unwrap_or("brep-bintools")
+                    .to_string(),
+                size: bytes.len() as u64,
+                content_hash,
+            };
+            artifacts.push(CheckpointArtifact { envelope, bytes });
+        }
+    }
+    let element_map_partition = result
+        .get("elementMapPartition")
+        .and_then(|p| extract_bin_section(p.get("bin"), sections, tail).ok())
+        .unwrap_or_default();
+    Ok(CheckpointArtifacts {
+        step,
+        artifacts,
+        element_map_partition,
+        signatures,
+        history_prefix_hash,
+    })
+}
+
+/// The `(restored, drift_detected, snapshot_id)` a `RestoreCheckpoint` resp reports.
+#[must_use]
+pub fn parse_restore_checkpoint(result: &Value) -> (bool, bool, u64) {
+    (
+        result
+            .get("restored")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        result
+            .get("driftDetected")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        result
+            .get("snapshotId")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1294,9 +1531,81 @@ mod tests {
         assert!(parse_body_id("body_not-a-uuid").is_err());
         assert!(parse_body_id("7").is_err(), "missing prefix");
         assert!(
-            parse_body_id("body_00000000-0000-0000-0000-000000000001:0").is_err(),
-            "split child deferred"
+            parse_body_id("body_00000000-0000-0000-0000-000000000001:x").is_err(),
+            "non-integer ordinal"
         );
+        assert!(
+            parse_body_id("body_not-a-uuid:0").is_err(),
+            "split child with non-uuid opId"
+        );
+    }
+
+    // Serializes the interner-mutating tests: the split interner is a process-global,
+    // and `clear_split_interner_for_test` wipes it, so two such tests must not race.
+    static INTERNER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn split_child_body_id_round_trips_and_is_deterministic() {
+        let _guard = INTERNER_TEST_LOCK.lock().unwrap();
+        // A split child parses to a DERIVED uuid (not the opId), and body_id_wire
+        // rebuilds the EXACT `body_<opId>:<k>` string via the interner (SCHEMA §2).
+        let op = Uuid::from_u128(0xABCD);
+        let s0 = format!("body_{op}:0");
+        let s1 = format!("body_{op}:1");
+        let child0 = parse_body_id(&s0).unwrap();
+        let child1 = parse_body_id(&s1).unwrap();
+        assert_ne!(child0, child1, "distinct ordinals → distinct ids");
+        assert_ne!(child0, BodyId(op), "child id is NOT the opId uuid");
+        assert_eq!(
+            body_id_wire(child0),
+            s0,
+            "round-trips to the exact wire form"
+        );
+        assert_eq!(body_id_wire(child1), s1);
+        // Deterministic (pure function of opId + k) — a re-parse yields the same id.
+        assert_eq!(parse_body_id(&s0).unwrap(), child0);
+        // split_parts recovers (opId, k) for adoption.
+        assert_eq!(split_parts(child0), Some((op, 0)));
+        assert_eq!(split_parts(child1), Some((op, 1)));
+        assert_eq!(
+            split_parts(BodyId(op)),
+            None,
+            "a plain NewBody id is not a split child"
+        );
+    }
+
+    #[test]
+    fn split_child_reinterns_after_fresh_process_simulation() {
+        let _guard = INTERNER_TEST_LOCK.lock().unwrap();
+        // A worker mint parses the child + interns it (the warm-process path).
+        let op = Uuid::from_u128(0xF00D);
+        let child = parse_body_id(&format!("body_{op}:1")).unwrap();
+        assert_eq!(body_id_wire(child), format!("body_{op}:1"));
+
+        // Simulate a FRESH PROCESS: nothing parsed yet, interner empty.
+        clear_split_interner_for_test();
+        // PRE-FIX behavior (the gap): body_id_wire MISSES and renders the bare derived
+        // uuid — an id the worker never minted ⇒ REF_UNRESOLVED for any downstream ref.
+        assert_eq!(
+            body_id_wire(child),
+            format!("body_{}", child.0),
+            "pre-fix: a cold interner renders the wrong (bare-uuid) id"
+        );
+        assert_ne!(body_id_wire(child), format!("body_{op}:1"));
+
+        // THE FIX: re-intern from the persisted split_of (opId, k) — exactly what
+        // DocumentRuntime does at open — and the render is correct again.
+        let rederived = intern_split_child(op, 1);
+        assert_eq!(
+            rederived, child,
+            "re-intern derives the SAME BodyId (deterministic)"
+        );
+        assert_eq!(
+            body_id_wire(child),
+            format!("body_{op}:1"),
+            "fixed: the persisted split_of repopulates the interner"
+        );
+        clear_split_interner_for_test(); // leave the interner clean for other tests
     }
 
     #[test]

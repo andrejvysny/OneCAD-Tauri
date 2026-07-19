@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mockClient } from "@/ipc/mockClient";
 import { viewportStore } from "@/stores/viewportStore";
 import { documentStore, seedMockDocument } from "@/stores/documentStore";
-import { saveDocument, saveDocumentAs, exportStep } from "./fileActions";
+import { saveDocument, saveDocumentAs, exportStep, exportStl, exportObj } from "./fileActions";
 
 beforeEach(() => {
   viewportStore.getState().setStatusHint(null);
@@ -58,6 +58,30 @@ describe("fileActions", () => {
   it("Export STEP is a no-op when the dialog is cancelled", async () => {
     vi.spyOn(mockClient, "exportStep").mockResolvedValue(null);
     await exportStep();
+    expect(hint()).toBeNull();
+  });
+
+  it("Export STL shows 'Exported ⟨name⟩' on success", async () => {
+    vi.spyOn(mockClient, "exportStl").mockResolvedValue("/Users/andrej/CAD/Part.stl");
+    await exportStl();
+    expect(hint()).toBe("Exported Part");
+  });
+
+  it("Export STL is a no-op when the dialog is cancelled", async () => {
+    vi.spyOn(mockClient, "exportStl").mockResolvedValue(null);
+    await exportStl();
+    expect(hint()).toBeNull();
+  });
+
+  it("Export OBJ shows 'Exported ⟨name⟩' on success", async () => {
+    vi.spyOn(mockClient, "exportObj").mockResolvedValue("/Users/andrej/CAD/Part.obj");
+    await exportObj();
+    expect(hint()).toBe("Exported Part");
+  });
+
+  it("Export OBJ is a no-op when the dialog is cancelled", async () => {
+    vi.spyOn(mockClient, "exportObj").mockResolvedValue(null);
+    await exportObj();
     expect(hint()).toBeNull();
   });
 });

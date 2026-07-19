@@ -69,6 +69,8 @@ add_library(worker_core STATIC
     src/ops/RevolveOp.cpp
     src/ops/FilletChamferOp.cpp
     src/io/ExportStep.cpp
+    src/io/MeshExport.cpp
+    src/io/Checkpoint.cpp
     src/session/ElementIdentity.cpp
     src/tess/Mesh1.cpp
     src/tess/MeshHandle.cpp

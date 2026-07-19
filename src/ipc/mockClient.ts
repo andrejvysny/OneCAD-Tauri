@@ -458,6 +458,14 @@ export const mockClient: CadClient = {
     await wait(40);
     return "/Users/andrej/CAD/Projects/Untitled.step";
   },
+  async exportStl() {
+    await wait(40);
+    return "/Users/andrej/CAD/Projects/Untitled.stl";
+  },
+  async exportObj() {
+    await wait(40);
+    return "/Users/andrej/CAD/Projects/Untitled.obj";
+  },
 
   // The mock has no worker, so it never emits worker-status (no-op unsubscribe).
   onWorkerStatus(_cb: (status: WorkerStatus) => void): Unsubscribe {

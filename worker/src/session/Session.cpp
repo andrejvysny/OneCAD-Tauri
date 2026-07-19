@@ -31,6 +31,7 @@ void Session::open(std::string document_id, std::uint64_t document_revision,
     sketches_.clear();
     scratch_.reset();
     snapshot_counter_ = 0;
+    checkpoints_.clear();
 }
 
 void Session::close() {
@@ -53,6 +54,7 @@ std::uint64_t Session::reset() {
     sketches_.clear();
     scratch_.reset();
     snapshot_counter_ = 0;
+    checkpoints_.clear();  // in-session cache dropped on restart (Invariant 7 replay)
     worker_epoch_ += 1;  // Rust echoes the new epoch in subsequent requests.
     return worker_epoch_;
 }
@@ -250,6 +252,39 @@ bool Session::discard_prepared(std::uint64_t /*job_id*/) {
     if (!scratch_.has_value()) return false;
     scratch_.reset();
     return true;
+}
+
+CheckpointState Session::save_checkpoint(std::uint64_t step) {
+    std::lock_guard<std::mutex> lk(mu_);
+    CheckpointState st{bodies_, partition_, history_prefix_hash_};
+    checkpoints_[step] = st;  // supersede any earlier checkpoint at this step
+    return st;
+}
+
+RestoreOutcome Session::restore_checkpoint(std::uint64_t step, const std::string& expected_hash) {
+    std::lock_guard<std::mutex> lk(mu_);
+    RestoreOutcome out;
+    auto it = checkpoints_.find(step);
+    if (it == checkpoints_.end()) {
+        out.restored = false;  // absent (e.g. post-restart) ⇒ Rust replays from 0
+        return out;
+    }
+    const CheckpointState& st = it->second;
+    out.stored_hash = st.history_prefix_hash;
+    // Staleness: the checkpoint's stored hash must match the base the plan expects.
+    if (!expected_hash.empty() && expected_hash != st.history_prefix_hash) {
+        out.restored = false;
+        out.drift_detected = true;
+        return out;
+    }
+    // Install the checkpoint state as the head (bump snapshotId, set the opaque hash).
+    bodies_ = st.bodies;
+    partition_ = st.partition;
+    history_prefix_hash_ = st.history_prefix_hash;
+    snapshot_id_ = ++snapshot_counter_;
+    out.restored = true;
+    out.snapshot_id = snapshot_id_;
+    return out;
 }
 
 }  // namespace onecad::session

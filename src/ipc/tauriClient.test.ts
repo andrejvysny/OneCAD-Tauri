@@ -172,6 +172,40 @@ describe("tauriClient file commands", () => {
     mockIPC((cmd) => (cmd === "export_step_file" ? null : undefined));
     expect(await createTauriClient().exportStep()).toBeNull();
   });
+
+  it("exportStl invokes export_stl_file and returns the written path", async () => {
+    let payload: unknown;
+    mockIPC((cmd, p) => {
+      if (cmd === "export_stl_file") {
+        payload = p;
+        return "/out.stl";
+      }
+    });
+    expect(await createTauriClient().exportStl()).toBe("/out.stl");
+    expect(payload).toEqual({ path: null });
+  });
+
+  it("exportStl returns null on a cancelled export dialog", async () => {
+    mockIPC((cmd) => (cmd === "export_stl_file" ? null : undefined));
+    expect(await createTauriClient().exportStl()).toBeNull();
+  });
+
+  it("exportObj invokes export_obj_file and returns the written path", async () => {
+    let payload: unknown;
+    mockIPC((cmd, p) => {
+      if (cmd === "export_obj_file") {
+        payload = p;
+        return "/out.obj";
+      }
+    });
+    expect(await createTauriClient().exportObj()).toBe("/out.obj");
+    expect(payload).toEqual({ path: null });
+  });
+
+  it("exportObj returns null on a cancelled export dialog", async () => {
+    mockIPC((cmd) => (cmd === "export_obj_file" ? null : undefined));
+    expect(await createTauriClient().exportObj()).toBeNull();
+  });
 });
 
 // ── worker-status event ───────────────────────────────────────────────────────

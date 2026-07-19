@@ -99,6 +99,28 @@ export async function exportStep(): Promise<void> {
   }
 }
 
+/** Export STL…: dialog (Rust) + worker mesh export. A cancelled dialog is a no-op. */
+export async function exportStl(): Promise<void> {
+  try {
+    const path = await client.exportStl();
+    if (!path) return; // cancelled
+    transientHint(`Exported ${baseName(path)}`);
+  } catch (e) {
+    errorHint(`Export failed: ${message(e)}`);
+  }
+}
+
+/** Export OBJ…: dialog (Rust) + worker mesh export. A cancelled dialog is a no-op. */
+export async function exportObj(): Promise<void> {
+  try {
+    const path = await client.exportObj();
+    if (!path) return; // cancelled
+    transientHint(`Exported ${baseName(path)}`);
+  } catch (e) {
+    errorHint(`Export failed: ${message(e)}`);
+  }
+}
+
 /** ⌘O: native open dialog + open (+ recents refresh); stays on the editor shell. */
 export async function openDocumentDialog(): Promise<void> {
   try {

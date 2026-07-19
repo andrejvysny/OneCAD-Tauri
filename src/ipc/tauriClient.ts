@@ -89,6 +89,8 @@ const CMD = {
   importStep: "import_step",
   saveDocument: "save_document",
   exportStepFile: "export_step_file",
+  exportStlFile: "export_stl_file",
+  exportObjFile: "export_obj_file",
   openFileDialog: "open_file_dialog",
   saveFileDialog: "save_file_dialog",
   getMesh: "get_mesh",
@@ -568,6 +570,16 @@ export function createTauriClient(): CadClient {
       // Rust owns the `.step` save dialog + the worker ExportStep verb; a cancel
       // resolves to null (no path written).
       return call<string | null>(CMD.exportStepFile, { path: null });
+    },
+    async exportStl(): Promise<string | null> {
+      // Rust owns the `.stl` save dialog + the worker ExportStl verb; a cancel
+      // resolves to null (no path written).
+      return call<string | null>(CMD.exportStlFile, { path: null });
+    },
+    async exportObj(): Promise<string | null> {
+      // Rust owns the `.obj` save dialog + the worker ExportObj verb; a cancel
+      // resolves to null (no path written).
+      return call<string | null>(CMD.exportObjFile, { path: null });
     },
 
     onWorkerStatus(cb: (s: WorkerStatus) => void): () => void {

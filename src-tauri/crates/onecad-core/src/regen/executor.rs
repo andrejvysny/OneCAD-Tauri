@@ -449,6 +449,7 @@ impl<E: GeometryEngine> RegenExecutor<E> {
                 .restore_checkpoint(RestoreRequest {
                     checkpoint,
                     expected_history_prefix_hash: expected_base_hash.clone(),
+                    artifacts: request.base_checkpoint_artifacts.clone(),
                 })
                 .await
             {

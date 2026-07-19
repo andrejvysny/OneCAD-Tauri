@@ -54,7 +54,7 @@ pub struct CheckpointRef {
 /// A checkpoint artifact envelope (SCHEMA §7.7). Per-artifact (per body), but the
 /// **version axes and fingerprint are shared** across a checkpoint's artifacts,
 /// so a single representative envelope drives compatibility in [`CheckpointMeta`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckpointEnvelope {
     pub artifact_schema_version: u32,
     /// The body this artifact serializes.
@@ -93,7 +93,7 @@ impl CheckpointEnvelope {
 
 /// One stored artifact: the parsed envelope + the opaque bytes (SCHEMA §7.7 —
 /// "core stores bytes + parsed envelope metadata").
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckpointArtifact {
     pub envelope: CheckpointEnvelope,
     /// The opaque codec bytes (BREP blob, etc.). The core never interprets them.
@@ -101,7 +101,7 @@ pub struct CheckpointArtifact {
 }
 
 /// The atomic artifact set emitted by `SaveCheckpoint` (SCHEMA §7.7).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckpointArtifacts {
     pub step: usize,
     /// Per-body artifacts (BREP + envelope).

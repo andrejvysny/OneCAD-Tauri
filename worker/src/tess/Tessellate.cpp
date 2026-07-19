@@ -226,4 +226,78 @@ BodyMesh tessellate_body(const TopoDS_Shape& shape, const std::string& body_id,
     return out;
 }
 
+RawMesh tessellate_raw(const TopoDS_Shape& shape, const std::string& lod) {
+    RawMesh out;
+    if (shape.IsNull()) return out;
+
+    Bnd_Box box;
+    BRepBndLib::Add(shape, box);
+    double diag = 1.0;
+    if (!box.IsVoid()) {
+        Standard_Real xmin, ymin, zmin, xmax, ymax, zmax;
+        box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+        diag = gp_Pnt(xmin, ymin, zmin).Distance(gp_Pnt(xmax, ymax, zmax));
+    }
+    double lin = 0.1, ang = 0.5;
+    deflections(lod, diag, lin, ang);
+
+    // Single-threaded meshing for determinism (Invariant 5). Same params as
+    // tessellate_body, so the produced triangle set is identical.
+    BRepMesh_IncrementalMesh mesher(shape, lin, Standard_False, ang, Standard_False);
+    mesher.Perform();
+
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(shape, TopAbs_FACE, faces);
+
+    for (int fi = 1; fi <= faces.Extent(); ++fi) {
+        const TopoDS_Face face = TopoDS::Face(faces(fi));
+        TopLoc_Location loc;
+        Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
+        if (tri.IsNull() || tri->NbNodes() < 3 || tri->NbTriangles() < 1) continue;
+        const gp_Trsf trsf = loc.Transformation();
+        const bool reversed = (face.Orientation() == TopAbs_REVERSED);
+
+        const std::uint32_t base = static_cast<std::uint32_t>(out.positions.size() / 3);
+        const int nb_nodes = tri->NbNodes();
+        std::vector<gp_Vec> accum(static_cast<std::size_t>(nb_nodes), gp_Vec(0, 0, 0));
+        std::vector<gp_Pnt> pts(static_cast<std::size_t>(nb_nodes));
+        for (int i = 1; i <= nb_nodes; ++i) pts[static_cast<std::size_t>(i - 1)] = tri->Node(i).Transformed(trsf);
+
+        for (int t = 1; t <= tri->NbTriangles(); ++t) {
+            Standard_Integer n1, n2, n3;
+            tri->Triangle(t).Get(n1, n2, n3);
+            if (reversed) std::swap(n2, n3);  // outward winding
+            const gp_Pnt& a = pts[static_cast<std::size_t>(n1 - 1)];
+            const gp_Pnt& b = pts[static_cast<std::size_t>(n2 - 1)];
+            const gp_Pnt& c = pts[static_cast<std::size_t>(n3 - 1)];
+            gp_Vec normal = gp_Vec(a, b).Crossed(gp_Vec(a, c));  // area-weighted
+            accum[static_cast<std::size_t>(n1 - 1)] += normal;
+            accum[static_cast<std::size_t>(n2 - 1)] += normal;
+            accum[static_cast<std::size_t>(n3 - 1)] += normal;
+            out.indices.push_back(base + static_cast<std::uint32_t>(n1 - 1));
+            out.indices.push_back(base + static_cast<std::uint32_t>(n2 - 1));
+            out.indices.push_back(base + static_cast<std::uint32_t>(n3 - 1));
+        }
+
+        for (int i = 0; i < nb_nodes; ++i) {
+            const gp_Pnt& p = pts[static_cast<std::size_t>(i)];
+            out.positions.push_back(static_cast<float>(p.X()));
+            out.positions.push_back(static_cast<float>(p.Y()));
+            out.positions.push_back(static_cast<float>(p.Z()));
+            gp_Vec n = accum[static_cast<std::size_t>(i)];
+            if (n.Magnitude() > 1e-12) {
+                n.Normalize();
+            } else {
+                n = gp_Vec(0, 0, 1);
+            }
+            out.normals.push_back(static_cast<float>(n.X()));
+            out.normals.push_back(static_cast<float>(n.Y()));
+            out.normals.push_back(static_cast<float>(n.Z()));
+        }
+    }
+
+    out.triangle_count = static_cast<std::uint32_t>(out.indices.size() / 3);
+    return out;
+}
+
 }  // namespace onecad::tess

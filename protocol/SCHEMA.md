@@ -1300,6 +1300,88 @@ edits to version 1 rather than a version bump. They still fall under the
 [§13](#13-versioningchange-policy) change policy (fixture bump + cross-track
 sign-off) once fixtures exist.
 
+- **2026-07-19 — M5a: SaveCheckpoint/RestoreCheckpoint implemented (worker-retained,
+  in-session); mesh export (ExportStl/ExportObj) shipped** (§7.7/§7.8;
+  **orchestrator-approved 2026-07-19 for the §7.7 divergences**). [§7.7](#77-checkpoints),
+  [§7.8](#78-io). **Checkpoints.** `SaveCheckpoint` serializes the session head
+  (per-body BREP via **BinTools** + the 3 signatures + `historyPrefixHash`) into the
+  resp binary tail AND **retains the head in-session** (keyed by step); Rust stores the
+  bytes + parsed envelope metadata and persists them into the `.onecad` container's
+  `checkpoints/` layout. `RestoreCheckpoint` **rolls the in-session head back** to the
+  step (fenced on `workerEpoch`; a stale `expectedHistoryPrefixHash` ⇒
+  `driftDetected`). The Rust `WorkerManager` reconstructs the base `BodyRegistry` +
+  `ElementIndex` from the stored artifacts (executor seeds scratch from the immutable
+  checkpoint, review F3); the planner selects a compatible checkpoint at/below the
+  dirty floor so a post-checkpoint edit regens **incrementally**. Determinism proven:
+  an incremental regen (RestoreCheckpoint + incremental plan) yields a head
+  byte-identical to a from-0 replay (`src-tauri/tests/checkpoints.rs`).
+  ***Divergences to sign off:*** **(a)** the artifact blobs ride **inline in the resp
+  tail** (`bin` sections), NOT on the bulk lane / `streamId` the §7.7 example shows —
+  sound for the small V1 artifacts; **(b)** restore is **in-session only** — the OCW1
+  request path carries no binary, so RestoreCheckpoint cannot re-ship BREP; a worker
+  that no longer retains the step (post-restart, post-reopen) reports `restored:false`
+  and the executor **replays from 0** (Invariant 7 — the cache degrades to replay,
+  never a wrong result). The checkpoint bytes ARE persisted to the container for a
+  future cross-restart restore (transport request-binary is the follow-up);
+  **(c)** the persisted `elementMapPartition` is a **placeholder** JSON (the in-session
+  restore uses the retained partition) and the container form stores the whole
+  `CheckpointArtifacts` as JSON (BREP bytes inline) rather than split json/bin — size
+  inefficiency, sound. A minor **latent bug fixed:** the Rust `wire_op` omitted
+  `stepIndex`, so the worker used the execution-order index; harmless for from-0 plans
+  (exec index == step index) but wrong for the incremental plans checkpoints enable —
+  now sent per [§7.3](#73-op-payload-schemas-vertical-slice).
+  **Mesh export.** `ExportStl` (`{path, bodyIds, binary, lod}` → `{written, bytes,
+  triangleCount}`) and `ExportObj` (`{path, bodyIds, lod}` → `{written, bytes}`) reuse
+  the worker's tessellation (`tess::tessellate_raw`, same BRepMesh params/winding as the
+  viewport mesh ⇒ the STL triangle count equals the tessellation), binary+ASCII STL and
+  ASCII OBJ. stdout-hygiene asserted (`test_wp6_meshexport`). Fixtures:
+  `worker/tests/fixtures/export_mesh.ndjson`, `checkpoint_roundtrip.ndjson`. No
+  canonical `protocol/fixtures/` change.
+
+- **2026-07-19 — M5a: boolean split children `body_<opId>:<k>` are minted, adopted +
+  fenced; the Rust `BodyId` is a deterministic derived uuid** (D1 extension;
+  **orchestrator-approved 2026-07-19**). [§2](#2-identifier--scalar-types), [§7.2](#72-regen--executeplan).
+  When a Boolean (or a boolean-mode Extrude **Cut**) yields **multiple solids**, the
+  worker deletes the parent + tool and mints a deterministic child `body_<opId>:<k>`
+  per solid, ordered by a **quantized geometric key** (volume, then centroid x/y/z,
+  then face count, at 1e-6 — never unordered `TopExp` iteration), emitting a `Created`
+  `bodyEvent` per child. Rust **adopts** them at `AcceptPrepared` (`validate_created`):
+  the wire id parses to `(opId, k)`, `opId` must be a **known op in the plan**, the
+  per-op ordinals must be **contiguous from 0**, and the id must be **unique** (else
+  `PROTOCOL_ERROR`, discard). **Rust-side representation (flagged for sign-off):**
+  `BodyId` is a `Uuid` newtype, so a `:<k>` child cannot reuse the opId uuid; it maps
+  to a **deterministic derived uuid** = first 16 bytes of `SHA-256("onecad.body.split.v1:"
+  ‖ "<opId>:<k>")` (a uuid5-style stable hash — `uuid`'s `v5` feature is off; `sha2` is
+  already a dep; the derivation lives in `onecad-core` so both the wire layer and the
+  registry share it). The derivation is one-way, so the wire layer keeps a small
+  **interner** `derived → "body_<opId>:<k>"`. **Cross-process persistence (orchestrator
+  review fix):** the interner alone is only warm within the minting process, but a
+  from-0 replay compiles the WHOLE plan *before* the worker re-mints anything — so a
+  downstream op that references a persisted split child (e.g. a Cut targeting `:1`)
+  would, on reopen in a fresh process, render a bare derived uuid the worker never
+  minted (`REF_UNRESOLVED`). Fix: the core `BodyMeta` carries an **additive**
+  `splitOf: {op, k}` (serde `skip_serializing_if=None` ⇒ non-split documents are
+  byte-identical; `schema_freeze` stays green), populated at adoption/fold time and
+  persisted in `document.json`; `DocumentRuntime::open` (and checkpoint restore, via the
+  open path) walks the registry and **re-interns every split entry before any plan
+  compiles**. (A split child can only be *referenced* by an op added AFTER a regen
+  created it — you cannot select a body a not-yet-run op will mint — so within one
+  session the interner is warm at compile time; the persisted `splitOf` covers the
+  reopen.) The mapping stays deterministic + replay/persistence-stable: the document
+  stores the derived uuid and a from-0 replay re-mints the SAME id.
+  *Divergence to sign off:* the §2 note called split minting "deferred to W-WP6" and
+  said BodyIds "DOES NOT embed BodyId"; this ships the split-child id form and the
+  derived-uuid representation (an implementation choice §2 did not pin — §2 only fixed
+  the *wire* string `body_<opId>:<k>`, which is honored exactly). On a split, the
+  parent's referenced-element partition entries are **dropped** (a rebuildable
+  ID-on-demand cache; a later ref re-mints against a child or NeedsRepairs) — no
+  confident 1:1 child assignment exists. *Tests:* worker `test_wp6_split` (in-process
+  bisecting Cut → 2 ordered children, exact volumes, ids stable), Rust
+  `wire_contract::boolean_split_children_adopted` (real worker, 2 children adopted,
+  volumes 7500 each, ids stable across replay), `validate_created` unit tests
+  (contiguity / unknown-op / collision). No canonical `protocol/fixtures/` change (they
+  carry no multi-solid boolean).
+
 - **2026-07-19 — M4a: ResolveRefs `autoBind` returns `elementId` in its own slot;
   `topoKey` is evidence** (code-to-spec; **orchestrator-approved 2026-07-19**).
   [§7.5](#75-element-identity), [§9](#9-needsrepair-payload). The worker's

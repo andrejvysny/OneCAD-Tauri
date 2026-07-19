@@ -73,6 +73,18 @@ export interface CadClient {
    * the worker ExportStep verb; resolves to the written path, or null on cancel.
    */
   exportStep(): Promise<string | null>;
+  /**
+   * Export every body at head to a binary STL file. Rust owns the `.stl` save
+   * dialog + the worker ExportStl verb; resolves to the written path, or null on
+   * cancel.
+   */
+  exportStl(): Promise<string | null>;
+  /**
+   * Export every body at head to an ASCII OBJ file. Rust owns the `.obj` save
+   * dialog + the worker ExportObj verb; resolves to the written path, or null on
+   * cancel.
+   */
+  exportObj(): Promise<string | null>;
 
   /**
    * Subscribe to worker-lifecycle `worker-status` events (starting / ready /

@@ -212,40 +212,68 @@ pub fn lod_from_str(s: &str) -> Lod {
 
 /// Validates one step's `created` body events against the D1 adoption rule.
 ///
-/// A NewBody id is worker-minted deterministic `body_<opId>` (`opId` is
-/// Rust-minted, so replay is stable). Adoption accepts a `created` body iff:
+/// A NewBody id is worker-minted deterministic `body_<opId>`; a boolean SPLIT mints
+/// `body_<opId>:<k>` (M5a). Adoption accepts a `created` body iff:
 ///
-/// * its id is the deterministic id of a **known op in the plan** — in the
-///   core's UUID `BodyId` space that is `body.as_uuid() ∈ known_ops` (the
-///   `body_<opId>` string form maps to `BodyId(opId.uuid)` at the wire boundary,
-///   R-WP11); and
-/// * it is **unique** — neither an already-present session body (`existing`) nor
-///   a duplicate of an earlier `created` id in this plan (`seen`).
+/// * **NewBody** (`body_<opId>`) — `body.as_uuid() ∈ known_ops` (the string maps to
+///   `BodyId(opId.uuid)` at the wire boundary);
+/// * **split child** (`body_<opId>:<k>`) — the id parses (via the [`wire`]
+///   interner) to a `(opId, k)` whose `opId ∈ known_ops`, and the op's ordinals are
+///   **contiguous from 0** across the step (the worker emits all of one op's children
+///   in one step);
+/// * and in both cases it is **unique** — neither an already-present session body
+///   (`existing`) nor a duplicate `created` id in this plan (`seen`).
 ///
-/// A malformed or colliding id returns `Err(message)`; the caller rejects the
-/// whole prepared plan (never silently adopts). Split children (`body_<opId>:<k>`)
-/// are deferred to W-WP6 — only `Created` events are validated here.
+/// A malformed / non-contiguous / colliding id returns `Err(message)`; the caller
+/// rejects the whole prepared plan (never silently adopts).
 ///
 /// # Errors
-/// A human-readable reason on malformation/collision (surfaced as `PROTOCOL_ERROR`).
+/// A human-readable reason on malformation/collision/non-contiguity (surfaced as
+/// `PROTOCOL_ERROR`).
 pub fn validate_created(
     events: &[BodyLifecycleEvent],
     known_ops: &HashSet<Uuid>,
     existing: &HashSet<BodyId>,
     seen: &mut HashSet<BodyId>,
 ) -> Result<(), String> {
+    // Split-child ordinals seen in THIS step's events, grouped by producing op — a
+    // step emits all of one op's children together, so `k`-contiguity is per-step.
+    let mut split_ks: std::collections::HashMap<Uuid, Vec<usize>> =
+        std::collections::HashMap::new();
     for ev in events {
         let BodyLifecycleEvent::Created { body } = ev else {
             continue;
         };
-        if !known_ops.contains(&body.as_uuid()) {
-            return Err(format!(
-                "worker-minted NewBody id {body} does not match any known opId (D1 malformation)"
-            ));
-        }
+        // Uniqueness first (both id forms share the `BodyId` uuid space).
         if existing.contains(body) || !seen.insert(*body) {
             return Err(format!(
-                "worker-minted NewBody id {body} collides with an existing/duplicate body (D1)"
+                "worker-minted id {body} collides with an existing/duplicate body (D1)"
+            ));
+        }
+        match crate::worker::wire::split_parts(*body) {
+            Some((op, k)) => {
+                if !known_ops.contains(&op) {
+                    return Err(format!(
+                        "split child (op {op}, k={k}) does not match any known opId (D1 malformation)"
+                    ));
+                }
+                split_ks.entry(op).or_default().push(k);
+            }
+            None => {
+                if !known_ops.contains(&body.as_uuid()) {
+                    return Err(format!(
+                        "worker-minted NewBody id {body} does not match any known opId (D1 malformation)"
+                    ));
+                }
+            }
+        }
+    }
+    // Split ordinals must be contiguous 0..n per op (no gaps, no holes).
+    for (op, mut ks) in split_ks {
+        ks.sort_unstable();
+        if ks.iter().enumerate().any(|(i, &k)| i != k) {
+            return Err(format!(
+                "split children of op {op} are not contiguous from 0 (got {ks:?}, D1)"
             ));
         }
     }
@@ -583,6 +611,54 @@ mod tests {
         let mut seen = HashSet::new();
         let ev = BodyLifecycleEvent::Created { body: body(0xBAD) };
         let err = validate_created(&[ev], &known, &HashSet::new(), &mut seen).unwrap_err();
+        assert!(err.contains("malformation"), "{err}");
+    }
+
+    #[test]
+    fn adoption_accepts_contiguous_split_children() {
+        let op = Uuid::from_u128(0x10);
+        let known: HashSet<Uuid> = [op].into_iter().collect();
+        // Parse the worker's split-child wire ids so the interner maps them.
+        let c0 = crate::worker::wire::parse_body_id(&format!("body_{op}:0")).unwrap();
+        let c1 = crate::worker::wire::parse_body_id(&format!("body_{op}:1")).unwrap();
+        let mut seen = HashSet::new();
+        let events = vec![
+            BodyLifecycleEvent::Deleted { body: BodyId(op) },
+            BodyLifecycleEvent::Created { body: c0 },
+            BodyLifecycleEvent::Created { body: c1 },
+        ];
+        assert!(validate_created(&events, &known, &HashSet::new(), &mut seen).is_ok());
+    }
+
+    #[test]
+    fn adoption_rejects_non_contiguous_split_children() {
+        let op = Uuid::from_u128(0x10);
+        let known: HashSet<Uuid> = [op].into_iter().collect();
+        let c0 = crate::worker::wire::parse_body_id(&format!("body_{op}:0")).unwrap();
+        let c2 = crate::worker::wire::parse_body_id(&format!("body_{op}:2")).unwrap(); // gap at 1
+        let mut seen = HashSet::new();
+        let events = vec![
+            BodyLifecycleEvent::Created { body: c0 },
+            BodyLifecycleEvent::Created { body: c2 },
+        ];
+        let err = validate_created(&events, &known, &HashSet::new(), &mut seen).unwrap_err();
+        assert!(err.contains("contiguous"), "{err}");
+    }
+
+    #[test]
+    fn adoption_rejects_split_child_of_unknown_op() {
+        let op = Uuid::from_u128(0x10);
+        let other = Uuid::from_u128(0xBAD);
+        let known: HashSet<Uuid> = [op].into_iter().collect();
+        let child = crate::worker::wire::parse_body_id(&format!("body_{other}:0")).unwrap();
+        let mut seen = HashSet::new();
+        let err = validate_created(
+            &[BodyLifecycleEvent::Created { body: child }],
+            &known,
+            &HashSet::new(),
+            &mut seen,
+        )
+        .unwrap_err();
         assert!(err.contains("malformation"), "{err}");
     }
 

@@ -13,7 +13,7 @@
 //! ([`resolve_worker_path`]), wiring its **restart hook** to bump the document's
 //! epoch + enqueue a replay (SCHEMA §8 crash → restart + replay). When no binary
 //! is present it falls back to [`PendingBackend`] so the app still boots. The
-//! factory also produces the [`StepExporter`] (the same `WorkerManager` Arc) that
+//! factory also produces the [`GeometryExporter`] (the same `WorkerManager` Arc) that
 //! `export_step_file` drives, and spawns a **worker-status forwarder** that relays
 //! [`WorkerLifecycle`] transitions to the webview as `worker-status` events.
 
@@ -27,7 +27,7 @@ use onecad_core::regen::{GeometryEngine, RegenRequest, SchedulerHandle};
 use crate::document_runtime::DocumentRuntime;
 use crate::dto::WorkerStatusDto;
 use crate::events;
-use crate::export::StepExporter;
+use crate::export::GeometryExporter;
 use crate::worker::{
     resolve_worker_path, MeshProvider, PendingBackend, SolverEngine, SupervisorConfig,
     WorkerLifecycle, WorkerManager, WorkerState,
@@ -42,13 +42,13 @@ pub type BackendPair = (
     Arc<dyn SolverEngine>,
 );
 
-/// A backend bundle: the [`BackendPair`] facets plus the [`StepExporter`] for the
+/// A backend bundle: the [`BackendPair`] facets plus the [`GeometryExporter`] for the
 /// same worker (`export_step_file` drives it). Same `WorkerManager` Arc throughout.
 pub type BackendBundle = (
     Arc<dyn GeometryEngine>,
     Arc<dyn MeshProvider>,
     Arc<dyn SolverEngine>,
-    Arc<dyn StepExporter>,
+    Arc<dyn GeometryExporter>,
 );
 
 /// Builds a fresh backend bundle for a newly opened document.
@@ -75,7 +75,7 @@ pub struct AppState {
     /// The current document's STEP exporter (the same `WorkerManager` Arc the
     /// backend uses, or [`PendingBackend`] when no worker). Swapped by
     /// [`make_backend`](AppState::make_backend) on every new/open.
-    exporter: RwLock<Arc<dyn StepExporter>>,
+    exporter: RwLock<Arc<dyn GeometryExporter>>,
     backend_factory: BackendFactory,
 }
 
@@ -94,7 +94,7 @@ impl AppState {
     }
 
     /// A fresh backend pair for a new/open document. Also swaps in the matching
-    /// [`StepExporter`] so a later `export_step_file` routes to this document's
+    /// [`GeometryExporter`] so a later `export_step_file` routes to this document's
     /// worker.
     #[must_use]
     pub fn make_backend(&self) -> BackendPair {
@@ -107,7 +107,7 @@ impl AppState {
 
     /// The current document's STEP exporter (see [`make_backend`](Self::make_backend)).
     #[must_use]
-    pub fn exporter(&self) -> Arc<dyn StepExporter> {
+    pub fn exporter(&self) -> Arc<dyn GeometryExporter> {
         self.exporter.read().unwrap().clone()
     }
 }
@@ -162,7 +162,7 @@ fn real_worker_factory(
             let engine: Arc<dyn GeometryEngine> = Arc::new(wm.clone());
             let meshes: Arc<dyn MeshProvider> = Arc::new(wm.clone());
             let solver: Arc<dyn SolverEngine> = Arc::new(wm.clone());
-            let exporter: Arc<dyn StepExporter> = Arc::new(wm);
+            let exporter: Arc<dyn GeometryExporter> = Arc::new(wm);
             (engine, meshes, solver, exporter)
         }
         None => {
@@ -170,7 +170,7 @@ fn real_worker_factory(
             let engine: Arc<dyn GeometryEngine> = backend.clone();
             let meshes: Arc<dyn MeshProvider> = backend.clone();
             let solver: Arc<dyn SolverEngine> = backend.clone();
-            let exporter: Arc<dyn StepExporter> = backend;
+            let exporter: Arc<dyn GeometryExporter> = backend;
             (engine, meshes, solver, exporter)
         }
     })

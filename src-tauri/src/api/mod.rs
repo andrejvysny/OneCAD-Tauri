@@ -109,6 +109,9 @@ pub async fn save_document(
                 .map(Path::to_path_buf)
                 .ok_or_else(|| ApiError::Io("no save path; provide one".into()))?,
         };
+        // Checkpoint policy (SCHEMA §7.7): mint a durable acceleration base of the
+        // current head before persisting, so a reopen/edit can regen incrementally.
+        rt.take_checkpoint_at_head().await;
         rt.save(&target, save_meta())?;
         target
     };
@@ -143,6 +146,65 @@ pub async fn export_step_file(
     let exporter = state.exporter();
     exporter.export_step(&target, &bodies, "AP214IS").await?;
     Ok(Some(target))
+}
+
+/// Exports every body at head to a binary STL file (`CadClient.exportStl`). `path`
+/// `None` shows a native `.stl` save dialog; a cancel resolves to `None`. Meshed at
+/// the `fine` LOD (a mesh that leaves the app wants the best tessellation). Returns
+/// the written path. Rust owns the dialog + the worker `ExportStl` verb.
+#[tauri::command]
+pub async fn export_stl_file(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    path: Option<String>,
+) -> Result<Option<String>, ApiError> {
+    let target = match path {
+        Some(p) => p,
+        None => match pick_mesh_save(app, "STL", &["stl"]).await {
+            Some(p) => p,
+            None => return Ok(None), // dialog cancelled
+        },
+    };
+    let bodies = head_bodies(&state).await?;
+    state
+        .exporter()
+        .export_stl(&target, &bodies, /*binary=*/ true, "fine")
+        .await?;
+    Ok(Some(target))
+}
+
+/// Exports every body at head to an ASCII OBJ file (`CadClient.exportObj`). `path`
+/// `None` shows a native `.obj` save dialog; a cancel resolves to `None`. Meshed at
+/// the `fine` LOD. Returns the written path. Rust owns the dialog + the worker
+/// `ExportObj` verb.
+#[tauri::command]
+pub async fn export_obj_file(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    path: Option<String>,
+) -> Result<Option<String>, ApiError> {
+    let target = match path {
+        Some(p) => p,
+        None => match pick_mesh_save(app, "OBJ", &["obj"]).await {
+            Some(p) => p,
+            None => return Ok(None), // dialog cancelled
+        },
+    };
+    let bodies = head_bodies(&state).await?;
+    state
+        .exporter()
+        .export_obj(&target, &bodies, "fine")
+        .await?;
+    Ok(Some(target))
+}
+
+/// The body ids at head for an export command (locks the runtime briefly).
+async fn head_bodies(state: &State<'_, AppState>) -> Result<Vec<BodyId>, ApiError> {
+    let guard = state.runtime.lock().await;
+    let rt = guard
+        .as_ref()
+        .ok_or_else(|| ApiError::NoDocument("export".into()))?;
+    Ok(rt.head_body_ids())
 }
 
 /// Closes the open document, dropping its runtime + caches.
@@ -524,6 +586,24 @@ async fn pick_step_save(app: AppHandle) -> Option<String> {
         .save_file(move |file: Option<tauri_plugin_dialog::FilePath>| {
             let _ = tx.send(file);
         });
+    rx.await
+        .ok()
+        .flatten()
+        .and_then(|f| f.into_path().ok())
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Shows a native mesh save dialog with a `label`/`extensions` filter (`.stl` /
+/// `.obj`). Resolves to the chosen path or `None` on cancel. Mirrors
+/// [`pick_step_save`] with the caller's filter (M5a mesh export).
+async fn pick_mesh_save(app: AppHandle, label: &str, extensions: &[&str]) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().file().add_filter(label, extensions).save_file(
+        move |file: Option<tauri_plugin_dialog::FilePath>| {
+            let _ = tx.send(file);
+        },
+    );
     rx.await
         .ok()
         .flatten()

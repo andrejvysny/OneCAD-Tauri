@@ -21,7 +21,9 @@
 #include <Message_PrinterOStream.hxx>
 #include <Standard_Version.hxx>
 
+#include "io/Checkpoint.h"
 #include "io/ExportStep.h"
+#include "io/MeshExport.h"
 #include "protocol/Dispatcher.h"
 #include "protocol/Envelope.h"
 #include "protocol/SolverLane.h"
@@ -274,6 +276,28 @@ void register_verbs(Dispatcher& dispatcher, SolverLane& solver_lane, Session& se
         "ExportStep",
         [&session](const Envelope& r, const std::vector<std::uint8_t>&, HandlerContext&) {
             return onecad::io::handle_export_step(session, r);
+        });
+    // --- M5a: mesh export (STL / OBJ, SCHEMA §7.8) ---
+    dispatcher.register_verb(
+        "ExportStl",
+        [&session](const Envelope& r, const std::vector<std::uint8_t>&, HandlerContext&) {
+            return onecad::io::handle_export_stl(session, r);
+        });
+    dispatcher.register_verb(
+        "ExportObj",
+        [&session](const Envelope& r, const std::vector<std::uint8_t>&, HandlerContext&) {
+            return onecad::io::handle_export_obj(session, r);
+        });
+    // --- M5a: checkpoints (SCHEMA §7.7) ---
+    dispatcher.register_verb(
+        "SaveCheckpoint",
+        [&session](const Envelope& r, const std::vector<std::uint8_t>&, HandlerContext&) {
+            return onecad::io::handle_save_checkpoint(session, r);
+        });
+    dispatcher.register_verb(
+        "RestoreCheckpoint",
+        [&session](const Envelope& r, const std::vector<std::uint8_t>&, HandlerContext&) {
+            return onecad::io::handle_restore_checkpoint(session, r);
         });
     dispatcher.register_verb("Shutdown", handle_shutdown);
     dispatcher.register_verb("Debug.Busy", handle_debug_busy);
