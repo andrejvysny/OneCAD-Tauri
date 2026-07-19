@@ -19,6 +19,7 @@ import type {
   EnterSketchTarget,
   FinishSketchResult,
   Lod,
+  NeedsRepairEvent,
   OperationOp,
   PreviewDraft,
   PreviewParams,
@@ -27,6 +28,8 @@ import type {
   PromotedElement,
   PromotePick,
   RecentProject,
+  ResolveRefRequest,
+  ResolveRefResult,
   SketchConstraint,
   SketchEntity,
   SketchSession,
@@ -34,6 +37,7 @@ import type {
   Unsubscribe,
   WorkerStatus,
 } from "./types";
+import type { WireEditCommand } from "./tauriCommandMap";
 import { mockClient } from "./mockClient";
 import { createTauriClient } from "./tauriClient";
 
@@ -146,6 +150,30 @@ export interface CadClient {
    * deterministic ids. Promoted ids flow back into the selection refs.
    */
   promoteSelection(bodyId: string, picks: PromotePick[]): Promise<PromotedElement[]>;
+
+  // ── Topology repair (SCHEMA §9; M4b) ──────────────────────────────────────
+
+  /**
+   * Subscribe to `needs-repair` events (emitted after every published regen —
+   * empty `items` means repairs cleared). The real event arrives from Rust; the
+   * mock exposes a test seam (`emitMockNeedsRepair`). Returns an unsubscribe.
+   */
+  onNeedsRepair(cb: (event: NeedsRepairEvent) => void): Unsubscribe;
+
+  /**
+   * Dry-run the resolution ladder for repair refs (`resolve_refs`; binds
+   * nothing). Returns the full un-lossy resolution per ref (candidates + reason +
+   * anchor on `needsRepair`). The mock returns canned candidates.
+   */
+  resolveRefs(refs: ResolveRefRequest[]): Promise<ResolveRefResult[]>;
+
+  /**
+   * Apply one RAW `EditCommand` (repair rebind + history affordances — suppress /
+   * rollback / delete). Returns the correlated regen result (same shape as
+   * `applyOperation`). The real client routes to `apply_edit_command`; the mock
+   * mutates its local document model.
+   */
+  applyEditCommand(command: WireEditCommand): Promise<ApplyOperationResult>;
 
   // ── Model operations + two-level preview (SCHEMA §7.3 / NEW_SPEC §15) ──────
   // The real client routes these to the worker's ExecutePlan (op) + solver-style

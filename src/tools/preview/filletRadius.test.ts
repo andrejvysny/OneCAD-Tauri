@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { radiusFromDrag, formatMm } from "./filletRadius";
+import { radiusFromDrag, formatMm, radiusFromValueText, DEFAULT_FILLET_RADIUS } from "./filletRadius";
 
 describe("radiusFromDrag", () => {
   it("grows the radius 1:1 with world units when dragging up", () => {
@@ -24,5 +24,19 @@ describe("formatMm", () => {
   it("formats a value like the history list", () => {
     expect(formatMm(2)).toBe("2.0 mm");
     expect(formatMm(83.25)).toBe("83.3 mm");
+  });
+});
+
+describe("radiusFromValueText (fillet re-edit seed)", () => {
+  it("parses a fillet feature's display text back to a radius", () => {
+    expect(radiusFromValueText("2.0 mm")).toBe(2);
+    expect(radiusFromValueText("12.5 mm")).toBe(12.5);
+  });
+
+  it("falls back to the default for non-numeric / non-positive text", () => {
+    expect(radiusFromValueText("")).toBe(DEFAULT_FILLET_RADIUS);
+    expect(radiusFromValueText("—")).toBe(DEFAULT_FILLET_RADIUS);
+    expect(radiusFromValueText("0 mm")).toBe(DEFAULT_FILLET_RADIUS);
+    expect(radiusFromValueText("bad", 7)).toBe(7);
   });
 });

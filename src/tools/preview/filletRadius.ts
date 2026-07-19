@@ -39,3 +39,16 @@ export function radiusFromDrag(
 export function formatMm(value: number): string {
   return `${value.toFixed(1)} mm`;
 }
+
+/** Default fillet radius (mirrors modelToolMachine.DEFAULT_FILLET_RADIUS). */
+export const DEFAULT_FILLET_RADIUS = 2;
+
+/**
+ * Parse a fillet feature's display text ("2.0 mm") back to a radius (re-edit
+ * seed; mirrors revolve's `angleFromValueText`). A non-numeric / non-positive
+ * value falls back to the default radius.
+ */
+export function radiusFromValueText(text: string, fallback = DEFAULT_FILLET_RADIUS): number {
+  const n = Number.parseFloat(text);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}

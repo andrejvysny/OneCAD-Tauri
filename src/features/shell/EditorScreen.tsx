@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useShortcuts } from "@/shortcuts/useShortcuts";
 import { createClient } from "@/ipc/client";
 import { workerStore } from "@/stores/workerStore";
+import { repairStore } from "@/stores/repairStore";
 import { TitleBar } from "./TitleBar";
 import { StatusBar } from "./StatusBar";
 import { NavPill } from "./NavPill";
@@ -10,6 +11,7 @@ import { FloatingToolbar } from "@/features/toolbar/FloatingToolbar";
 import { ModelToolChips } from "@/features/toolbar/ModelToolChips";
 import { ModelTreePanel } from "@/features/tree/ModelTreePanel";
 import { InspectorPanel } from "@/features/inspector/InspectorPanel";
+import { RepairBanner } from "@/features/repair/RepairBanner";
 import { SketchChromeBar } from "@/features/sketch/SketchChromeBar";
 import { ConstraintBadgeLayer } from "@/features/sketch/ConstraintBadgeLayer";
 import { ViewportRoot } from "@/viewport/ViewportRoot";
@@ -29,6 +31,12 @@ export function EditorScreen() {
     return createClient().onWorkerStatus((s) => workerStore.getState().set(s));
   }, []);
 
+  // Relay `needs-repair` events into the repair store (drives the banner + panel).
+  // Emitted after every published regen — empty items means repairs cleared.
+  useEffect(() => {
+    return createClient().onNeedsRepair((e) => repairStore.getState().applyEvent(e));
+  }, []);
+
   return (
     <div className="flex h-full w-full select-none flex-col overflow-hidden bg-white font-ui">
       <TitleBar />
@@ -41,6 +49,7 @@ export function EditorScreen() {
         <SketchChromeBar />
         <ModelTreePanel />
         <InspectorPanel />
+        <RepairBanner />
         <CornerCluster />
         <NavPill />
         <StatusBar />

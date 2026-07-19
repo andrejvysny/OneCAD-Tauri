@@ -19,13 +19,18 @@ import type {
   DocumentSnapshot,
   FeatureRecord,
   Lod,
+  NeedsRepairEvent,
   OperationOp,
   PromotedElement,
   PromotePick,
   RecentProject,
+  ResolveCandidate,
+  ResolveRefRequest,
+  ResolveRefResult,
   Unsubscribe,
   WorkerStatus,
 } from "./types";
+import type { WireEditCommand } from "./tauriCommandMap";
 import { makeBoxMesh, makeCylinderMesh, makeExtrudeBodyMesh, makeRevolveBodyMesh } from "./mockMeshes";
 import type { LatheAxis } from "@/tools/preview/lathePreview";
 import { createLocalSolverLane } from "./localSolver";
@@ -120,6 +125,15 @@ const docChangeListeners = new Set<(c: DocumentChange) => void>();
  */
 export function emitMockDocumentChanged(change: DocumentChange): void {
   for (const cb of [...docChangeListeners]) cb(change);
+}
+
+// ── Topology repair (M4b) — needs-repair emitter + canned resolveRefs ──────────
+
+const needsRepairListeners = new Set<(e: NeedsRepairEvent) => void>();
+
+/** Test seam: push a `needs-repair` event through the mock (drives the banner). */
+export function emitMockNeedsRepair(event: NeedsRepairEvent): void {
+  for (const cb of [...needsRepairListeners]) cb(event);
 }
 
 // ── Mock document model: synthetic bodies + feature timeline + undo/redo ───────
@@ -314,6 +328,77 @@ function commitAndEmit(op: OperationOp): Promise<ApplyOperationResult> {
   });
 }
 
+/** Canned repair candidates for a ref (deterministic; descending score). */
+function mockResolveRefs(refs: ResolveRefRequest[]): ResolveRefResult[] {
+  return refs.map((r) => {
+    const h = mockElementHash(r.refId);
+    const candidates: ResolveCandidate[] = [
+      {
+        topoKey: `e:${(parseInt(h.slice(0, 2), 16) % 40) + 1}`,
+        score: 0.91,
+        margin: 0.02,
+        worldPos: [12, 3.5, 0],
+        summary: "linear edge, len≈40mm",
+      },
+      {
+        topoKey: `e:${(parseInt(h.slice(2, 4), 16) % 40) + 1}`,
+        score: 0.89,
+        margin: 0.02,
+        worldPos: [12, -3.5, 0],
+        summary: "linear edge, len≈40mm",
+      },
+    ];
+    return {
+      refId: r.refId,
+      outcome: "needsRepair",
+      ladderFailed: "descriptor",
+      reason: "ambiguous",
+      scoringVersion: 1,
+      uiLabel: "Fillet edge",
+      candidates,
+    };
+  });
+}
+
+/** Apply one raw EditCommand against the mock document model (M4b). */
+async function mockApplyEditCommand(command: WireEditCommand): Promise<ApplyOperationResult> {
+  await wait();
+  switch (command.cmd) {
+    case "removeOperation": {
+      undoStack.push(snap("Delete feature"));
+      redoStack.length = 0;
+      mockFeatures = mockFeatures.filter((f) => f.id !== command.record);
+      mockRevision += 1;
+      const res: ApplyOperationResult = {
+        revision: mockRevision,
+        changedBodies: [],
+        removedBodies: [],
+        features: mockFeatures.map(cloneFeature),
+        opLabel: "Delete",
+      };
+      emitMockDocumentChanged({ revision: res.revision, changedBodies: [], removedBodies: [] });
+      return res;
+    }
+    case "updateOperationParams":
+    case "editOperationInput": {
+      // Rebind / param edit: no structural change in the lean mock, but bump the
+      // revision + emit document-changed so the regen correlation resolves.
+      mockRevision += 1;
+      const res = noopResult();
+      emitMockDocumentChanged({ revision: res.revision, changedBodies: [], removedBodies: [] });
+      return res;
+    }
+    case "setOperationSuppression":
+    case "setRollback":
+    default:
+      // Suppression / rollback carry no distinct projection signal in the lean mock
+      // (the real projection maps Suppressed→dirty; the frontend tracks an optimistic
+      // overlay for dimming — see historyStore). Return a valid no-op result.
+      mockRevision += 1;
+      return { ...noopResult(), opLabel: "Edit" };
+  }
+}
+
 // ── Shared sketch-solver + preview lane (F-WP8 seam; same module the tauri
 //    client uses). Commit routes into the local document model above. ──────────
 const lane = createLocalSolverLane({ commit: commitAndEmit, latencyMs: () => mockLatency });
@@ -405,6 +490,19 @@ export const mockClient: CadClient = {
       kind: p.topoKey.startsWith("e:") ? "edge" : "face",
       bodyId,
     }));
+  },
+
+  // ── Topology repair (M4b) ──────────────────────────────────────────────────
+  onNeedsRepair(cb: (e: NeedsRepairEvent) => void): Unsubscribe {
+    needsRepairListeners.add(cb);
+    return () => needsRepairListeners.delete(cb);
+  },
+  async resolveRefs(refs: ResolveRefRequest[]): Promise<ResolveRefResult[]> {
+    await wait(MESH_LATENCY_MS);
+    return mockResolveRefs(refs);
+  },
+  applyEditCommand(command: WireEditCommand): Promise<ApplyOperationResult> {
+    return mockApplyEditCommand(command);
   },
 
   // ── Model operations (SCHEMA §7.3) — the mock's local document model ───────

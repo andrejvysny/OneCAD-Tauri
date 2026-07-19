@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { HistoryList } from "./HistoryList";
+import { HistoryList, type HistoryRowActions } from "./HistoryList";
 import type { FeatureMeta } from "@/stores/documentStore";
 
 const items: FeatureMeta[] = [
@@ -40,5 +40,60 @@ describe("HistoryList", () => {
   it("is non-interactive (no button role) without handlers", () => {
     render(<HistoryList items={items} />);
     expect(screen.getByTestId("history-row-f1")).not.toHaveAttribute("role");
+  });
+});
+
+describe("HistoryList row affordances (M4b)", () => {
+  const actions = (over: Partial<HistoryRowActions> = {}): ((i: FeatureMeta) => HistoryRowActions) => {
+    const base: HistoryRowActions = {
+      suppressed: false,
+      onToggleSuppress: vi.fn(),
+      onRoll: vi.fn(),
+      onDelete: vi.fn(),
+      ...over,
+    };
+    return () => base;
+  };
+
+  it("shows suppress / roll / delete affordances only with rowActions", () => {
+    const { rerender } = render(<HistoryList items={items} onSelect={() => {}} />);
+    expect(screen.queryByTestId("history-suppress-f2")).toBeNull();
+    rerender(<HistoryList items={items} onSelect={() => {}} rowActions={actions()} />);
+    expect(screen.getByTestId("history-suppress-f2")).toBeInTheDocument();
+    expect(screen.getByTestId("history-roll-f2")).toBeInTheDocument();
+    expect(screen.getByTestId("history-delete-f2")).toBeInTheDocument();
+  });
+
+  it("calls onToggleSuppress / onRoll with the item", () => {
+    const onToggleSuppress = vi.fn();
+    const onRoll = vi.fn();
+    render(<HistoryList items={items} rowActions={actions({ onToggleSuppress, onRoll })} />);
+    fireEvent.click(screen.getByTestId("history-suppress-f2"));
+    expect(onToggleSuppress).toHaveBeenCalledWith(items[1]);
+    fireEvent.click(screen.getByTestId("history-roll-f2"));
+    expect(onRoll).toHaveBeenCalledWith(items[1]);
+  });
+
+  it("delete requires a second confirm click (no browser confirm)", () => {
+    const onDelete = vi.fn();
+    render(<HistoryList items={items} rowActions={actions({ onDelete })} />);
+    fireEvent.click(screen.getByTestId("history-delete-f2")); // arms confirm
+    expect(onDelete).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("history-delete-confirm-f2")); // confirms
+    expect(onDelete).toHaveBeenCalledWith(items[1]);
+  });
+
+  it("a suppressed row dims (line-through) and keeps its icon visible", () => {
+    render(<HistoryList items={items} rowActions={actions({ suppressed: true })} />);
+    expect(screen.getByTestId("history-row-f2").className).toContain("opacity-60");
+    // The label carries a strike-through as the suppressed signal.
+    expect(screen.getByText("Extrude").className).toContain("line-through");
+  });
+
+  it("affordance clicks do not also select the row", () => {
+    const onSelect = vi.fn();
+    render(<HistoryList items={items} onSelect={onSelect} rowActions={actions()} />);
+    fireEvent.click(screen.getByTestId("history-roll-f2"));
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });

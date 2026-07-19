@@ -49,11 +49,14 @@ import type {
   FeatureRecord,
   FinishSketchResult,
   Lod,
+  NeedsRepairEvent,
   OperationOp,
   PromotedElement,
   PromotePick,
   RecentProject,
   RegenFinished,
+  ResolveRefRequest,
+  ResolveRefResult,
   SketchConstraint,
   SketchEntity,
   SketchPlane,
@@ -65,12 +68,13 @@ import type {
   WorkerStatus,
 } from "./types";
 import { createLocalSolverLane } from "./localSolver";
-import { operationToEditCommand, opLabelFor } from "./tauriCommandMap";
+import { operationToEditCommand, opLabelFor, editCommandLabel, type WireEditCommand } from "./tauriCommandMap";
 import {
   buildAddSketch,
   createIdMap,
   frontendConstraintsFromDto,
   frontendEntitiesFromDto,
+  frontendSolvedPositions,
   marshalUpsert,
   mintUuid,
   type SketchIdMap,
@@ -99,6 +103,7 @@ const CMD = {
   solveDrag: "solve_drag",
   endGesture: "end_gesture",
   promoteSelection: "promote_selection",
+  resolveRefs: "resolve_refs",
 } as const;
 
 const EVT = {
@@ -107,6 +112,7 @@ const EVT = {
   regenFinished: "regen-finished",
   sketchSolved: "sketch-solved",
   workerStatus: "worker-status",
+  needsRepair: "needs-repair",
 } as const;
 
 /** L2 preview pacing for the local seam (snappy; there is no backend preview verb). */
@@ -210,6 +216,7 @@ export function createTauriClient(): CadClient {
   const docChangeListeners = new Set<(c: DocumentChange) => void>();
   const projectionListeners = new Set<(p: DocumentProjectionWire) => void>();
   const workerStatusListeners = new Set<(s: WorkerStatus) => void>();
+  const needsRepairListeners = new Set<(e: NeedsRepairEvent) => void>();
   // Latest authoritative revision (cached from any event).
   let latestRevision = 0;
   // Latest published snapshot id for promote_selection — carried by every
@@ -266,6 +273,11 @@ export function createTauriClient(): CadClient {
     for (const cb of [...workerStatusListeners]) cb(s);
   }
 
+  function onNeedsRepairEvent(e: NeedsRepairEvent): void {
+    latestRevision = Math.max(latestRevision, e.revision);
+    for (const cb of [...needsRepairListeners]) cb(e);
+  }
+
   /** Await the next regen publish (or null on the safety timeout). Register BEFORE invoking. */
   function awaitNextChange(baseRev: number): { promise: Promise<Resolved | null>; cancel(): void } {
     let awaiter!: Awaiter;
@@ -302,6 +314,7 @@ export function createTauriClient(): CadClient {
           lastSketchSolved = e.payload;
         }),
         await listen<WorkerStatus>(EVT.workerStatus, (e) => onWorkerStatusEvent(e.payload)),
+        await listen<NeedsRepairEvent>(EVT.needsRepair, (e) => onNeedsRepairEvent(e.payload)),
       );
     } catch {
       // A missing event bridge must not break command-only flows.
@@ -411,9 +424,10 @@ export function createTauriClient(): CadClient {
       sketchRevision: dto.sketchRevision,
       dof: dto.dof,
       status: dto.status,
-      // Keys are backend point UUIDs; the frontend consumes solvedPositions only
-      // for drag write-back (empty for an identity upsert). M2+ reverse-map seam.
-      solvedPositions: dto.solvedPositions,
+      // F-WP9 fix: the worker keys solvedPositions by backend POINT-entity UUID;
+      // reverse-map them to the frontend `entityId.point` keys the SketchController
+      // applies (via sketchWireMap's id-map). Unknown keys are dropped.
+      solvedPositions: frontendSolvedPositions(map, dto.solvedPositions),
     };
   }
 
@@ -480,13 +494,33 @@ export function createTauriClient(): CadClient {
     dragSketchId = null;
     dragMaxSeq = 0;
     const dto = await call<SketchUpsertDto>(CMD.endGesture, { finalTarget: finalTarget ?? null });
+    const map = sketchId ? sketchMaps.get(sketchId) : undefined;
     return {
       sketchId: sketchId ?? dto.sketchId,
       sketchRevision: dto.sketchRevision,
       dof: dto.dof,
       status: dto.status,
-      solvedPositions: dto.solvedPositions,
+      // Reverse-map backend point UUIDs → frontend `entityId.point` keys (F-WP9).
+      solvedPositions: map ? frontendSolvedPositions(map, dto.solvedPositions) : dto.solvedPositions,
     };
+  }
+
+  // ── Topology repair (dry-run resolve + raw edit commands; M4b) ─────────────
+  async function resolveRefs(refs: ResolveRefRequest[]): Promise<ResolveRefResult[]> {
+    // `resolve_refs` wants `{snapshotId, refs: [{refId, ...ElementRef}]}`; each ref
+    // flattens the (optional) primary/anchor. The lean `needs-repair` event carries
+    // no ElementRef, so callers usually pass `refId` only and the backend resolves
+    // the stored ref by id. (SEAM: if the backend requires a full ElementRef the
+    // needs-repair event must surface it — reported.)
+    const out = await call<ResolveRefResult[]>(CMD.resolveRefs, {
+      snapshotId: currentSnapshotId,
+      refs: refs.map((r) => ({ refId: r.refId, primary: r.primary, anchor: r.anchor })),
+    });
+    return out.map((r) => ({ ...r, candidates: r.candidates ?? [] }));
+  }
+
+  async function applyEditCommand(command: WireEditCommand): Promise<ApplyOperationResult> {
+    return applyEdit(CMD.applyEditCommand, { command }, editCommandLabel(command));
   }
 
   // ── Promotion (pick → ElementId) ──────────────────────────────────────────
@@ -542,6 +576,12 @@ export function createTauriClient(): CadClient {
       return () => workerStatusListeners.delete(cb);
     },
 
+    onNeedsRepair(cb: (e: NeedsRepairEvent) => void): () => void {
+      void ensureEvents();
+      needsRepairListeners.add(cb);
+      return () => needsRepairListeners.delete(cb);
+    },
+
     async getBodyMesh(bodyId: string, lod: Lod): Promise<ArrayBuffer> {
       // Rust `get_mesh` returns `tauri::ipc::Response` → invoke resolves an
       // ArrayBuffer (MESH1 bytes verbatim, zero-copy). generation null = latest.
@@ -578,6 +618,8 @@ export function createTauriClient(): CadClient {
     solveDrag,
     endGesture,
     promoteSelection,
+    resolveRefs,
+    applyEditCommand,
 
     // ── Two-level preview (local seam; backend preview verb TBD) ──────────────
     beginPreview: lane.beginPreview,

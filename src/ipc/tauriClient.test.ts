@@ -598,7 +598,15 @@ describe("tauriClient drag gesture (latest-wins)", () => {
         }
         if (cmd === "solve_drag") return onDrag();
         if (cmd === "end_gesture")
-          return { sketchId: "u", sketchRevision: 9, dof: 0, status: "FullyConstrained", solvedPositions: { p: [8, 8] } };
+          // The worker keys solvedPositions by backend POINT UUID (the id begin
+          // translated "e1.Start" to); the client reverse-maps it to "e1.Start".
+          return {
+            sketchId: "u",
+            sketchRevision: 9,
+            dof: 0,
+            status: "FullyConstrained",
+            solvedPositions: beginArgs?.dragPoint ? { [beginArgs.dragPoint]: [8, 8] } : {},
+          };
       },
       { shouldMockEvents: true },
     );
@@ -644,7 +652,8 @@ describe("tauriClient drag gesture (latest-wins)", () => {
 
     const end = await client.endGesture([8, 8]);
     expect(end.status).toBe("FullyConstrained");
-    expect(end.solvedPositions?.p).toEqual([8, 8]);
+    // F-WP9: the backend point UUID is reverse-mapped to the frontend point key.
+    expect(end.solvedPositions?.["e1.Start"]).toEqual([8, 8]);
   });
 });
 

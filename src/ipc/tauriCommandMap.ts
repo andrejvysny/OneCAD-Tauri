@@ -71,7 +71,20 @@ interface WireRevolveParams {
 interface WireFilletParams {
   radius: WireScalar;
   edgeIds: string[];
+  /**
+   * Typed per-edge semantic refs (Rust `FilletParams::edges` — one `ElementRef`
+   * per `edgeIds` entry). CRITICAL: `edgeIds` (bare) and `edges` (typed) MUST stay
+   * in lockstep — any command that rewrites one rewrites BOTH (record.rs FilletParams
+   * / the M4b dual-edge rule). Optional so a legacy/bare-id fillet still marshals.
+   */
+  edges?: WireElementRef[];
   chainTangentEdges: boolean;
+}
+
+/** Rust `ElementRef` (refs.rs — identity + evidence + anchor; camelCase). */
+export interface WireElementRef {
+  primary?: { bodyId: string; elementId: string; kind: "face" | "edge" | "vertex" };
+  anchor?: { worldPoint: [number, number, number]; surfaceUv?: [number, number] };
 }
 
 interface WireBooleanParams {
@@ -94,10 +107,26 @@ interface WireOperationRecord {
   params: WireOperation["params"];
 }
 
+/**
+ * A typed input-slot path (Rust `InputPath`, internally tagged on `"path"`,
+ * camelCase). Only the fillet-edge arm is authored by M4b.
+ */
+export type WireInputPath = { path: "filletEdges"; index: number };
+
+/**
+ * The payload of an `EditOperationInput` (Rust `InputRef`, externally tagged,
+ * camelCase). M4b authors only the `element` arm (fillet/chamfer edge rebind).
+ */
+export type WireInputRef = { element: WireElementRef };
+
 /** The `EditCommand` variants this WP emits (serde tag `"cmd"`, camelCase). */
 export type WireEditCommand =
   | { cmd: "addOperation"; record: WireOperationRecord; atCursor: boolean }
-  | { cmd: "updateOperationParams"; record: string; op: WireOperation };
+  | { cmd: "updateOperationParams"; record: string; op: WireOperation }
+  | { cmd: "editOperationInput"; record: string; path: WireInputPath; reference: WireInputRef }
+  | { cmd: "removeOperation"; record: string }
+  | { cmd: "setRollback"; cursor: number }
+  | { cmd: "setOperationSuppression"; record: string; suppressed: boolean; cascade: boolean };
 
 const scalar = (n: number): WireScalar => ({ value: n });
 
@@ -208,4 +237,136 @@ export function operationToEditCommand(op: OperationOp): WireEditCommand {
 /** Human label for a committed/undone op, for the status-bar hint. */
 export function opLabelFor(op: OperationOp): string {
   return op.opType === "Boolean" ? op.params.operation : op.opType;
+}
+
+// ── M4b: raw EditCommand builders (repair rebind + history affordances) ────────
+//
+// These map straight onto the Rust `EditCommand` vocabulary (edit/command.rs) so
+// `client.applyEditCommand(cmd)` can send them verbatim. The record/cursor ids
+// are the projection feature ids (a feature's `id` IS its `RecordId` UUID) and
+// the timeline cursor (= applied op count; history/timeline.rs).
+
+/** The current fillet params a rebind rewrites (the SUBSET M4b touches). */
+export interface CurrentFilletParams {
+  radius: number;
+  edgeIds: string[];
+  /** Typed refs, parallel to `edgeIds` (may be shorter for a legacy fillet). */
+  edges?: WireElementRef[];
+  chainTangentEdges?: boolean;
+}
+
+/** Build the typed edge `ElementRef` for a rebound edge (primary + anchor). */
+export function edgeElementRef(
+  bodyId: string,
+  elementId: string,
+  worldPos?: [number, number, number],
+): WireElementRef {
+  const ref: WireElementRef = { primary: { bodyId, elementId, kind: "edge" } };
+  if (worldPos) ref.anchor = { worldPoint: worldPos };
+  return ref;
+}
+
+/**
+ * PURE dual-field fillet-edge rewrite (M4b pinned rule): replace ONLY slot
+ * `index` in BOTH `edgeIds` (bare) and `edges` (typed), leaving every sibling
+ * edge untouched. `edgeIds[index]` becomes the minted `elementId`; `edges[index]`
+ * becomes the typed `ElementRef`. Both arrays are grown to `index + 1` if the
+ * current fillet stored fewer entries (legacy/short). Returns the full new
+ * `WireFilletParams` an `UpdateOperationParams` carries.
+ */
+export function rewriteFilletEdgeParams(
+  current: CurrentFilletParams,
+  index: number,
+  ref: WireElementRef,
+): WireFilletParams {
+  const elementId = ref.primary?.elementId ?? "";
+  const edgeIds = [...current.edgeIds];
+  const edges = [...(current.edges ?? [])];
+  // Grow both arrays so slot `index` exists (keep them the SAME length).
+  const len = Math.max(edgeIds.length, edges.length, index + 1);
+  while (edgeIds.length < len) edgeIds.push("");
+  while (edges.length < len) edges.push({});
+  edgeIds[index] = elementId; // bare id (lockstep)
+  edges[index] = ref; // typed ref (lockstep)
+  return {
+    radius: scalar(current.radius),
+    edgeIds,
+    edges,
+    chainTangentEdges: current.chainTangentEdges ?? true,
+  };
+}
+
+/** `UpdateOperationParams` for a rewritten Fillet (the pinned dual-field path). */
+export function updateFilletParamsCommand(
+  recordId: string,
+  params: WireFilletParams,
+): WireEditCommand {
+  return { cmd: "updateOperationParams", record: recordId, op: { opType: "Fillet", params } };
+}
+
+/**
+ * `EditOperationInput` for a single fillet edge slot (the backend-designated
+ * fillet-edge rebind — command.rs `InputPath::FilletEdges`, which populates BOTH
+ * `edge_ids[index]` and `edges[index]` in lockstep server-side). Needs only the
+ * slot index + the new ref, so it works WITHOUT the frontend knowing the fillet's
+ * full current edge set (which the projection does not expose).
+ */
+export function filletEdgeRebindCommand(
+  recordId: string,
+  index: number,
+  ref: WireElementRef,
+): WireEditCommand {
+  return {
+    cmd: "editOperationInput",
+    record: recordId,
+    path: { path: "filletEdges", index },
+    reference: { element: ref },
+  };
+}
+
+/** `SetOperationSuppression` — suppress/un-suppress `recordId` (optional cascade). */
+export function suppressOperationCommand(
+  recordId: string,
+  suppressed: boolean,
+  cascade = false,
+): WireEditCommand {
+  return { cmd: "setOperationSuppression", record: recordId, suppressed, cascade };
+}
+
+/** `SetRollback` — move the rollback cursor (= applied op count; timeline.rs). */
+export function rollbackToCursorCommand(cursor: number): WireEditCommand {
+  return { cmd: "setRollback", cursor: Math.max(0, Math.floor(cursor)) };
+}
+
+/** `RemoveOperation` — delete `recordId` from the timeline. */
+export function removeOperationCommand(recordId: string): WireEditCommand {
+  return { cmd: "removeOperation", record: recordId };
+}
+
+/** A short human label for a raw EditCommand (status-bar hint). */
+export function editCommandLabel(cmd: WireEditCommand): string {
+  switch (cmd.cmd) {
+    case "editOperationInput":
+    case "updateOperationParams":
+      return "Repair reference";
+    case "removeOperation":
+      return "Delete feature";
+    case "setRollback":
+      return "Rollback";
+    case "setOperationSuppression":
+      return cmd.suppressed ? "Suppress" : "Unsuppress";
+    default:
+      return "Edit";
+  }
+}
+
+/**
+ * Parse a repair `refId` (`"<opId>.input<k>"`; SCHEMA §9) into its op id + input
+ * slot index. Returns `null` when the shape does not match (the caller then treats
+ * `k` as 0 / skips slot-targeting) so a backend format change fails soft.
+ */
+export function parseRefId(refId: string): { opId: string; index: number } | null {
+  const m = /^(.*)\.input(\d+)$/.exec(refId);
+  if (!m) return null;
+  return { opId: m[1], index: Number(m[2]) };
 }

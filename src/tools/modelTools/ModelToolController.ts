@@ -39,7 +39,7 @@ import { selectionStore, type EntityRef } from "@/stores/selectionStore";
 import { toolChipStore } from "@/stores/toolChipStore";
 import { profileFromRegion, profileBounds, type PrismProfile } from "@/tools/preview/prismPreview";
 import { axisDepthFromRay, normalize, type Vec3 } from "@/tools/preview/depthProjection";
-import { radiusFromDrag } from "@/tools/preview/filletRadius";
+import { radiusFromDrag, radiusFromValueText } from "@/tools/preview/filletRadius";
 import { axisSplitsRegion, type LatheAxis } from "@/tools/preview/lathePreview";
 import { angleFromDrag, snapRevolveAngle, clampAngle, angleFromValueText } from "@/tools/preview/revolveAngle";
 import { PreviewThrottle } from "@/tools/preview/previewThrottle";
@@ -100,6 +100,7 @@ export class ModelToolController {
   private filletEdges: EntityRef[] = [];
   private filletDownY = 0;
   private filletStartRadius = DEFAULT_FILLET_RADIUS;
+  private filletEditFeatureId: string | undefined;
 
   // Revolve context.
   private revolveProfile: PrismProfile | null = null;
@@ -775,13 +776,19 @@ export class ModelToolController {
   private async commitFillet(): Promise<void> {
     const radius = this.fillet.radius;
     const edges = this.filletEdges;
-    if (edges.length === 0) {
+    const editFeatureId = this.filletEditFeatureId;
+    if (edges.length === 0 && !editFeatureId) {
       this.cancelFillet();
       return;
     }
     const op: OperationOp = {
       opType: "Fillet",
+      featureId: editFeatureId, // parametric re-edit → UpdateOperationParams
       inputs: edges.map((e) => this.semanticRefFor(e)),
+      // SEAM (fillet re-edit): the projection does not expose a fillet's current
+      // edge set, so a radius-only re-edit sends no edgeIds — the mock ignores them
+      // (updates the radius) but the real backend needs the preserved edges. A
+      // follow-up must thread them (get_operation_params / EditOperationInput).
       params: { mode: "Fillet", radius, edgeIds: edges.map((e) => e.topoKey ?? e.id), chainTangentEdges: true },
     };
     this.deps.engine.setOrbitSuppressed(false);
@@ -789,12 +796,42 @@ export class ModelToolController {
     try {
       const res = await this.client.applyOperation(op);
       this.applyResult(res);
-      viewportStore.getState().setStatusHint(`Filleted ${edges.length} edge${edges.length > 1 ? "s" : ""}`);
+      viewportStore.getState().setStatusHint(
+        editFeatureId
+          ? "Fillet radius updated"
+          : `Filleted ${edges.length} edge${edges.length > 1 ? "s" : ""}`,
+      );
     } catch (e) {
       viewportStore.getState().setStatusHint(`Fillet failed: ${errMessage(e)}`);
     }
     this.fillet = filletInit();
+    this.filletEditFeatureId = undefined;
+    this.filletEdges = [];
     toolStore.getState().setTool("select");
+    this.updateDebug();
+  }
+
+  /**
+   * Re-arm the fillet tool on an existing fillet feature (parametric edit seed;
+   * mirrors editRevolveFeature). Seeds the chip with the feature's CURRENT radius;
+   * committing routes through `UpdateOperationParams` (edge refs unchanged).
+   */
+  editFilletFeature(featureId: string): void {
+    const feat = documentStore.getState().features.find((f) => f.id === featureId);
+    if (!feat || feat.kind !== "fillet") return;
+    const radius = radiusFromValueText(feat.valueText);
+    toolStore.getState().setTool("fillet");
+    this.filletEdges = [];
+    this.filletEditFeatureId = featureId;
+    // edgeCount 1 keeps the FSM out of its bail path (a re-edit has no picks yet).
+    this.fillet = filletStep(filletInit(), { kind: "arm", edgeCount: 1, radius }).state;
+    toolStore.setState({ phase: "armed" });
+    this.deps.engine.setOrbitSuppressed(true); // modal: drag adjusts radius, not orbit
+    viewportStore.getState().setStatusHint("Edit fillet radius — drag or type, Enter to apply");
+    toolChipStore.getState().showFillet(radius, [0, 0, 0], (v) => {
+      this.onFilletChip(v);
+      void this.commitFillet(); // chip Enter/blur commits the radius-only edit
+    });
     this.updateDebug();
   }
 
@@ -1003,6 +1040,7 @@ export class ModelToolController {
     this.deps.engine.setOrbitSuppressed(false);
     this.fillet = filletInit();
     this.filletEdges = [];
+    this.filletEditFeatureId = undefined;
     toolChipStore.getState().clear();
   }
 

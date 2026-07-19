@@ -238,6 +238,87 @@ export interface PromotedElement {
   bodyId: string;
 }
 
+// ── Topology repair (SCHEMA §9; M4b) — the `needs-repair` event + `resolveRefs` ─
+//
+// These MIRROR the Rust DTOs in `src-tauri/src/dto.rs` (camelCase serde):
+//   NeedsRepairItem  == NeedsRepairItemDto  (lean banner/badge summary)
+//   NeedsRepairEvent == NeedsRepairEvent    (`{revision, items}`; empty ⇒ cleared)
+//   ResolveCandidate == ResolveCandidateDto (one ranked candidate)
+//   ResolveRefResult == ResolveRefDto       (the un-lossy dry-run resolution)
+
+/** One entry in the `needs-repair` event — a step left in NeedsRepair. */
+export interface NeedsRepairItem {
+  /** The op record id (`RecordId`) of the step needing repair. */
+  opId: string;
+  /** The op-input ref identity (SCHEMA §9 `refId`, e.g. `"op_5.input0"`). */
+  refId: string;
+  /** `ambiguous` | `no-candidates` | `low-confidence`. */
+  reason: string;
+  /** The `resolverVersion` the candidate scores were computed under. */
+  scoringVersion?: number;
+  /** How many candidates the ladder surfaced (0 ⇒ `no-candidates`). */
+  candidateCount: number;
+}
+
+/**
+ * The `needs-repair` event payload (`{revision, items}`). Emitted after EVERY
+ * published regen; an EMPTY `items` means repairs cleared (drop the banner).
+ */
+export interface NeedsRepairEvent {
+  revision: number;
+  items: NeedsRepairItem[];
+}
+
+/** One ranked repair candidate (`ResolveCandidateDto`). */
+export interface ResolveCandidate {
+  /** The evidence handle (snapshot-scoped TopoKey) to promote on rebind. */
+  topoKey: string;
+  score: number;
+  margin: number;
+  /** Candidate centre in world coords — a geometric hint for highlighting. */
+  worldPos: [number, number, number];
+  summary: string;
+  /** Per-feature score contributions (opaque; SCHEMA §9). */
+  featureContributions?: unknown;
+}
+
+/**
+ * One dry-run ref resolution (`ResolveRefDto`) — the FULL ladder result the
+ * repair panel consumes. On `needsRepair` it carries the ranked `candidates[]`
+ * plus `reason`/`ladderFailed`/`anchor`; on `autoBind`/`unchanged` the bound id.
+ */
+export interface ResolveRefResult {
+  refId: string;
+  /** `autoBind` | `needsRepair` | `unchanged`. */
+  outcome: string;
+  elementId?: string;
+  topoKey?: string;
+  score?: number;
+  margin?: number;
+  /** `history` | `descriptor` (needsRepair). */
+  ladderFailed?: string;
+  /** `ambiguous` | `no-candidates` | `low-confidence` (needsRepair). */
+  reason?: string;
+  scoringVersion?: number;
+  uiLabel?: string;
+  /** The selection intent captured when the ref was authored (opaque). */
+  anchor?: unknown;
+  /** Ranked candidates (needsRepair), sorted by score descending. */
+  candidates: ResolveCandidate[];
+}
+
+/**
+ * One ref to dry-run-resolve (`ResolveRefInput` — `{refId, …ElementRef}`). The
+ * lean `needs-repair` event carries no ElementRef, so the panel passes `refId`
+ * only and relies on the backend resolving the STORED ref by id; a `primary`/
+ * `anchor` may be supplied when the caller has them.
+ */
+export interface ResolveRefRequest {
+  refId: string;
+  primary?: { bodyId: string; elementId?: string; kind: "body" | "face" | "edge" | "vertex" };
+  anchor?: { worldPoint?: [number, number, number]; surfaceUv?: [number, number] };
+}
+
 // ── Projection hydration (SCHEMA §7.2 projection-updated) ─────────────────────
 //
 // The authoritative document projection the backend publishes on open/new/close/

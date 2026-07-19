@@ -489,6 +489,98 @@ export function frontendEntitiesFromDto(dtoEntities: unknown): SketchEntity[] {
   return out;
 }
 
+// ── Solved-positions reverse map (F-WP9: "solvedPositions reverse map missing") ─
+//
+// The worker keys `solvedPositions` (SketchUpsert/EndGesture) by backend POINT-
+// entity UUID (dto.rs `solved_positions` "keyed by the point entity id"). The
+// frontend never had a reverse map, so a solve/drag write-back never moved the
+// geometry. These two pure steps close it: (1) re-key backend UUID → frontend
+// `entityId.Position` via the id-map's `point` map; (2) apply those to the
+// frontend entities (move line endpoints / circle+arc centers / points).
+
+/**
+ * Re-key backend-UUID-keyed `solvedPositions` to the frontend `entityId.Position`
+ * keys the entities carry, using `map.point` (frontend `"entityId.Position"` →
+ * backend point UUID). Keys not in the id-map are skipped silently with a dev
+ * warn (common on re-entry, before the id-map is seeded — the DTO entities are
+ * already solved there, so no movement is needed).
+ */
+export function frontendSolvedPositions(
+  map: SketchIdMap,
+  dtoPositions: Record<string, [number, number]> | undefined | null,
+): Record<string, [number, number]> {
+  const out: Record<string, [number, number]> = {};
+  if (!dtoPositions) return out;
+  // Reverse map.point: backend point UUID → frontend "entityId.Position".
+  const byUuid = new Map<string, string>();
+  for (const [frontendKey, uuid] of map.point) if (!byUuid.has(uuid)) byUuid.set(uuid, frontendKey);
+  const unknown: string[] = [];
+  for (const [uuid, xy] of Object.entries(dtoPositions)) {
+    const key = byUuid.get(uuid);
+    if (key) out[key] = xy;
+    else unknown.push(uuid);
+  }
+  if (unknown.length > 0 && typeof import.meta !== "undefined" && import.meta.env?.DEV) {
+    // eslint-disable-next-line no-console
+    console.warn(`[sketchWireMap] solvedPositions: ${unknown.length} unmapped point key(s) skipped`);
+  }
+  return out;
+}
+
+/**
+ * Apply frontend-keyed (`"entityId.Position"`) solved positions to the sketch
+ * entities, moving each entity's geometry per kind (Line Start/End → p0/p1;
+ * Circle/Arc Center → center; Point Start/Center → p0). Pure: returns a NEW array
+ * only when something moved (else the same reference — no React churn). Positions
+ * for unknown entity ids are ignored.
+ */
+export function applySolvedPositions(
+  entities: SketchEntity[],
+  positions: Record<string, [number, number]>,
+): SketchEntity[] {
+  const keys = Object.keys(positions);
+  if (keys.length === 0) return entities;
+  // Group positions by frontend entity id.
+  const byEntity = new Map<string, Record<string, [number, number]>>();
+  for (const key of keys) {
+    const dot = key.lastIndexOf(".");
+    if (dot < 0) continue;
+    const entityId = key.slice(0, dot);
+    const position = key.slice(dot + 1);
+    const g = byEntity.get(entityId) ?? {};
+    g[position] = positions[key];
+    byEntity.set(entityId, g);
+  }
+  let changed = false;
+  const out = entities.map((e) => {
+    const g = byEntity.get(e.id);
+    if (!g) return e;
+    const moved = moveEntity(e, g);
+    if (moved !== e) changed = true;
+    return moved;
+  });
+  return changed ? out : entities;
+}
+
+/** Move one entity's coordinates per its solved point positions (immutable). */
+function moveEntity(e: SketchEntity, g: Record<string, [number, number]>): SketchEntity {
+  switch (e.type) {
+    case "Point": {
+      const p0 = g.Start ?? g.Center;
+      return p0 ? { ...e, p0 } : e;
+    }
+    case "Line": {
+      if (!g.Start && !g.End) return e;
+      return { ...e, p0: g.Start ?? e.p0, p1: g.End ?? e.p1 };
+    }
+    case "Circle":
+    case "Arc":
+      return g.Center ? { ...e, center: g.Center } : e;
+    default:
+      return e;
+  }
+}
+
 /** One constraint from the worker wire form (`enter_sketch` returns these — the
  *  Rust `wire_constraint` shape: `{id, type, entities, positions?, value?}`). */
 interface WireDtoConstraint {

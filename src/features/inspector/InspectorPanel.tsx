@@ -15,21 +15,42 @@ import {
 import { useToolStore } from "@/stores/toolStore";
 import { useViewportStore } from "@/stores/viewportStore";
 import { useSketchStore } from "@/stores/sketchStore";
+import { useRepairStore } from "@/stores/repairStore";
+import { useHistoryStore } from "@/stores/historyStore";
+import { documentStore } from "@/stores/documentStore";
 import { getModelToolController } from "@/tools/modelTools/modelToolBridge";
-import { HistoryList } from "./HistoryList";
+import { HistoryList, type HistoryRowActions } from "./HistoryList";
 import { ConstraintList, summarizeConstraints } from "./ConstraintList";
+import { RepairPanel } from "@/features/repair/RepairPanel";
+import { suppressFeature, rollToIndex, deleteFeature } from "./historyActions";
 import { cn } from "@/ui/cn";
 import { sketchStatusText, sketchStatusSentence } from "@/features/sketch/constraintStatus";
 import type { SketchStatus } from "@/stores/documentStore";
 import type { SketchConstraint } from "@/ipc/types";
 
-/** Click a history chip → select that feature; double-click Extrude → re-edit. */
+/** Click a history chip → select that feature; double-click → parametric re-edit. */
 function selectFeature(id: string): void {
   selectionStore.getState().set([{ kind: "feature", id }]);
 }
 function editFeature(item: FeatureMeta): void {
   if (item.kind === "extrude") getModelToolController()?.editExtrudeFeature(item.id);
   else if (item.kind === "revolve") getModelToolController()?.editRevolveFeature(item.id);
+  else if (item.kind === "fillet") getModelToolController()?.editFilletFeature(item.id);
+}
+
+/** Build the per-row history affordances (suppress / roll-to-here / delete). */
+function makeRowActions(suppressedMap: Record<string, boolean>): (item: FeatureMeta) => HistoryRowActions {
+  return (item) => ({
+    suppressed: !!suppressedMap[item.id],
+    onToggleSuppress: (it) => void suppressFeature(it.id, !suppressedMap[it.id]),
+    onRoll: (it) => {
+      // Rollback cursor = applied op count (timeline.rs), so "roll to here" =
+      // globalIndex + 1; resolve the GLOBAL index (the list may be a slice).
+      const idx = documentStore.getState().features.findIndex((f) => f.id === it.id);
+      if (idx >= 0) void rollToIndex(idx);
+    },
+    onDelete: (it) => void deleteFeature(it.id),
+  });
 }
 
 /**
@@ -46,8 +67,15 @@ export function InspectorPanel() {
   const features = useDocumentStore((s) => s.features);
   const activeSketchId = useViewportStore((s) => s.activeSketchId);
   const constraints = useSketchStore((s) => s.session?.constraints);
+  const repairPanelOpen = useRepairStore((s) => s.panelOpen);
+  const repairItemCount = useRepairStore((s) => s.items.length);
 
   const sketching = mode === "sketch";
+  // Enter the REPAIR state from the banner (panel open) OR by selecting a feature
+  // that is itself in NeedsRepair — but only while there is something to repair.
+  const selFeatureNeedsRepair =
+    sel?.kind === "feature" && features.find((f) => f.id === sel.id)?.status === "needsRepair";
+  const showRepair = !sketching && repairItemCount > 0 && (repairPanelOpen || selFeatureNeedsRepair);
 
   return (
     <div className="absolute right-3 top-3 z-20 box-border w-[260px] rounded-md border border-border bg-white p-4 shadow-panel">
@@ -58,6 +86,8 @@ export function InspectorPanel() {
           status={sketches[activeSketchId ?? ""]?.status ?? "under"}
           constraints={constraints ?? []}
         />
+      ) : showRepair ? (
+        <RepairPanel />
       ) : sel && sel.kind === "feature" ? (
         <FeatureState featureId={sel.id} features={features} />
       ) : sel ? (
@@ -138,6 +168,8 @@ function FeatureState({
   features: FeatureMeta[];
 }) {
   const feat = features.find((f) => f.id === featureId);
+  // The full-timeline view carries the per-row affordances (suppress/roll/delete).
+  const suppressedMap = useHistoryStore((s) => s.suppressed);
   return (
     <>
       <div className="text-[15px] font-semibold text-ink">{feat?.label ?? "Feature"}</div>
@@ -151,8 +183,17 @@ function FeatureState({
       {feat?.kind === "revolve" && (
         <div className="mt-1 text-[12px] text-ink-6">Double-click to edit the angle.</div>
       )}
+      {feat?.kind === "fillet" && (
+        <div className="mt-1 text-[12px] text-ink-6">Double-click to edit the radius.</div>
+      )}
       <SectionLabel className="pb-1.5 pt-4">History</SectionLabel>
-      <HistoryList items={features} selectedId={featureId} onSelect={selectFeature} onEdit={editFeature} />
+      <HistoryList
+        items={features}
+        selectedId={featureId}
+        onSelect={selectFeature}
+        onEdit={editFeature}
+        rowActions={makeRowActions(suppressedMap)}
+      />
     </>
   );
 }

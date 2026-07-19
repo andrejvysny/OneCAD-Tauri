@@ -23,6 +23,7 @@ import { viewportStore, type Projection } from "@/stores/viewportStore";
 import { documentStore, docSketchStatus } from "@/stores/documentStore";
 import { settingsStore } from "@/stores/settingsStore";
 import { sketchStore } from "@/stores/sketchStore";
+import { applySolvedPositions } from "@/ipc/sketchWireMap";
 import { computeSnap, type SnapResult } from "./snapEngine";
 import { inferConstraints } from "./autoConstrain";
 import {
@@ -249,9 +250,15 @@ export class SketchController {
     // A late exit could have cleared the session mid-await.
     if (!sketchStore.getState().session) return;
 
-    const next: SketchSession = { ...session, entities, constraints, dof: result.dof, status: result.status };
+    // F-WP9: the solver may have MOVED points (constraint-driven); write the
+    // solved positions back into the geometry (backend point UUIDs were already
+    // reverse-mapped to `entityId.Position` keys by the client). No-op when the
+    // solve returned no movement (identity upsert) — same array reference.
+    const solvedEntities = applySolvedPositions(entities, result.solvedPositions ?? {});
+
+    const next: SketchSession = { ...session, entities: solvedEntities, constraints, dof: result.dof, status: result.status };
     sketchStore.getState().setSession(next);
-    this.deps.engine.updateSketchSession(next.plane, entities, next.status);
+    this.deps.engine.updateSketchSession(next.plane, solvedEntities, next.status);
     this.pushSolve(session.sketchId, result.dof, result.status);
   }
 

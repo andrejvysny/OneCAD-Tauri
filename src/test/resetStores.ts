@@ -11,6 +11,8 @@ import { settingsStore } from "@/stores/settingsStore";
 import { sketchStore } from "@/stores/sketchStore";
 import { toolChipStore } from "@/stores/toolChipStore";
 import { workerStore } from "@/stores/workerStore";
+import { repairStore } from "@/stores/repairStore";
+import { historyStore } from "@/stores/historyStore";
 import { resetMockSketches, resetMockDocument } from "@/ipc/mockClient";
 
 export function resetStores(): void {
@@ -50,6 +52,8 @@ export function resetStores(): void {
   sketchStore.getState().reset();
   toolChipStore.getState().clear();
   workerStore.getState().reset();
+  repairStore.getState().reset();
+  historyStore.getState().reset();
   resetMockSketches();
   resetMockDocument();
 }
